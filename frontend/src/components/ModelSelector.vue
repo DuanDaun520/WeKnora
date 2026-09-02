@@ -11,6 +11,16 @@
       filterable
       style="width: 100%;"
     >
+      <template v-if="selectedModel && showContextWindow" #valueDisplay>
+        <span class="selected-model">
+          <span class="selected-model__name">{{ modelDisplayName(selectedModel) }}</span>
+          <span
+            class="model-ctx"
+            :class="{ 'model-ctx--default': isDefaultContextWindow(selectedModel.parameters?.context_window) }"
+            :title="contextWindowTitle(selectedModel.parameters?.context_window)"
+          >{{ formatContextWindow(selectedModel.parameters?.context_window) }}</span>
+        </span>
+      </template>
       <!-- 已有的模型选项 -->
       <t-option
         v-for="model in optionModels"
@@ -24,6 +34,12 @@
           <span v-if="model.display_name" class="model-raw-name">{{ model.name }}</span>
           <t-tag v-if="model.is_builtin" size="small" theme="primary">{{ $t('model.builtinTag') }}</t-tag>
           <t-tag v-if="model.is_default" size="small" theme="success">{{ $t('model.defaultTag') }}</t-tag>
+          <span
+            v-if="showContextWindow"
+            class="model-ctx"
+            :class="{ 'model-ctx--default': isDefaultContextWindow(model.parameters?.context_window) }"
+            :title="contextWindowTitle(model.parameters?.context_window)"
+          >{{ formatContextWindow(model.parameters?.context_window) }}</span>
         </div>
       </t-option>
       
@@ -45,11 +61,18 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { listModels, type ModelConfig } from '@/api/model'
+import { type ModelConfig } from '@/api/model'
+import { useChatResourcesStore } from '@/stores/chatResources'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import { filterModelsByType } from './modelSelectorFilter'
+import {
+  formatContextWindow,
+  isDefaultContextWindow,
+  effectiveContextWindow,
+  modelHasContextWindow,
+} from '@/utils/contextWindow'
 
 interface Props {
   modelType: 'KnowledgeQA' | 'Embedding' | 'Rerank' | 'VLLM' | 'ASR'
@@ -81,6 +104,7 @@ const rawModels = ref<ModelConfig[]>([])
 const loading = ref(false)
 const { t } = useI18n()
 const authStore = useAuthStore()
+const chatResources = useChatResourcesStore()
 
 const placeholderText = computed(() => {
   return props.placeholder || t('model.selectModelPlaceholder')
@@ -106,13 +130,26 @@ const modelDisplayName = (model: ModelConfig) => {
   return displayName || model.name
 }
 
-// 监听 allModels / modelType 变化，自动过滤当前类型的模型
-watch(() => [props.allModels, props.modelType] as const, ([newModels]) => {
-  if (newModels && Array.isArray(newModels)) {
-    rawModels.value = newModels
-    models.value = filterModelsByType(newModels, props.modelType)
+const showContextWindow = computed(() => modelHasContextWindow(props.modelType))
+
+const contextWindowTitle = (tokens?: number) => {
+  if (isDefaultContextWindow(tokens)) {
+    return t('model.editor.contextWindowDefaultHint', { value: formatContextWindow(tokens) })
   }
-}, { immediate: true })
+  return t('model.editor.contextWindowTokens', { count: effectiveContextWindow(tokens) })
+}
+
+// 外部传入 allModels 时跟着 prop 走；否则用空间级缓存，设置页改完窗口立刻能看见。
+// 000102：同步维护 rawModels（未过滤全量源），选中项被类型过滤剔除时从这补回。
+watch(
+  () => [props.allModels, props.modelType, chatResources.allModels] as const,
+  ([newModels]) => {
+    const source = Array.isArray(newModels) ? newModels : chatResources.allModels
+    rawModels.value = source
+    models.value = filterModelsByType(source, props.modelType)
+  },
+  { immediate: true },
+)
 
 const selectedModel = computed(() => {
   if (!props.selectedModelId) return null
@@ -121,22 +158,15 @@ const selectedModel = computed(() => {
 
 // 加载模型列表（仅在未提供 allModels 时调用）
 const loadModels = async () => {
-  // 如果外部提供了 allModels，则不需要加载
   if (props.allModels) {
     return
   }
-  
+
   loading.value = true
   try {
-    const result = await listModels()
-    // 前端按类型筛选模型
-    if (result && Array.isArray(result)) {
-      rawModels.value = result
-      models.value = filterModelsByType(result, props.modelType)
-    } else {
-      rawModels.value = []
-      models.value = []
-    }
+    await chatResources.ensureModels()
+    rawModels.value = chatResources.allModels
+    models.value = filterModelsByType(chatResources.allModels, props.modelType)
   } catch (error) {
     console.error(t('model.loadFailed'), error)
     MessagePlugin.error(t('model.loadFailed'))
@@ -207,12 +237,46 @@ onMounted(() => {
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+
+  .model-ctx {
+    margin-left: auto;
+  }
   
   &.add {
     .model-name {
       color: var(--td-brand-color);
       font-weight: 500;
     }
+  }
+}
+
+.model-ctx {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondarycontainer);
+  padding: 0 6px;
+  border-radius: 4px;
+  line-height: 18px;
+
+  &--default {
+    color: var(--td-text-color-placeholder);
+  }
+}
+
+.selected-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+
+  &__name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 </style>

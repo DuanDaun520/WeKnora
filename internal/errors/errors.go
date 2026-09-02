@@ -216,7 +216,7 @@ func NewAgentMissingAllowedToolsError() *AppError {
 func NewAgentInvalidMaxIterationsError() *AppError {
 	return &AppError{
 		Code:     ErrAgentInvalidMaxIterations,
-		Message:  "最大迭代次数必须在1-20之间",
+		Message:  "最大迭代次数须为正整数，或 -1 表示不限制",
 		HTTPCode: http.StatusBadRequest,
 	}
 }
