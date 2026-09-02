@@ -39,8 +39,7 @@ templates:
       ## 重要：语言规则
       - 始终使用{{language}}回答
 
-      以下是可能与问题相关、也可能无关的检索信息：
-      {{contexts}}
+      检索资料随用户消息一并提供，请仅依据这些资料回答。
 
   - id: "expert_assistant"
     name: "Domain Expert"
@@ -73,8 +72,6 @@ templates:
       ## 重要：语言规则
       - 始终使用{{language}}回答
 
-      当前时间：{{current_time}}
-
   - id: "customer_service"
     name: "Customer Service"
     description: "Friendly and professional customer service template"
@@ -105,8 +102,6 @@ templates:
 
       ## 重要：语言规则
       - 始终使用{{language}}回答
-
-      当前时间：{{current_time}}
 
   - id: "technical_support"
     name: "Technical Support"
@@ -140,8 +135,6 @@ templates:
       ## 重要：语言规则
       - 始终使用{{language}}回答
 
-      当前时间：{{current_time}}
-
   - id: "pure_chat"
     name: "General Chat"
     description: "General conversation template without knowledge base"
@@ -167,8 +160,6 @@ templates:
 
       ## 重要：语言规则
       - 始终使用{{language}}回答
-
-      当前时间：{{current_time}}
 
   - id: "web_search_assistant"
     name: "Web Search Assistant"
@@ -201,5 +192,3 @@ templates:
 
       ## 重要：语言规则
       - 始终使用{{language}}回答
-
-      当前时间：{{current_time}}
