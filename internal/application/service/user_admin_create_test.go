@@ -11,25 +11,17 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// adminCreateUserRepo records the Register call so tests can verify both
+// adminCreateUserRepo records the CreateUser call so tests can verify both
 // the persisted user and the exact password bytes handed to bcrypt.
 type adminCreateUserRepo struct {
 	interfaces.UserRepository
-	existingByEmail    *types.User
-	existingByUsername *types.User
-	created            *types.User
+	existingByEmployeeID *types.User
+	created              *types.User
 }
 
-func (r *adminCreateUserRepo) GetUserByEmail(context.Context, string) (*types.User, error) {
-	if r.existingByEmail != nil {
-		return r.existingByEmail, nil
-	}
-	return nil, nil
-}
-
-func (r *adminCreateUserRepo) GetUserByUsername(context.Context, string) (*types.User, error) {
-	if r.existingByUsername != nil {
-		return r.existingByUsername, nil
+func (r *adminCreateUserRepo) GetUserByEmployeeID(_ context.Context, _ string) (*types.User, error) {
+	if r.existingByEmployeeID != nil {
+		return r.existingByEmployeeID, nil
 	}
 	return nil, nil
 }
@@ -49,8 +41,8 @@ func TestAdminCreateUserGeneratesPolicyCompliantPasswordWhenEmpty(t *testing.T) 
 	svc := newAdminCreateUserService(repo)
 
 	user, generated, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		Username: "alice", Email: "alice@example.com",
-	}, types.TenantProvisioningTenantless)
+		EmployeeID: "10001", Username: "alice",
+	})
 	if err != nil {
 		t.Fatalf("AdminCreateUser: %v", err)
 	}
@@ -74,13 +66,45 @@ func TestAdminCreateUserGeneratesPolicyCompliantPasswordWhenEmpty(t *testing.T) 
 	}
 }
 
+func TestAdminCreateUserProvisionsTenantlessForcedRotationAccount(t *testing.T) {
+	repo := &adminCreateUserRepo{}
+	svc := newAdminCreateUserService(repo)
+
+	email := "alice@example.com"
+	_, _, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
+		EmployeeID: "10001", Username: "alice", Email: &email, Password: new("PlainPass9"),
+	})
+	if err != nil {
+		t.Fatalf("AdminCreateUser: %v", err)
+	}
+	created := repo.created
+	if created.EmployeeID != "10001" {
+		t.Fatalf("EmployeeID=%q, want 10001", created.EmployeeID)
+	}
+	if created.TenantID != 0 {
+		t.Fatalf("TenantID=%d, want 0 (tenantless until an admin binds workspaces)", created.TenantID)
+	}
+	if !created.MustChangePassword {
+		t.Fatal("MustChangePassword must be true so the initial password is rotated on first login")
+	}
+	if !created.IsActive {
+		t.Fatal("IsActive must be true")
+	}
+	if created.IsSystemAdmin {
+		t.Fatal("provisioned users must not be system admins")
+	}
+	if created.Email != email {
+		t.Fatalf("Email=%q, want the optional contact field preserved", created.Email)
+	}
+}
+
 func TestAdminCreateUserUsesExplicitPassword(t *testing.T) {
 	repo := &adminCreateUserRepo{}
 	svc := newAdminCreateUserService(repo)
 
 	user, generated, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		Username: "alice", Email: "alice@example.com", Password: new("PlainPass9"),
-	}, types.TenantProvisioningTenantless)
+		EmployeeID: "10001", Username: "alice", Password: new("PlainPass9"),
+	})
 	if err != nil {
 		t.Fatalf("AdminCreateUser: %v", err)
 	}
@@ -102,8 +126,8 @@ func TestAdminCreateUserHashesUntrimmedPasswordByteForByte(t *testing.T) {
 
 	raw := "  PlainPass9  "
 	if _, _, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		Username: "alice", Email: "alice@example.com", Password: &raw,
-	}, types.TenantProvisioningTenantless); err != nil {
+		EmployeeID: "10001", Username: "alice", Password: &raw,
+	}); err != nil {
 		t.Fatalf("AdminCreateUser: %v", err)
 	}
 	if bcrypt.CompareHashAndPassword([]byte(repo.created.PasswordHash), []byte(raw)) != nil {
@@ -115,16 +139,15 @@ func TestAdminCreateUserHashesUntrimmedPasswordByteForByte(t *testing.T) {
 }
 
 func TestAdminCreateUserRejectsPolicyViolatingPassword(t *testing.T) {
-	// Registration accepts whitespace as literal password characters, but
-	// admin-create policy-checks any provided value.
-	// Only an absent password triggers generation.
+	// Only an absent password triggers generation; any provided value is
+	// policy-checked.
 	repo := &adminCreateUserRepo{}
 	svc := newAdminCreateUserService(repo)
 
-	for _, pw := range []string{"password", "", "   ", "\t\n", " \u00a0\u00a0 "} {
+	for _, pw := range []string{"password", "", "   ", "\t\n", "    "} {
 		_, generated, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-			Username: "alice", Email: "alice@example.com", Password: &pw,
-		}, types.TenantProvisioningTenantless)
+			EmployeeID: "10001", Username: "alice", Password: &pw,
+		})
 		if !errors.Is(err, ErrPasswordPolicy) {
 			t.Fatalf("password=%q err=%v, want ErrPasswordPolicy", pw, err)
 		}
@@ -172,8 +195,8 @@ func TestAdminCreateUserRejectsWeakPasswordBeforePersisting(t *testing.T) {
 
 	for _, pw := range []string{"password", ""} {
 		_, _, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-			Username: "alice", Email: "alice@example.com", Password: &pw,
-		}, types.TenantProvisioningTenantless)
+			EmployeeID: "10001", Username: "alice", Password: &pw,
+		})
 		if !errors.Is(err, ErrPasswordPolicy) {
 			t.Fatalf("password=%q err=%v, want ErrPasswordPolicy", pw, err)
 		}
@@ -191,8 +214,8 @@ func TestAdminCreateUserHonoursRuntimeComplexPolicy(t *testing.T) {
 	}
 
 	user, generated, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		Username: "alice", Email: "alice@example.com",
-	}, types.TenantProvisioningTenantless)
+		EmployeeID: "10001", Username: "alice",
+	})
 	if err != nil {
 		t.Fatalf("AdminCreateUser generate: %v", err)
 	}
@@ -205,23 +228,23 @@ func TestAdminCreateUserHonoursRuntimeComplexPolicy(t *testing.T) {
 
 	simple := "PlainPass9"
 	_, _, err = svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		Username: "bob", Email: "bob@example.com", Password: &simple,
-	}, types.TenantProvisioningTenantless)
+		EmployeeID: "10002", Username: "bob", Password: &simple,
+	})
 	if !errors.Is(err, ErrComplexPasswordPolicy) {
 		t.Fatalf("explicit simple password err=%v, want ErrComplexPasswordPolicy", err)
 	}
 }
 
-func TestAdminCreateUserDuplicateReturnsExistingUserWithSentinel(t *testing.T) {
-	existing := &types.User{ID: "existing", Username: "alice", Email: "alice@example.com"}
-	repo := &adminCreateUserRepo{existingByEmail: existing}
+func TestAdminCreateUserDuplicateEmployeeIDReturnsExistingUserWithSentinel(t *testing.T) {
+	existing := &types.User{ID: "existing", EmployeeID: "10001", Username: "alice"}
+	repo := &adminCreateUserRepo{existingByEmployeeID: existing}
 	svc := newAdminCreateUserService(repo)
 
 	user, generated, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		Username: "alice", Email: "alice@example.com", Password: new("PlainPass9"),
-	}, types.TenantProvisioningTenantless)
-	if !errors.Is(err, ErrUserEmailExists) {
-		t.Fatalf("err=%v, want ErrUserEmailExists", err)
+		EmployeeID: "10001", Username: "alice", Password: new("PlainPass9"),
+	})
+	if !errors.Is(err, ErrUserEmployeeIDExists) {
+		t.Fatalf("err=%v, want ErrUserEmployeeIDExists", err)
 	}
 	if user == nil || user.ID != existing.ID {
 		t.Fatalf("user=%v, want the existing user %q", user, existing.ID)
@@ -234,115 +257,40 @@ func TestAdminCreateUserDuplicateReturnsExistingUserWithSentinel(t *testing.T) {
 	}
 }
 
-func TestAdminCreateUserDuplicateUsernameReturnsExistingUserWithSentinel(t *testing.T) {
-	existing := &types.User{ID: "existing", Username: "alice", Email: "alice@example.com"}
-	repo := &adminCreateUserRepo{existingByUsername: existing}
-	svc := newAdminCreateUserService(repo)
-
-	user, _, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		Username: "alice", Email: "alice@example.com", Password: new("PlainPass9"),
-	}, types.TenantProvisioningTenantless)
-	if !errors.Is(err, ErrUserUsernameExists) {
-		t.Fatalf("err=%v, want ErrUserUsernameExists", err)
-	}
-	if user == nil || user.ID != existing.ID {
-		t.Fatalf("user=%v, want the existing user %q", user, existing.ID)
-	}
-}
-
-func TestAdminCreateUserDuplicateLookupTargetsSentinelIdentity(t *testing.T) {
-	// Register reports a username collision (email free at check time).
-	// A user owning the request email appears before the duplicate lookup,
-	// as if created concurrently. The lookup must return the user named by
-	// the sentinel, not the email owner a fallback would have picked.
-	repo := &racyIdentityRepo{
-		byUsername: &types.User{ID: "username-owner", Username: "alice", Email: "alice@example.com"},
-		byEmail:    &types.User{ID: "email-owner", Email: "alice@example.com"},
-	}
-	svc := &userService{userRepo: repo}
-
-	user, _, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		Username: "alice", Email: "alice@example.com", Password: new("PlainPass9"),
-	}, types.TenantProvisioningTenantless)
-	if !errors.Is(err, ErrUserUsernameExists) {
-		t.Fatalf("err=%v, want ErrUserUsernameExists", err)
-	}
-	if user == nil || user.ID != repo.byUsername.ID {
-		t.Fatalf("user=%v, want the username-collision owner %q", user, repo.byUsername.ID)
-	}
-	if repo.emailLookups != 1 {
-		t.Fatalf("emailLookups=%d, want 1 (Register's check only, the duplicate lookup must not query email)", repo.emailLookups)
-	}
-}
-
-// racyIdentityRepo simulates a concurrent create between Register's
-// duplicate check and AdminCreateUser's duplicate-path lookup: the email
-// becomes occupied only on the second query.
-type racyIdentityRepo struct {
-	interfaces.UserRepository
-	byUsername   *types.User
-	byEmail      *types.User
-	emailLookups int
-}
-
-func (r *racyIdentityRepo) GetUserByEmail(_ context.Context, _ string) (*types.User, error) {
-	r.emailLookups++
-	if r.emailLookups > 1 {
-		return r.byEmail, nil
-	}
-	return nil, nil
-}
-
-func (r *racyIdentityRepo) GetUserByUsername(_ context.Context, _ string) (*types.User, error) {
-	return r.byUsername, nil
-}
-
-func TestAdminCreateUserRejectsPartialEmailConflict(t *testing.T) {
-	existing := &types.User{ID: "existing", Username: "alice", Email: "alice@example.com"}
-	repo := &adminCreateUserRepo{existingByEmail: existing}
-	svc := newAdminCreateUserService(repo)
-
-	_, generated, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		Username: "bob", Email: "alice@example.com", Password: new("PlainPass9"),
-	}, types.TenantProvisioningTenantless)
-	if !errors.Is(err, ErrUserIdentityConflict) {
-		t.Fatalf("err=%v, want ErrUserIdentityConflict", err)
-	}
-	if generated != "" {
-		t.Fatalf("generated=%q, want empty", generated)
-	}
-	if repo.created != nil {
-		t.Fatal("conflicting request reached persistence")
-	}
-}
-
-func TestAdminCreateUserRejectsPartialUsernameConflict(t *testing.T) {
-	existing := &types.User{ID: "existing", Username: "alice", Email: "alice@example.com"}
-	repo := &adminCreateUserRepo{existingByUsername: existing}
-	svc := newAdminCreateUserService(repo)
-
-	_, _, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		Username: "alice", Email: "bob@example.com", Password: new("PlainPass9"),
-	}, types.TenantProvisioningTenantless)
-	if !errors.Is(err, ErrUserIdentityConflict) {
-		t.Fatalf("err=%v, want ErrUserIdentityConflict", err)
-	}
-	if repo.created != nil {
-		t.Fatal("conflicting request reached persistence")
-	}
-}
-
 func TestAdminCreateUserRejectsMissingIdentity(t *testing.T) {
 	repo := &adminCreateUserRepo{}
 	svc := newAdminCreateUserService(repo)
 
-	_, _, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		Username: "", Email: "alice@example.com",
-	}, types.TenantProvisioningTenantless)
-	if err == nil {
-		t.Fatal("expected an error for an empty username")
+	for _, req := range []*types.AdminCreateUserRequest{
+		{EmployeeID: "", Username: "alice"},
+		{EmployeeID: "10001", Username: ""},
+		{EmployeeID: "   ", Username: "alice"},
+	} {
+		if _, _, err := svc.AdminCreateUser(context.Background(), req); err == nil {
+			t.Fatalf("req=%+v: expected an error for a missing identity", req)
+		}
+		if repo.created != nil {
+			t.Fatal("invalid request reached persistence")
+		}
 	}
-	if repo.created != nil {
-		t.Fatal("invalid request reached persistence")
+}
+
+func TestAdminCreateUserAllowsDuplicateDisplayIdentity(t *testing.T) {
+	// Real names collide; username/email are display/contact fields. Two
+	// accounts sharing them but with distinct employee IDs must both
+	// persist — the service performs no uniqueness lookup on them.
+	repo := &adminCreateUserRepo{}
+	svc := newAdminCreateUserService(repo)
+
+	email := "alice@example.com"
+	for _, id := range []string{"10001", "10002"} {
+		if _, _, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
+			EmployeeID: id, Username: "王芳", Email: &email, Password: new("PlainPass9"),
+		}); err != nil {
+			t.Fatalf("employee %s: AdminCreateUser: %v", id, err)
+		}
+	}
+	if repo.created == nil || repo.created.EmployeeID != "10002" {
+		t.Fatalf("created=%v, want the second account persisted", repo.created)
 	}
 }

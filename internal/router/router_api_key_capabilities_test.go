@@ -86,7 +86,6 @@ func TestPlatformTenantLifecycleRoutesDeclarePlatformCapabilities(t *testing.T) 
 		v1,
 		&handler.TenantHandler{},
 		&handler.TenantMemberHandler{},
-		&handler.TenantInvitationHandler{},
 		nil,
 		g,
 	)
@@ -334,7 +333,7 @@ func TestTenantInfrastructureRoutesDeclareSpecificCapabilities(t *testing.T) {
 	g := &rbacGuards{}
 	v1 := gin.New().Group("/api/v1")
 
-	RegisterTenantRoutes(v1, &handler.TenantHandler{}, nil, nil, nil, g)
+	RegisterTenantRoutes(v1, &handler.TenantHandler{}, nil, nil, g)
 	RegisterModelRoutes(v1, &handler.ModelHandler{}, &handler.ModelCredentialsHandler{}, g)
 	RegisterEvaluationRoutes(v1, &handler.EvaluationHandler{}, g)
 	RegisterSystemRoutes(v1, &handler.SystemHandler{}, g)
@@ -465,20 +464,15 @@ func TestTenantMemberRoutesDeclareManageMembersCapability(t *testing.T) {
 	g := &rbacGuards{}
 	v1 := gin.New().Group("/api/v1")
 
-	RegisterTenantRoutes(v1, &handler.TenantHandler{}, &handler.TenantMemberHandler{}, &handler.TenantInvitationHandler{}, nil, g)
+	// Enterprise rework: the member roster is read-only and invitation
+	// routes are gone, so manage_members now covers only the listing.
+	RegisterTenantRoutes(v1, &handler.TenantHandler{}, &handler.TenantMemberHandler{}, nil, g)
 
 	cases := []struct {
 		method string
 		path   string
 	}{
 		{http.MethodGet, "/api/v1/tenants/:id/members"},
-		{http.MethodPost, "/api/v1/tenants/:id/members"},
-		{http.MethodPut, "/api/v1/tenants/:id/members/:user_id"},
-		{http.MethodDelete, "/api/v1/tenants/:id/members/:user_id"},
-		{http.MethodGet, "/api/v1/tenants/:id/invitations"},
-		{http.MethodPost, "/api/v1/tenants/:id/invitations"},
-		{http.MethodDelete, "/api/v1/tenants/:id/invitations/:inv_id"},
-		{http.MethodPost, "/api/v1/tenants/:id/invite-links"},
 	}
 
 	for _, tc := range cases {
@@ -493,8 +487,22 @@ func TestTenantMemberRoutesDeclareManageMembersCapability(t *testing.T) {
 		})
 	}
 
-	if _, ok := g.apiKeyAuthorizer.Lookup(http.MethodPost, "/api/v1/tenants/:id/leave"); ok {
-		t.Fatal("tenant leave route should remain default-deny for API keys")
+	// Mutation routes (add/re-role/remove member, leave, invitations) were
+	// deleted with the enterprise rework — none may resurface for API keys.
+	for _, gone := range []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/v1/tenants/:id/members"},
+		{http.MethodPut, "/api/v1/tenants/:id/members/:user_id"},
+		{http.MethodDelete, "/api/v1/tenants/:id/members/:user_id"},
+		{http.MethodPost, "/api/v1/tenants/:id/leave"},
+		{http.MethodGet, "/api/v1/tenants/:id/invitations"},
+		{http.MethodPost, "/api/v1/tenants/:id/invite-links"},
+	} {
+		if _, ok := g.apiKeyAuthorizer.Lookup(gone.method, gone.path); ok {
+			t.Fatalf("removed member-mutation route %s %s must not be registered for API keys", gone.method, gone.path)
+		}
 	}
 }
 

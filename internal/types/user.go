@@ -40,12 +40,6 @@ type UserPreferences struct {
 	//        a stored *0 the same as nil.
 	// *N   = preferred workspace id.
 	LastActiveTenantID *uint64 `json:"last_active_tenant_id,omitempty"`
-
-	// OidcOnlyLogin is set server-side when an account is auto-provisioned
-	// via OIDC with a random password the user never received. The profile
-	// UI hides self-service password rotation until the user sets a known
-	// password via ChangePassword (which clears this flag).
-	OidcOnlyLogin *bool `json:"oidc_only_login,omitempty"`
 }
 
 // Value implements driver.Valuer so GORM persists UserPreferences as
@@ -83,10 +77,17 @@ func (p *UserPreferences) Scan(value interface{}) error {
 type User struct {
 	// Unique identifier of the user
 	ID string `json:"id"         gorm:"type:varchar(36);primaryKey"`
-	// Username of the user
-	Username string `json:"username"   gorm:"type:varchar(100);uniqueIndex;not null"`
-	// Email address of the user
-	Email string `json:"email"      gorm:"type:varchar(255);uniqueIndex;not null"`
+	// Employee ID — the primary account identifier and login name.
+	// Unique among non-soft-deleted rows (partial unique index created by
+	// migration 000091 / sqlite 000013; the gorm tag stays a plain index so
+	// AutoMigrate never creates a full unique index that would block
+	// employee-id reuse after soft delete).
+	EmployeeID string `json:"employee_id" gorm:"type:varchar(64);index"`
+	// Display name (real name) of the user. NOT unique — real names collide.
+	Username string `json:"username"   gorm:"type:varchar(100);not null"`
+	// Email address of the user (optional contact field; NOT a login
+	// identifier, NOT unique)
+	Email string `json:"email"      gorm:"type:varchar(255);not null"`
 	// Hashed password of the user
 	PasswordHash string `json:"-"          gorm:"type:varchar(255);not null"`
 	// Avatar URL of the user
@@ -99,6 +100,10 @@ type User struct {
 	CanAccessAllTenants bool `json:"can_access_all_tenants" gorm:"default:false"`
 	// Whether the user is a system administrator (independent of workspace roles)
 	IsSystemAdmin bool `json:"is_system_admin" gorm:"default:false;index"`
+	// MustChangePassword forces the user to rotate the password (admin-set
+	// initial password or admin reset). While true, the auth middleware
+	// rejects every request except the password-change allowlist.
+	MustChangePassword bool `json:"must_change_password" gorm:"default:false"`
 	// Per-user UI/feature preferences.
 	// Stored as JSON (jsonb on Postgres, TEXT on SQLite) via the
 	// driver.Valuer / sql.Scanner methods on UserPreferences.
@@ -137,91 +142,25 @@ type AuthToken struct {
 	User *User `json:"user,omitempty" gorm:"foreignKey:UserID"`
 }
 
-// LoginRequest represents a login request
+// LoginRequest represents a login request. Employee ID (工号) is the only
+// supported login identifier; email login is intentionally removed.
 type LoginRequest struct {
-	Email    string `json:"email"    binding:"required,email"`
-	Password string `json:"password" binding:"required,min=6"`
-}
-
-type OIDCAuthURLResponse struct {
-	Success             bool   `json:"success"`
-	ProviderDisplayName string `json:"provider_display_name,omitempty"`
-	AuthorizationURL    string `json:"authorization_url,omitempty"`
-	State               string `json:"state,omitempty"`
-	// Nonce is bound to an HttpOnly cookie on /auth/oidc/url and verified
-	// on callback; omitted from JSON so clients cannot replay it alone.
-	Nonce string `json:"-"`
-}
-
-type OIDCConfigResponse struct {
-	Success             bool   `json:"success"`
-	Enabled             bool   `json:"enabled"`
-	ProviderDisplayName string `json:"provider_display_name,omitempty"`
-}
-
-type OIDCCallbackResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message,omitempty"`
-	User    *User  `json:"user,omitempty"`
-	// Tenant carries the active tenant for the issued token. The field
-	// name is preserved for backward compatibility with existing frontend
-	// OIDC callback handling; LoginResponse uses ActiveTenant for the
-	// same data.
-	Tenant *Tenant `json:"tenant,omitempty"`
-	// Memberships mirrors LoginResponse.Memberships so the OIDC flow
-	// produces the same role information available to password logins.
-	// Always populated (length >= 1 for an authenticated user).
-	Memberships  []Membership `json:"memberships"`
-	Token        string       `json:"token,omitempty"`
-	RefreshToken string       `json:"refresh_token,omitempty"`
-	IsNewUser    bool         `json:"is_new_user,omitempty"`
-}
-
-type OIDCUserInfo struct {
-	Subject  string                 `json:"subject,omitempty"`
-	Username string                 `json:"username,omitempty"`
-	Email    string                 `json:"email,omitempty"`
-	Claims   map[string]interface{} `json:"claims,omitempty"`
-}
-
-// RegisterRequest represents a registration request
-type RegisterRequest struct {
-	Username string `json:"username" binding:"required,min=2,max=50"`
-	Email    string `json:"email"    binding:"required,email"`
-	Password string `json:"password" binding:"required,min=6"`
-
-	// TenantProvisioning is server-controlled registration context. It is
-	// deliberately excluded from JSON so a public caller cannot choose its
-	// own tenancy semantics. Empty preserves the historical behaviour and is
-	// treated as create_personal by UserService.Register.
-	TenantProvisioning TenantProvisioningMode `json:"-"`
+	EmployeeID string `json:"employee_id" binding:"required"`
+	Password   string `json:"password"    binding:"required,min=6"`
 }
 
 // AdminCreateUserRequest is the payload for a SystemAdmin provisioning a
-// new local user via POST /api/v1/system/admin/users/create.
+// new local user via POST /api/v1/system/admin/users(/create).
 //
-// Password is optional: when absent (or null), the service generates a
-// random one and returns it exactly once. Any provided value, the
-// empty string included, is subject to the password policy.
+// EmployeeID (工号) is required and immutable after creation. Password is
+// optional: when absent (or null), the service generates a random one and
+// returns it exactly once; regardless of origin the new user starts with
+// MustChangePassword=true. Email is an optional contact field.
 type AdminCreateUserRequest struct {
-	Username string  `json:"username" binding:"required,min=2,max=50"`
-	Email    string  `json:"email"    binding:"required,email"`
-	Password *string `json:"password"`
-}
-
-// TenantProvisioningMode controls what UserService.Register does after it
-// has validated the identity fields. Joining an existing tenant is
-// orchestrated by the invitation handler because the invitation token is the
-// authority for the target tenant and role.
-type TenantProvisioningMode string
-
-const (
-	TenantProvisioningCreatePersonal TenantProvisioningMode = "create_personal"
-	TenantProvisioningTenantless     TenantProvisioningMode = "tenantless"
-)
-
-func (m TenantProvisioningMode) IsValid() bool {
-	return m == TenantProvisioningCreatePersonal || m == TenantProvisioningTenantless
+	EmployeeID string  `json:"employee_id" binding:"required,min=1,max=64"`
+	Username   string  `json:"username"    binding:"required,min=2,max=50"`
+	Password   *string `json:"password"`
+	Email      *string `json:"email" binding:"omitempty,email,max=255"`
 }
 
 // LoginResponse represents a login response
@@ -243,19 +182,16 @@ type LoginResponse struct {
 	Memberships  []Membership `json:"memberships"`
 	Token        string       `json:"token,omitempty"`
 	RefreshToken string       `json:"refresh_token,omitempty"`
-}
-
-// RegisterResponse represents a registration response
-type RegisterResponse struct {
-	Success bool    `json:"success"`
-	Message string  `json:"message,omitempty"`
-	User    *User   `json:"user,omitempty"`
-	Tenant  *Tenant `json:"tenant,omitempty"`
+	// MustChangePassword is true when the issued credentials ride on an
+	// admin-set password (initial or reset) that the user must rotate; the
+	// auth middleware blocks non-identity endpoints until they do.
+	MustChangePassword bool `json:"must_change_password,omitempty"`
 }
 
 // UserInfo represents user information for API responses
 type UserInfo struct {
 	ID                  string          `json:"id"`
+	EmployeeID          string          `json:"employee_id"`
 	Username            string          `json:"username"`
 	Email               string          `json:"email"`
 	Avatar              string          `json:"avatar"`
@@ -263,6 +199,7 @@ type UserInfo struct {
 	IsActive            bool            `json:"is_active"`
 	CanAccessAllTenants bool            `json:"can_access_all_tenants"`
 	IsSystemAdmin       bool            `json:"is_system_admin"`
+	MustChangePassword  bool            `json:"must_change_password"`
 	Preferences         UserPreferences `json:"preferences"`
 	CreatedAt           time.Time       `json:"created_at"`
 	UpdatedAt           time.Time       `json:"updated_at"`
@@ -272,6 +209,7 @@ type UserInfo struct {
 func (u *User) ToUserInfo() *UserInfo {
 	return &UserInfo{
 		ID:                  u.ID,
+		EmployeeID:          u.EmployeeID,
 		Username:            u.Username,
 		Email:               u.Email,
 		Avatar:              u.Avatar,
@@ -279,6 +217,7 @@ func (u *User) ToUserInfo() *UserInfo {
 		IsActive:            u.IsActive,
 		CanAccessAllTenants: u.CanAccessAllTenants,
 		IsSystemAdmin:       u.IsSystemAdmin,
+		MustChangePassword:  u.MustChangePassword,
 		Preferences:         u.Preferences,
 		CreatedAt:           u.CreatedAt,
 		UpdatedAt:           u.UpdatedAt,

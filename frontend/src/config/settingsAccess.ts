@@ -9,9 +9,8 @@ export type SettingsRoleKey = 'viewer' | 'contributor' | 'admin' | 'owner'
  */
 export const SETTINGS_SECTION_MIN_ROLE: Record<string, SettingsRoleKey> = {
   general: 'viewer',
-  ollama: 'admin',
-  weknoracloud: 'admin',
-  models: 'viewer',
+  // 模型 / Ollama / WeKnoraCloud 设置已随 000094 模型平台化迁入系统
+  // 管理控制台（/system/console），空间 Settings 不再出现这些入口。
   websearch: 'admin',
   chathistory: 'admin',
   vectorstore: 'admin',
@@ -22,15 +21,15 @@ export const SETTINGS_SECTION_MIN_ROLE: Record<string, SettingsRoleKey> = {
   // that config boots. Same Admin+ bar as the sandbox editor itself.
   skills: 'admin',
   mcp: 'admin',
-  system: 'viewer',
+  // 版本信息仅空间管理员可见。
+  system: 'admin',
   userprofile: 'viewer',
   tenant: 'viewer',
   members: 'viewer',
   mymemory: 'viewer',
   memory: 'admin',
-  // Every member fills in their own environment variables; the workspace-wide
-  // values stay on the Admin+ skills page.
-  envvars: 'viewer',
+  // 沙箱密钥（个人环境变量）对普通用户隐藏，仅空间管理员可见。
+  envvars: 'admin',
 }
 
 /**
@@ -38,8 +37,7 @@ export const SETTINGS_SECTION_MIN_ROLE: Record<string, SettingsRoleKey> = {
  * corresponding read-only Settings page.
  */
 export const SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE = {
-  members: 'owner',
-  models: 'admin',
+  members: 'admin',
   skills: 'admin',
 } as const satisfies Record<string, SettingsRoleKey>
 

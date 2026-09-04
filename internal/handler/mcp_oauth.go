@@ -421,3 +421,20 @@ func (h *MCPOAuthHandler) CancelMCPOAuth(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
+
+// urlQueryEscape percent-encodes value for use inside a URL fragment so
+// provider error strings cannot break out of the `#mcp_oauth_error=...`
+// redirect hash. (The OIDC callback that previously owned this helper was
+// removed with the enterprise user-system rework; MCP OAuth still needs it.)
+func urlQueryEscape(value string) string {
+	replacer := strings.NewReplacer(
+		"%", "%25",
+		" ", "%20",
+		"#", "%23",
+		"&", "%26",
+		"+", "%2B",
+		"=", "%3D",
+		"?", "%3F",
+	)
+	return replacer.Replace(value)
+}

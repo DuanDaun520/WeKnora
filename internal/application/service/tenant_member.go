@@ -16,7 +16,7 @@ import (
 
 // isDuplicateMembership recognises the unique-constraint violation that
 // the tenant_members partial unique index throws when two concurrent
-// AddMember / EnsureOwner calls race past the in-service Get() check.
+// AddMember / EnsureMember calls race past the in-service Get() check.
 // We map this to ErrMembershipAlreadyExists so handlers can return 409
 // instead of an opaque 500; the underlying DB still rejects the second
 // insert, so this is purely about error-translation, not weakening any
@@ -123,7 +123,7 @@ func (s *tenantMemberService) emitAudit(ctx context.Context, entry *types.AuditL
 
 // auditActorRole picks up the caller's role at write-time. Empty if
 // auth middleware didn't set it (e.g. service-internal flows like
-// EnsureOwner during register, where there is no "caller").
+// EnsureMember during workspace bootstrap, where there is no "caller").
 func auditActorRole(ctx context.Context) string {
 	return string(types.TenantRoleFromContext(ctx))
 }
@@ -182,7 +182,7 @@ func (s *tenantMemberService) AddMember(
 		JoinedAt:  time.Now(),
 	}
 	if err := s.repo.Create(ctx, member); err != nil {
-		// TOCTOU race: a concurrent AddMember / EnsureOwner slipped past
+		// TOCTOU race: a concurrent AddMember / EnsureMember slipped past
 		// the Get above. The DB's partial unique index on
 		// (user_id, tenant_id) WHERE deleted_at IS NULL caught it; map
 		// to the same sentinel the in-service check would have returned
@@ -204,11 +204,15 @@ func (s *tenantMemberService) AddMember(
 	return member, nil
 }
 
-// EnsureOwner is idempotent: if the user already has an active membership
-// in the tenant it is returned unchanged; otherwise a new owner row is
-// created. Used by Register/OIDC paths so re-running Register on an
-// existing user (e.g. after a partial failure) does not double-insert.
-func (s *tenantMemberService) EnsureOwner(
+// EnsureMember is idempotent: if the user already has an active membership
+// in the tenant it is returned unchanged; otherwise a new admin row is
+// created. Roles were flattened by the enterprise user-system rework, so
+// "initial member" is always admin (not owner — owner carries the
+// last-owner invariant that would deadlock admin-driven unbinds once
+// everyone is the same rank). Used by workspace creation and the auth
+// middleware's orphan-tenant self-heal so re-running on an existing row
+// (e.g. after a partial failure) does not double-insert.
+func (s *tenantMemberService) EnsureMember(
 	ctx context.Context,
 	userID string,
 	tenantID uint64,
@@ -223,28 +227,27 @@ func (s *tenantMemberService) EnsureOwner(
 	member := &types.TenantMember{
 		UserID:   userID,
 		TenantID: tenantID,
-		Role:     types.TenantRoleOwner,
+		Role:     types.TenantRoleAdmin,
 		Status:   types.TenantMemberStatusActive,
 		JoinedAt: time.Now(),
 	}
 	if err := s.repo.Create(ctx, member); err != nil {
 		// Idempotent contract: if a concurrent Ensure/AddMember beat us
-		// (two simultaneous registrations of the same user, or the
-		// orphan-tenant self-heal path firing on parallel JWTs), the
+		// (two simultaneous self-heal paths firing on parallel JWTs), the
 		// partial unique index rejects the second insert. Re-read and
-		// return the winning row so EnsureOwner stays observably
+		// return the winning row so EnsureMember stays observably
 		// idempotent.
 		if isDuplicateMembership(err) {
 			if winner, getErr := s.repo.Get(ctx, userID, tenantID); getErr == nil && winner != nil {
 				logger.Infof(ctx,
-					"EnsureOwner lost race for user=%s tenant=%d, returning winning row (role=%s)",
+					"EnsureMember lost race for user=%s tenant=%d, returning winning row (role=%s)",
 					userID, tenantID, winner.Role)
 				return winner, nil
 			}
 		}
 		return nil, err
 	}
-	logger.Infof(ctx, "Bootstrapped owner membership for user=%s tenant=%d", userID, tenantID)
+	logger.Infof(ctx, "Bootstrapped admin membership for user=%s tenant=%d", userID, tenantID)
 	return member, nil
 }
 

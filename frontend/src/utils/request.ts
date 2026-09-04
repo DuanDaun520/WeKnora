@@ -145,6 +145,18 @@ instance.interceptors.response.use(
       return Promise.reject({ status, message: msg || t('error.invalidCredentials') });
     }
 
+    // 强制改密拦截：must_change_password 用户除改密白名单外一律被后端
+    // 403 code=PASSWORD_CHANGE_REQUIRED。会话本身仍有效（不走 401 refresh），
+    // 送回登录页走强制改密卡片即可；已在登录页（用户正改密）时 redirectToLogin
+    // 自身是 no-op，错误原样抛给调用方。
+    if (error.response.status === 403 && error.response.data?.code === 'PASSWORD_CHANGE_REQUIRED') {
+      redirectToLogin();
+      return Promise.reject({
+        status: 403,
+        message: error.response.data?.error || t('auth.mustChangePassword.interceptorHint'),
+      });
+    }
+
     // 如果是401错误且不是刷新token的请求，尝试刷新token
     if (error.response.status === 401 && !originalRequest._retry && !originalRequest.url?.includes('/auth/refresh')) {
       if (isRefreshing) {

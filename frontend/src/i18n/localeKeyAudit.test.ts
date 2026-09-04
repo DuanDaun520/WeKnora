@@ -6,6 +6,7 @@ import { REGISTERED_AUDIT_ACTION_ENTRIES, KB_ACTIVITY_DETAIL_VALUES, KB_ACTIVITY
 import {
   CRITICAL_LOCALE_KEYS,
   LOCALE_BUNDLES,
+  REFERENCE_LOCALE,
   alignLocaleBundleToReferenceKeys,
   collectI18nUsageFromSources,
   collectLocaleKeys,
@@ -15,10 +16,7 @@ import {
   findUsedKeysMissingInLocales,
   getLocaleValueAtPath,
   rebuildPrunedLocales,
-  type LocaleName,
 } from './localeKeyAudit.ts'
-
-const REFERENCE_LOCALE: LocaleName = 'en-US'
 
 let localeKeysByName: Record<LocaleName, Set<string>>
 let referencedKeys: Set<string>
@@ -46,8 +44,8 @@ test('locale bundles expose the same translation keys', () => {
 })
 
 test('critical runtime i18n trees are present', () => {
-  const en = localeKeysByName['en-US']
-  const missing = CRITICAL_LOCALE_KEYS.filter((key) => !en.has(key))
+  const reference = localeKeysByName[REFERENCE_LOCALE]
+  const missing = CRITICAL_LOCALE_KEYS.filter((key) => !reference.has(key))
   assert.deepEqual(missing, [], missing.join('\n'))
 })
 
@@ -137,7 +135,12 @@ test('registered audit action labels exist as flat keys in every locale', () => 
 
 test('locale alignment preserves flat audit action keys (regenerate safety)', () => {
   const referenceKeys = collectLocaleKeys(LOCALE_BUNDLES[REFERENCE_LOCALE])
-  const aligned = alignLocaleBundleToReferenceKeys(referenceKeys, LOCALE_BUNDLES['zh-CN'], LOCALE_BUNDLES['en-US'])
+  // 单语言部署：目标与回退同为 zh-CN，验证对齐操作不会破坏扁平键袋。
+  const aligned = alignLocaleBundleToReferenceKeys(
+    referenceKeys,
+    LOCALE_BUNDLES[REFERENCE_LOCALE],
+    LOCALE_BUNDLES[REFERENCE_LOCALE],
+  )
   const failures: string[] = []
 
   for (const { root, actions } of REGISTERED_AUDIT_ACTION_ENTRIES) {
@@ -194,31 +197,28 @@ test('audit action locale defaults cover the registry', () => {
 test('prune rebuild restores registered audit keys from baked-in English defaults', () => {
   const usage = collectI18nUsageFromSources()
   const emptyBundles = {
-    'en-US': {},
     'zh-CN': {},
-    'ko-KR': {},
-    'ru-RU': {},
-  } as Record<LocaleName, Record<string, unknown>>
+  } as Record<'zh-CN', Record<string, unknown>>
   const rebuilt = rebuildPrunedLocales(emptyBundles, usage)
-  const en = rebuilt['en-US'] as Record<string, unknown>
+  const reference = rebuilt[REFERENCE_LOCALE] as Record<string, unknown>
   const failures: string[] = []
 
   for (const { root, actions } of REGISTERED_AUDIT_ACTION_ENTRIES) {
-    const bag = getLocaleValueAtPath(en, root)
+    const bag = getLocaleValueAtPath(reference, root)
     for (const action of actions) {
       if (
         bag == null ||
         typeof bag !== 'object' ||
         typeof (bag as Record<string, string>)[action] !== 'string'
       ) {
-        failures.push(`en-US rebuild: missing ${root}.${action}`)
+        failures.push(`${REFERENCE_LOCALE} rebuild: missing ${root}.${action}`)
       }
     }
   }
 
   assert.deepEqual(failures, [], failures.join('\n'))
   assert.equal(
-    getLocaleValueAtPath(en, `${KB_ACTIVITY_I18N_ROOTS.outcomes}.success`),
+    getLocaleValueAtPath(reference, `${KB_ACTIVITY_I18N_ROOTS.outcomes}.success`),
     'Success',
   )
 })

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -353,7 +354,9 @@ func (h *ModelHandler) DebugModel(c *gin.Context) {
 		return
 	}
 
-	model, err := h.service.GetModelByID(ctx, id)
+	// Platform-wide fetch: the debug route is SystemAdmin-gated, and a
+	// system admin may have no workspace binding (no tenant in context).
+	model, err := h.service.GetPlatformModel(ctx, id)
 	if err != nil {
 		if err == service.ErrModelNotFound {
 			c.Error(errors.NewNotFoundError("Model not found"))
@@ -544,6 +547,66 @@ type UpdateModelRequest struct {
 	Type        types.ModelType       `json:"type"`
 }
 
+// applyUpdateModelRequest copies the mutable fields of req onto model,
+// preserving stored credentials and backend-managed parameter fields.
+// Shared by the tenant-scoped PUT /models/:id and the system-admin
+// PUT /system/admin/models/:id. Returns a formatted SSRF error when the
+// requested Base URL is not allowed.
+func applyUpdateModelRequest(
+	ctx context.Context, id string, model *types.Model, req UpdateModelRequest,
+) error {
+	// Update model fields if they are provided in the request
+	if req.Name != "" {
+		model.Name = req.Name
+	}
+	if req.DisplayName != nil {
+		model.DisplayName = secutils.SanitizeForLog(*req.DisplayName)
+	}
+	model.Description = req.Description
+
+	// SSRF validation for updated model BaseURL
+	if req.Parameters.BaseURL != "" {
+		if err := secutils.ValidateURLForSSRF(req.Parameters.BaseURL); err != nil {
+			logger.Warnf(ctx, "SSRF validation failed for model BaseURL: %v", err)
+			return errors.NewBadRequestError(secutils.FormatSSRFError("Base URL", req.Parameters.BaseURL, err))
+		}
+	}
+	// Credentials (api_key, app_secret) NEVER flow through this endpoint —
+	// they live behind the /credentials subresource. Force-preserve them by
+	// snapshotting the stored values before copying request fields in, so
+	// that even a misbehaving caller that puts api_key in the body cannot
+	// clobber a stored credential. Log a warning to spot stale callers.
+	storedAPIKey := model.Parameters.APIKey
+	storedAppSecret := model.Parameters.AppSecret
+	if req.Parameters.APIKey != "" && req.Parameters.APIKey != storedAPIKey {
+		logger.Warnf(ctx,
+			"deprecated: api_key in PUT /models/%s body is ignored; use PUT /credentials instead", id)
+	}
+	if req.Parameters.AppSecret != "" && req.Parameters.AppSecret != storedAppSecret {
+		logger.Warnf(ctx,
+			"deprecated: app_secret in PUT /models/%s body is ignored; use PUT /credentials instead", id)
+	}
+	newParams := req.Parameters
+	newParams.APIKey = storedAPIKey
+	newParams.AppSecret = storedAppSecret
+	// Preserve backend-managed fields not sent by the frontend either.
+	newParams.ParameterSize = model.Parameters.ParameterSize
+	if newParams.InterfaceType == "" {
+		newParams.InterfaceType = model.Parameters.InterfaceType
+	}
+	if newParams.AppID == "" {
+		newParams.AppID = model.Parameters.AppID
+	}
+	if newParams.ExtraConfig == nil {
+		newParams.ExtraConfig = model.Parameters.ExtraConfig
+	}
+	model.Parameters = newParams
+
+	model.Source = req.Source
+	model.Type = req.Type
+	return nil
+}
+
 // UpdateModel godoc
 // @Summary      更新模型
 // @Description  更新模型配置信息
@@ -589,56 +652,15 @@ func (h *ModelHandler) UpdateModel(c *gin.Context) {
 		return
 	}
 
-	// Update model fields if they are provided in the request
-	if req.Name != "" {
-		model.Name = req.Name
-	}
-	if req.DisplayName != nil {
-		model.DisplayName = secutils.SanitizeForLog(*req.DisplayName)
-	}
-	model.Description = req.Description
-
-	// SSRF validation for updated model BaseURL
-	if req.Parameters.BaseURL != "" {
-		if err := secutils.ValidateURLForSSRF(req.Parameters.BaseURL); err != nil {
-			logger.Warnf(ctx, "SSRF validation failed for model BaseURL: %v", err)
-			c.Error(errors.NewBadRequestError(secutils.FormatSSRFError("Base URL", req.Parameters.BaseURL, err)))
+	if err := applyUpdateModelRequest(ctx, id, model, req); err != nil {
+		if appErr, ok := errors.IsAppError(err); ok {
+			c.Error(appErr)
 			return
 		}
+		logger.ErrorWithFields(ctx, err, nil)
+		c.Error(errors.NewInternalServerError(err.Error()))
+		return
 	}
-	// Credentials (api_key, app_secret) NEVER flow through this endpoint —
-	// they live behind the /credentials subresource. Force-preserve them by
-	// snapshotting the stored values before copying request fields in, so
-	// that even a misbehaving caller that puts api_key in the body cannot
-	// clobber a stored credential. Log a warning to spot stale callers.
-	storedAPIKey := model.Parameters.APIKey
-	storedAppSecret := model.Parameters.AppSecret
-	if req.Parameters.APIKey != "" && req.Parameters.APIKey != storedAPIKey {
-		logger.Warnf(ctx,
-			"deprecated: api_key in PUT /models/%s body is ignored; use PUT /credentials instead", id)
-	}
-	if req.Parameters.AppSecret != "" && req.Parameters.AppSecret != storedAppSecret {
-		logger.Warnf(ctx,
-			"deprecated: app_secret in PUT /models/%s body is ignored; use PUT /credentials instead", id)
-	}
-	newParams := req.Parameters
-	newParams.APIKey = storedAPIKey
-	newParams.AppSecret = storedAppSecret
-	// Preserve backend-managed fields not sent by the frontend either.
-	newParams.ParameterSize = model.Parameters.ParameterSize
-	if newParams.InterfaceType == "" {
-		newParams.InterfaceType = model.Parameters.InterfaceType
-	}
-	if newParams.AppID == "" {
-		newParams.AppID = model.Parameters.AppID
-	}
-	if newParams.ExtraConfig == nil {
-		newParams.ExtraConfig = model.Parameters.ExtraConfig
-	}
-	model.Parameters = newParams
-
-	model.Source = req.Source
-	model.Type = req.Type
 
 	logger.Infof(ctx, "Updating model, ID: %s, Name: %s", id, model.Name)
 	if err := h.service.UpdateModel(ctx, model); err != nil {

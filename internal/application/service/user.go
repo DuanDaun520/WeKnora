@@ -3,15 +3,10 @@ package service
 import (
 	"context"
 	"crypto/rand"
-	"crypto/rsa"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math/big"
-	"net/http"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -21,7 +16,6 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
-	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/config"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -45,6 +39,12 @@ var (
 	// of the requested identity (email or username) collides with an existing
 	// user, so a blind idempotent retry would return the wrong account.
 	ErrUserIdentityConflict = errors.New("email and username refer to conflicting existing identities")
+
+	// ErrUserEmployeeIDExists is returned by AdminCreateUser when the
+	// requested employee ID (工号) is already taken by a live account.
+	// Employee ID is the sole identity key in enterprise mode, so a
+	// collision is always "the same account", never a conflicting identity.
+	ErrUserEmployeeIDExists = errors.New("user with this employee ID already exists")
 
 	// ErrPasswordPolicy is returned when a newly chosen password does not
 	// meet the product's public 8-32 character, letter-and-number contract.
@@ -127,119 +127,26 @@ func (s *userService) complexPasswordEnabled(ctx context.Context) bool {
 	return ResolveComplexPasswordEnabled(ctx, s.config, s.systemSettingSvc)
 }
 
-// Register creates a new user account
-func (s *userService) Register(ctx context.Context, req *types.RegisterRequest) (*types.User, error) {
-	logger.Info(ctx, "Start user registration")
-
-	// Validate input
-	if req.Username == "" || req.Email == "" || req.Password == "" {
-		return nil, errors.New("username, email and password are required")
-	}
-
-	// Check if user already exists
-	existingUser, _ := s.userRepo.GetUserByEmail(ctx, req.Email)
-	if existingUser != nil {
-		return nil, ErrUserEmailExists
-	}
-
-	existingUser, _ = s.userRepo.GetUserByUsername(ctx, req.Username)
-	if existingUser != nil {
-		return nil, ErrUserUsernameExists
-	}
-
-	// Hash password
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		logger.Errorf(ctx, "Failed to hash password: %v", err)
-		return nil, errors.New("failed to process password")
-	}
-
-	provisioning := req.TenantProvisioning
-	if provisioning == "" {
-		provisioning = types.TenantProvisioningCreatePersonal
-	}
-	if !provisioning.IsValid() {
-		return nil, fmt.Errorf("invalid tenant provisioning mode %q", provisioning)
-	}
-
-	var createdTenant *types.Tenant
-	if provisioning == types.TenantProvisioningCreatePersonal {
-		// Note: RetrieverEngines is left empty - system will use defaults
-		// from RETRIEVE_DRIVER env.
-		tenant := &types.Tenant{
-			Name:        fmt.Sprintf("%s's Workspace", secutils.SanitizeForLog(req.Username)),
-			Description: "Default workspace",
-			Status:      "active",
-		}
-
-		createdTenant, err = s.tenantService.CreateTenant(ctx, tenant)
-		if err != nil {
-			logger.Errorf(ctx, "Failed to create workspace")
-			return nil, errors.New("failed to create workspace")
-		}
-	}
-
-	// Create user
-	user := &types.User{
-		ID:           uuid.New().String(),
-		Username:     req.Username,
-		Email:        req.Email,
-		PasswordHash: string(hashedPassword),
-		TenantID:     0,
-		IsActive:     true,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-	}
-	if createdTenant != nil {
-		user.TenantID = createdTenant.ID
-	}
-
-	err = s.userRepo.CreateUser(ctx, user)
-	if err != nil {
-		logger.Errorf(ctx, "Failed to create user: %v", err)
-		if createdTenant != nil {
-			if rollbackErr := s.tenantService.DeleteTenant(ctx, createdTenant.ID); rollbackErr != nil {
-				logger.Errorf(ctx, "Failed to roll back tenant %d after user creation failure: %v", createdTenant.ID, rollbackErr)
-			}
-		}
-		return nil, errors.New("failed to create user")
-	}
-
-	// Bootstrap an Owner membership so the registrant has full control over
-	// the tenant their account just created. Failure here only logs — the
-	// user record exists and the auth middleware's orphan-tenant recovery
-	// path will recreate the membership on next login.
-	if createdTenant != nil && s.memberService != nil {
-		if _, err := s.memberService.EnsureOwner(ctx, user.ID, createdTenant.ID); err != nil {
-			logger.Errorf(ctx, "Failed to create owner membership for user %s tenant %d: %v",
-				user.ID, createdTenant.ID, err)
-			_ = s.userRepo.DeleteUser(ctx, user.ID)
-			_ = s.tenantService.DeleteTenant(ctx, createdTenant.ID)
-			return nil, errors.New("failed to finalise workspace ownership")
-		}
-	}
-
-	logger.Info(ctx, "User registered successfully")
-	return user, nil
-}
-
 // Login authenticates a user and returns tokens
 func (s *userService) Login(ctx context.Context, req *types.LoginRequest) (*types.LoginResponse, error) {
 	logger.Info(ctx, "Start user login")
-	// Get user by email
-	user, err := s.userRepo.GetUserByEmail(ctx, req.Email)
+	// Look up by employee ID (工号) — the sole login identifier in the
+	// enterprise mode. The generic error message deliberately mirrors the
+	// identifier-agnostic wording so probes cannot distinguish "unknown
+	// employee id" from "wrong password".
+	user, err := s.userRepo.GetUserByEmployeeID(ctx, req.EmployeeID)
 	if err != nil {
-		logger.Errorf(ctx, "Failed to get user by email: %v", err)
+		logger.Errorf(ctx, "Failed to get user by employee id: %v", err)
 		return &types.LoginResponse{
 			Success: false,
-			Message: "Invalid email or password",
+			Message: "Invalid employee ID or password",
 		}, nil
 	}
 	if user == nil {
-		logger.Warn(ctx, "User not found for email")
+		logger.Warn(ctx, "User not found for employee id")
 		return &types.LoginResponse{
 			Success: false,
-			Message: "Invalid email or password",
+			Message: "Invalid employee ID or password",
 		}, nil
 	}
 
@@ -258,7 +165,7 @@ func (s *userService) Login(ctx context.Context, req *types.LoginRequest) (*type
 		logger.Warn(ctx, "Password verification failed")
 		return &types.LoginResponse{
 			Success: false,
-			Message: "Invalid email or password",
+			Message: "Invalid employee ID or password",
 		}, nil
 	}
 	logger.Info(ctx, "Password verification successful")
@@ -295,13 +202,14 @@ func (s *userService) Login(ctx context.Context, req *types.LoginRequest) (*type
 
 	logger.Info(ctx, "User logged in successfully")
 	return &types.LoginResponse{
-		Success:      true,
-		Message:      "Login successful",
-		User:         user,
-		ActiveTenant: tenant,
-		Memberships:  memberships,
-		Token:        accessToken,
-		RefreshToken: refreshToken,
+		Success:            true,
+		Message:            "Login successful",
+		User:               user,
+		ActiveTenant:       tenant,
+		Memberships:        memberships,
+		Token:              accessToken,
+		RefreshToken:       refreshToken,
+		MustChangePassword: user.MustChangePassword,
 	}, nil
 }
 
@@ -430,136 +338,6 @@ func synthFallbackMembership(user *types.User, activeTenant *types.Tenant) []typ
 	}}
 }
 
-// GetOIDCAuthorizationURL builds the OIDC authorization URL.
-func (s *userService) GetOIDCAuthorizationURL(ctx context.Context, redirectURI string) (*types.OIDCAuthURLResponse, error) {
-	cfg, err := s.getOIDCConfig(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(redirectURI) == "" {
-		return nil, errors.New("redirect_uri is required")
-	}
-
-	nonce, err := generateRandomString(24)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate state: %w", err)
-	}
-
-	state, err := secutils.SignOIDCState(&secutils.OIDCStatePayload{
-		Nonce:       nonce,
-		RedirectURI: strings.TrimSpace(redirectURI),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to encode OIDC state: %w", err)
-	}
-
-	query := url.Values{}
-	query.Set("response_type", "code")
-	query.Set("client_id", cfg.ClientID)
-	query.Set("redirect_uri", redirectURI)
-	query.Set("scope", strings.Join(cfg.Scopes, " "))
-	query.Set("state", state)
-
-	authURL := cfg.AuthorizationEndpoint
-	if strings.Contains(authURL, "?") {
-		authURL += "&" + query.Encode()
-	} else {
-		authURL += "?" + query.Encode()
-	}
-
-	return &types.OIDCAuthURLResponse{
-		Success:             true,
-		ProviderDisplayName: cfg.ProviderDisplayName,
-		AuthorizationURL:    authURL,
-		State:               state,
-		Nonce:               nonce,
-	}, nil
-}
-
-// LoginWithOIDC exchanges code for tokens, loads user info, provisions user if
-// needed, and returns local login tokens. provisioning is the default tenant
-// mode applied only when a brand-new local user is auto-created; it is resolved
-// by the caller from the shared auth.default_tenant_mode policy.
-func (s *userService) LoginWithOIDC(
-	ctx context.Context,
-	code, redirectURI string,
-	provisioning types.TenantProvisioningMode,
-) (*types.OIDCCallbackResponse, error) {
-	if strings.TrimSpace(code) == "" {
-		return nil, errors.New("code is required")
-	}
-	if strings.TrimSpace(redirectURI) == "" {
-		return nil, errors.New("redirect_uri is required")
-	}
-
-	cfg, err := s.getOIDCConfig(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	tokenResp, err := s.exchangeOIDCCode(ctx, cfg, code, redirectURI)
-	if err != nil {
-		return nil, err
-	}
-
-	userInfo, err := s.resolveOIDCUserInfo(ctx, cfg, tokenResp)
-	if err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(userInfo.Email) == "" {
-		return nil, errors.New("OIDC provider did not return email")
-	}
-
-	user, err := s.userRepo.GetUserByEmail(ctx, userInfo.Email)
-	if err != nil && !isUserLookupNotFound(err) {
-		return nil, fmt.Errorf("failed to query user by email: %w", err)
-	}
-	isNewUser := false
-	if isUserLookupNotFound(err) || user == nil {
-		user, err = s.provisionOIDCUser(ctx, userInfo, provisioning)
-		if err != nil {
-			return nil, err
-		}
-		isNewUser = true
-	}
-
-	if !user.IsActive {
-		return &types.OIDCCallbackResponse{Success: false, Message: "Account is disabled"}, nil
-	}
-
-	// Resolve target tenant once so the JWT claim and the tenant we
-	// return below stay in sync; see Login for the rationale.
-	resolvedTenantID := s.resolveLoginTenantID(ctx, user)
-	accessToken, refreshToken, err := s.generateTokensForTenant(ctx, user, resolvedTenantID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate local tokens: %w", err)
-	}
-
-	// 拉取 tenant + memberships，让 OIDC 登录的返回结构与本地登录一致，
-	// 前端无须为 OIDC 单独走一次 /auth/me 才能拿到角色。
-	var tenant *types.Tenant
-	if resolvedTenantID > 0 {
-		if t, terr := s.tenantService.GetTenantByID(ctx, resolvedTenantID); terr == nil {
-			tenant = t
-		} else {
-			logger.Warnf(ctx, "OIDC login: failed to load tenant %d for user %s: %v",
-				resolvedTenantID, user.ID, terr)
-		}
-	}
-	memberships := s.buildMembershipsForUser(ctx, user, tenant)
-
-	return &types.OIDCCallbackResponse{
-		Success:      true,
-		Message:      "登录成功",
-		User:         user,
-		Tenant:       tenant,
-		Memberships:  memberships,
-		Token:        accessToken,
-		RefreshToken: refreshToken,
-		IsNewUser:    isNewUser,
-	}, nil
-}
-
 // GetUserByID gets a user by ID
 func (s *userService) GetUserByID(ctx context.Context, id string) (*types.User, error) {
 	return s.userRepo.GetUserByID(ctx, id)
@@ -579,6 +357,20 @@ func (s *userService) GetUserByEmail(ctx context.Context, email string) (*types.
 // GetUserByUsername gets a user by username
 func (s *userService) GetUserByUsername(ctx context.Context, username string) (*types.User, error) {
 	return s.userRepo.GetUserByUsername(ctx, username)
+}
+
+// GetUserByEmployeeID gets a user by employee ID (工号)
+func (s *userService) GetUserByEmployeeID(ctx context.Context, employeeID string) (*types.User, error) {
+	return s.userRepo.GetUserByEmployeeID(ctx, employeeID)
+}
+
+// ListUsersPage lists users for the admin user-management UI. Thin
+// pass-through; the handler enforces SystemAdmin gating and normalises the
+// paging parameters.
+func (s *userService) ListUsersPage(
+	ctx context.Context, query string, tenantID uint64, isActive *bool, offset, limit int,
+) ([]*types.User, int64, error) {
+	return s.userRepo.ListUsersPage(ctx, query, tenantID, isActive, offset, limit)
 }
 
 // GetUserByTenantID gets the first user (owner) of a tenant
@@ -685,11 +477,10 @@ func (s *userService) ChangePassword(ctx context.Context, userID, oldPassword, n
 
 	user.PasswordHash = string(hashedPassword)
 	user.UpdatedAt = time.Now()
-	if user.Preferences.OidcOnlyLogin != nil && *user.Preferences.OidcOnlyLogin {
-		cleared := false
-		user.Preferences.OidcOnlyLogin = &cleared
-	}
-
+	// A successful rotation with the known old credential proves the caller
+	// owns the account — clear the forced-rotation flag that admin-set
+	// initial/reset passwords arm.
+	user.MustChangePassword = false
 	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
 		return err
 	}
@@ -703,6 +494,8 @@ func (s *userService) ChangePassword(ctx context.Context, userID, oldPassword, n
 // credential. Authorization and the cannot-reset-self rule live at the system
 // admin HTTP boundary; this service owns the security-critical persistence and
 // session invalidation so no caller can accidentally update only one of them.
+// The admin-set password is one the user has not chosen, so the target is
+// armed with MustChangePassword and must rotate on next login.
 func (s *userService) AdminResetPassword(ctx context.Context, userID, newPassword string) error {
 	if err := ValidatePasswordPolicy(newPassword, s.complexPasswordEnabled(ctx)); err != nil {
 		return err
@@ -718,6 +511,7 @@ func (s *userService) AdminResetPassword(ctx context.Context, userID, newPasswor
 	}
 
 	user.PasswordHash = string(hashedPassword)
+	user.MustChangePassword = true
 	user.UpdatedAt = time.Now()
 	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
 		return err
@@ -728,18 +522,26 @@ func (s *userService) AdminResetPassword(ctx context.Context, userID, newPasswor
 
 // AdminCreateUser provisions a new local user on behalf of a SystemAdmin.
 //
-// An absent password generates a random one, returned exactly once.
-// Any provided password, must satisfy ValidatePasswordPolicy.
+// Enterprise semantics — this is the ONLY way local accounts come into
+// existence: keyed by employee ID (工号), created tenantless (workspace
+// bindings are managed separately via the admin bindings API), and always
+// starting with MustChangePassword=true so the admin-set or generated
+// initial password must be rotated on first login.
 //
-// Delegates to Register, so duplicate checks, tenant provisioning and Owner
-// membership bootstrapping match public registration.
+// An absent password generates a random one, returned exactly once. Any
+// provided password, the empty string included, must satisfy
+// ValidatePasswordPolicy.
 func (s *userService) AdminCreateUser(
 	ctx context.Context,
 	req *types.AdminCreateUserRequest,
-	provisioning types.TenantProvisioningMode,
 ) (*types.User, string, error) {
-	if req == nil || strings.TrimSpace(req.Username) == "" || strings.TrimSpace(req.Email) == "" {
-		return nil, "", errors.New("username and email are required")
+	if req == nil {
+		return nil, "", errors.New("request is required")
+	}
+	employeeID := strings.TrimSpace(req.EmployeeID)
+	username := strings.TrimSpace(req.Username)
+	if employeeID == "" || username == "" {
+		return nil, "", errors.New("employee ID and username are required")
 	}
 
 	password := ""
@@ -763,68 +565,125 @@ func (s *userService) AdminCreateUser(
 		return nil, "", err
 	}
 
-	user, err := s.Register(ctx, &types.RegisterRequest{
-		Username:           strings.TrimSpace(req.Username),
-		Email:              strings.TrimSpace(req.Email),
-		Password:           password,
-		TenantProvisioning: provisioning,
-	})
-	// WARN: idempotency is sequential only. Two concurrent creates of the
-	// same identity can race past Register's check; the loser gets a 500,
-	// and a retry resolves idempotently.
+	// Sequential duplicate check; a concurrent double-create loses at the
+	// partial unique index and surfaces as a 500 whose retry then lands
+	// here idempotently. Employee ID is the sole identity key, so a hit
+	// always refers to the same account — no conflict variant exists.
+	if existing, err := s.userRepo.GetUserByEmployeeID(ctx, employeeID); err == nil && existing != nil {
+		return existing, "", ErrUserEmployeeIDExists
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
-		// Register owns duplicate detection; on a duplicate we surface
-		// the existing row so the caller can respond idempotently. The
-		// sentinel names the colliding identity, so the lookup is
-		// targeted at exactly that key.
-		switch {
-		case errors.Is(err, ErrUserEmailExists):
-			return s.adminCreateUserOnDuplicate(
-				ctx, req, err,
-				func(ctx context.Context) (*types.User, error) {
-					return s.userRepo.GetUserByEmail(ctx, strings.TrimSpace(req.Email))
-				},
-			)
-		case errors.Is(err, ErrUserUsernameExists):
-			return s.adminCreateUserOnDuplicate(
-				ctx, req, err,
-				func(ctx context.Context) (*types.User, error) {
-					return s.userRepo.GetUserByUsername(ctx, strings.TrimSpace(req.Username))
-				},
-			)
-		}
 		return nil, "", err
 	}
+
+	email := ""
+	if req.Email != nil {
+		email = strings.TrimSpace(*req.Email)
+	}
+
+	user := &types.User{
+		ID:                 uuid.New().String(),
+		EmployeeID:         employeeID,
+		Username:           username,
+		Email:              email,
+		PasswordHash:       string(hashedPassword),
+		TenantID:           0, // tenantless until an admin binds workspaces
+		IsActive:           true,
+		MustChangePassword: true,
+	}
+	if err := s.userRepo.CreateUser(ctx, user); err != nil {
+		return nil, "", err
+	}
+
+	logger.Infof(ctx, "Admin provisioned user account for employee ID %s", secutils.SanitizeForLog(employeeID))
 	if generated {
 		return user, password, nil
 	}
 	return user, "", nil
 }
 
-func (s *userService) adminCreateUserOnDuplicate(
-	ctx context.Context,
-	req *types.AdminCreateUserRequest,
-	dupErr error,
-	lookup func(context.Context) (*types.User, error),
-) (*types.User, string, error) {
-	existing, lookupErr := lookup(ctx)
-	if lookupErr != nil || existing == nil {
-		return nil, "", dupErr
+// EnsureBootstrapAdmin guarantees the deployment has at least one system
+// administrator, creating the default admin account when none exists.
+//
+// Semantics (idempotent, safe to run on every startup):
+//   - Any system admin already present → (false, "", nil), no writes. This
+//     also keeps a bootstrap env var from silently re-granting privileges
+//     an operator revoked from the UI.
+//   - Account with the employee ID already exists (but no sysadmins) →
+//     promote it in place; its password is deliberately NOT touched.
+//   - Otherwise create a fresh tenantless account with IsSystemAdmin=true
+//     and MustChangePassword=true. When password is empty a random
+//     policy-compliant one is generated and returned exactly once so the
+//     caller (startup bootstrap) can surface it in a one-time log line.
+//
+// A concurrent double-startup loses at the employee_id unique index and
+// returns the error; the caller treats bootstrap as best-effort.
+func (s *userService) EnsureBootstrapAdmin(ctx context.Context, employeeID, password string) (bool, string, error) {
+	employeeID = strings.TrimSpace(employeeID)
+	if employeeID == "" {
+		return false, "", errors.New("bootstrap admin employee ID is required")
 	}
-	if adminCreateIdentityMatches(existing, req.Username, req.Email) {
-		return existing, "", dupErr
-	}
-	return nil, "", ErrUserIdentityConflict
-}
 
-// adminCreateIdentityMatches reports whether an existing row is the exact
-// identity an admin create is idempotently retrying (both email and username).
-func adminCreateIdentityMatches(existing *types.User, username, email string) bool {
-	if existing == nil {
-		return false
+	if _, total, err := s.userRepo.ListSystemAdmins(ctx, 0, 1); err != nil {
+		return false, "", err
+	} else if total > 0 {
+		return false, "", nil
 	}
-	return existing.Username == strings.TrimSpace(username) &&
-		existing.Email == strings.TrimSpace(email)
+
+	// Existing account with this employee ID: promote in place.
+	if existing, err := s.userRepo.GetUserByEmployeeID(ctx, employeeID); err == nil && existing != nil {
+		if existing.IsSystemAdmin {
+			return false, "", nil
+		}
+		existing.IsSystemAdmin = true
+		if err := s.userRepo.UpdateUser(ctx, existing); err != nil {
+			return false, "", err
+		}
+		logger.Infof(ctx, "Bootstrap promoted existing account %s to system admin", existing.ID)
+		return true, "", nil
+	}
+
+	generated := false
+	if password == "" {
+		randomPassword, err := generatePolicyCompliantPassword(s.complexPasswordEnabled(ctx))
+		if err != nil {
+			return false, "", fmt.Errorf("failed to generate bootstrap password: %w", err)
+		}
+		password = randomPassword
+		generated = true
+	}
+	if err := ValidatePasswordPolicy(password, s.complexPasswordEnabled(ctx)); err != nil {
+		return false, "", err
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return false, "", err
+	}
+
+	user := &types.User{
+		ID:                 uuid.New().String(),
+		EmployeeID:         employeeID,
+		Username:           "Administrator",
+		Email:              "",
+		PasswordHash:       string(hashedPassword),
+		TenantID:           0,
+		IsActive:           true,
+		IsSystemAdmin:      true,
+		MustChangePassword: true,
+	}
+	if err := s.userRepo.CreateUser(ctx, user); err != nil {
+		return false, "", err
+	}
+
+	logger.Infof(ctx, "Bootstrap created default system admin account (employee ID: %s, user ID: %s)",
+		secutils.SanitizeForLog(employeeID), user.ID)
+	if generated {
+		return true, password, nil
+	}
+	return true, "", nil
 }
 
 // ValidatePassword validates user password
@@ -1407,320 +1266,6 @@ func (s *userService) SearchUsers(ctx context.Context, query string, limit int) 
 	return s.userRepo.SearchUsers(ctx, query, limit)
 }
 
-type oidcDiscoveryDocument struct {
-	AuthorizationEndpoint string `json:"authorization_endpoint"`
-	TokenEndpoint         string `json:"token_endpoint"`
-	UserInfoEndpoint      string `json:"userinfo_endpoint"`
-	JwksURI               string `json:"jwks_uri"`
-	Issuer                string `json:"issuer"`
-}
-
-type oidcTokenResponse struct {
-	AccessToken string `json:"access_token"`
-	IDToken     string `json:"id_token"`
-	TokenType   string `json:"token_type"`
-}
-
-func newOIDCHTTPClient() *http.Client {
-	cfg := secutils.DefaultSSRFSafeHTTPClientConfig()
-	cfg.Timeout = 30 * time.Second
-	return secutils.NewSSRFSafeHTTPClient(cfg)
-}
-
-func validateOIDCEndpoint(label, endpoint string, required bool) error {
-	endpoint = strings.TrimSpace(endpoint)
-	if endpoint == "" {
-		if required {
-			return fmt.Errorf("OIDC %s endpoint is required", label)
-		}
-		return nil
-	}
-	if err := secutils.ValidateURLForSSRF(endpoint); err != nil {
-		return fmt.Errorf("OIDC %s endpoint failed SSRF validation: %w", label, err)
-	}
-	return nil
-}
-
-func validateOIDCEndpoints(cfg *config.OIDCAuthConfig) error {
-	if err := validateOIDCEndpoint("authorization", cfg.AuthorizationEndpoint, true); err != nil {
-		return err
-	}
-	if err := validateOIDCEndpoint("token", cfg.TokenEndpoint, true); err != nil {
-		return err
-	}
-	if err := validateOIDCEndpoint("userinfo", cfg.UserInfoEndpoint, false); err != nil {
-		return err
-	}
-	if err := validateOIDCEndpoint("jwks", cfg.JwksURI, false); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *userService) getOIDCConfig(ctx context.Context) (*config.OIDCAuthConfig, error) {
-	if s.config == nil || s.config.OIDCAuth == nil || !s.config.OIDCAuth.Enable {
-		return nil, errors.New("OIDC login is disabled")
-	}
-	cfg := *s.config.OIDCAuth
-	if cfg.UserInfoMapping == nil {
-		cfg.UserInfoMapping = &config.OIDCUserInfoMapping{Username: "name", Email: "email"}
-	}
-	if err := s.populateOIDCEndpoints(ctx, &cfg); err != nil {
-		return nil, err
-	}
-	return &cfg, nil
-}
-
-func oidcNeedsDiscovery(cfg *config.OIDCAuthConfig) bool {
-	return strings.TrimSpace(cfg.AuthorizationEndpoint) == "" ||
-		strings.TrimSpace(cfg.TokenEndpoint) == "" ||
-		strings.TrimSpace(cfg.JwksURI) == "" ||
-		strings.TrimSpace(cfg.IssuerURL) == ""
-}
-
-func (s *userService) populateOIDCEndpoints(ctx context.Context, cfg *config.OIDCAuthConfig) error {
-	if oidcNeedsDiscovery(cfg) {
-		if strings.TrimSpace(cfg.DiscoveryURL) == "" {
-			if strings.TrimSpace(cfg.AuthorizationEndpoint) == "" || strings.TrimSpace(cfg.TokenEndpoint) == "" {
-				return errors.New("OIDC discovery_url or explicit endpoints are required")
-			}
-		} else if err := s.applyOIDCDiscoveryDocument(ctx, cfg); err != nil {
-			return err
-		}
-	}
-	if strings.TrimSpace(cfg.AuthorizationEndpoint) == "" || strings.TrimSpace(cfg.TokenEndpoint) == "" {
-		return errors.New("OIDC discovery document missing required endpoints")
-	}
-	return validateOIDCEndpoints(cfg)
-}
-
-func (s *userService) applyOIDCDiscoveryDocument(ctx context.Context, cfg *config.OIDCAuthConfig) error {
-	if err := validateOIDCEndpoint("discovery", cfg.DiscoveryURL, true); err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, cfg.DiscoveryURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create OIDC discovery request: %w", err)
-	}
-
-	resp, err := newOIDCHTTPClient().Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to load OIDC discovery document: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return fmt.Errorf("OIDC discovery request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var doc oidcDiscoveryDocument
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc); err != nil {
-		return fmt.Errorf("failed to decode OIDC discovery document: %w", err)
-	}
-	if strings.TrimSpace(cfg.AuthorizationEndpoint) == "" {
-		cfg.AuthorizationEndpoint = doc.AuthorizationEndpoint
-	}
-	if strings.TrimSpace(cfg.TokenEndpoint) == "" {
-		cfg.TokenEndpoint = doc.TokenEndpoint
-	}
-	if strings.TrimSpace(cfg.UserInfoEndpoint) == "" {
-		cfg.UserInfoEndpoint = doc.UserInfoEndpoint
-	}
-	if strings.TrimSpace(cfg.JwksURI) == "" {
-		cfg.JwksURI = doc.JwksURI
-	}
-	if strings.TrimSpace(cfg.IssuerURL) == "" {
-		cfg.IssuerURL = doc.Issuer
-	}
-	return nil
-}
-
-func (s *userService) exchangeOIDCCode(ctx context.Context, cfg *config.OIDCAuthConfig, code, redirectURI string) (*oidcTokenResponse, error) {
-	if err := validateOIDCEndpoint("token", cfg.TokenEndpoint, true); err != nil {
-		return nil, err
-	}
-
-	form := url.Values{}
-	form.Set("grant_type", "authorization_code")
-	form.Set("code", code)
-	form.Set("redirect_uri", redirectURI)
-	form.Set("client_id", cfg.ClientID)
-	form.Set("client_secret", cfg.ClientSecret)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.TokenEndpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create OIDC token request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := newOIDCHTTPClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to exchange OIDC code: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("OIDC token exchange failed: status=%d", resp.StatusCode)
-	}
-
-	var tokenResp oidcTokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		return nil, fmt.Errorf("failed to decode OIDC token response: %w", err)
-	}
-	if strings.TrimSpace(tokenResp.AccessToken) == "" && strings.TrimSpace(tokenResp.IDToken) == "" {
-		return nil, errors.New("OIDC token response missing access_token and id_token")
-	}
-	return &tokenResp, nil
-}
-
-func (s *userService) resolveOIDCUserInfo(ctx context.Context, cfg *config.OIDCAuthConfig, tokenResp *oidcTokenResponse) (*types.OIDCUserInfo, error) {
-	claims := map[string]interface{}{}
-	verifiedFromIDToken := false
-
-	if idToken := strings.TrimSpace(tokenResp.IDToken); idToken != "" {
-		if strings.TrimSpace(cfg.JwksURI) == "" {
-			if strings.TrimSpace(cfg.UserInfoEndpoint) == "" || strings.TrimSpace(tokenResp.AccessToken) == "" {
-				return nil, errors.New("cannot verify OIDC id_token: no jwks_uri configured")
-			}
-			logger.Warnf(ctx, "OIDC id_token ignored: no jwks_uri configured; relying on userinfo endpoint")
-		} else {
-			idTokenClaims, err := s.verifyOIDCIDToken(ctx, cfg, idToken)
-			if err != nil {
-				return nil, fmt.Errorf("OIDC id_token verification failed: %w", err)
-			}
-			for k, v := range idTokenClaims {
-				claims[k] = v
-			}
-			verifiedFromIDToken = true
-		}
-	}
-
-	if strings.TrimSpace(cfg.UserInfoEndpoint) != "" && strings.TrimSpace(tokenResp.AccessToken) != "" {
-		userInfoClaims, err := s.fetchOIDCUserInfo(ctx, cfg.UserInfoEndpoint, tokenResp.AccessToken)
-		if err != nil {
-			if !verifiedFromIDToken {
-				return nil, fmt.Errorf("failed to fetch OIDC userinfo: %w", err)
-			}
-			logger.Warnf(ctx, "Failed to fetch OIDC userinfo, using verified id_token claims: %v", err)
-		} else {
-			for k, v := range userInfoClaims {
-				claims[k] = v
-			}
-		}
-	}
-
-	if len(claims) == 0 {
-		return nil, errors.New("OIDC provider returned no user claims")
-	}
-
-	info := &types.OIDCUserInfo{Claims: claims}
-	if sub, _ := claims["sub"].(string); sub != "" {
-		info.Subject = sub
-	}
-	info.Username = extractClaimAsString(claims, cfg.UserInfoMapping.Username)
-	info.Email = extractClaimAsString(claims, cfg.UserInfoMapping.Email)
-	if info.Username == "" {
-		info.Username = extractClaimAsString(claims, "preferred_username")
-	}
-	if info.Username == "" {
-		info.Username = extractClaimAsString(claims, "name")
-	}
-	if info.Username == "" && info.Email != "" {
-		info.Username = strings.Split(info.Email, "@")[0]
-	}
-	return info, nil
-}
-
-func (s *userService) fetchOIDCUserInfo(ctx context.Context, endpoint, accessToken string) (map[string]interface{}, error) {
-	if err := validateOIDCEndpoint("userinfo", endpoint, true); err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := newOIDCHTTPClient().Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("userinfo request failed: status=%d", resp.StatusCode)
-	}
-
-	var claims map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&claims); err != nil {
-		return nil, err
-	}
-	return claims, nil
-}
-
-// provisionOIDCUser auto-creates a local account for a first-time OIDC
-// login. The provisioning mode is decided by the caller (the OIDC callback
-// handler resolves it from the same auth.default_tenant_mode system-setting
-// that governs public password registration) so both entry points share a
-// single deployment policy. An empty mode falls back to create_personal via
-// Register's own defaulting.
-func (s *userService) provisionOIDCUser(
-	ctx context.Context,
-	info *types.OIDCUserInfo,
-	provisioning types.TenantProvisioningMode,
-) (*types.User, error) {
-	username := s.generateOIDCUsername(ctx, info)
-	randomPassword, err := generateRandomString(32)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate password for OIDC user: %w", err)
-	}
-
-	user, err := s.Register(ctx, &types.RegisterRequest{
-		Username:           username,
-		Email:              info.Email,
-		Password:           randomPassword,
-		TenantProvisioning: provisioning,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to auto-provision OIDC user: %w", err)
-	}
-
-	oidcOnly := true
-	user.Preferences.OidcOnlyLogin = &oidcOnly
-	user.UpdatedAt = time.Now()
-	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
-		return nil, fmt.Errorf("failed to mark OIDC-only login preference: %w", err)
-	}
-	return user, nil
-}
-
-func (s *userService) generateOIDCUsername(ctx context.Context, info *types.OIDCUserInfo) string {
-	base := sanitizeUsernameCandidate(info.Username)
-	if base == "" {
-		base = sanitizeUsernameCandidate(strings.Split(info.Email, "@")[0])
-	}
-	if base == "" {
-		base = "oidc-user"
-	}
-
-	candidate := base
-	for i := 0; i < 20; i++ {
-		existing, err := s.userRepo.GetUserByUsername(ctx, candidate)
-		if isUserLookupNotFound(err) || (err == nil && existing == nil) {
-			return candidate
-		}
-		if err != nil && !isUserLookupNotFound(err) {
-			logger.Warnf(ctx, "Failed to check existing OIDC username %q: %v", candidate, err)
-		}
-		candidate = fmt.Sprintf("%s-%d", base, i+1)
-	}
-	return fmt.Sprintf("%s-%d", base, time.Now().Unix())
-}
-
 func generateRandomString(length int) (string, error) {
 	buffer := make([]byte, length)
 	if _, err := rand.Read(buffer); err != nil {
@@ -1814,215 +1359,4 @@ func generatePolicyCompliantPassword(complexPasswordEnabled bool) (string, error
 			return password, nil
 		}
 	}
-}
-
-// oidcJWK / oidcJWKS model the subset of a JWKS document we need to rebuild an
-// RSA signing key. Only RSA keys are supported (the overwhelmingly common OIDC
-// id_token signing type); other key types are skipped during lookup.
-type oidcJWK struct {
-	Kty string `json:"kty"`
-	Kid string `json:"kid"`
-	Alg string `json:"alg"`
-	Use string `json:"use"`
-	N   string `json:"n"`
-	E   string `json:"e"`
-}
-
-type oidcJWKS struct {
-	Keys []oidcJWK `json:"keys"`
-}
-
-// rsaPublicKey rebuilds an *rsa.PublicKey from the base64url modulus/exponent of
-// a JWK (RFC 7518 §6.3.1).
-func decodeJWKBase64(value string) ([]byte, error) {
-	if b, err := base64.RawURLEncoding.DecodeString(value); err == nil && len(b) > 0 {
-		return b, nil
-	}
-	return base64.URLEncoding.DecodeString(value)
-}
-
-func (k oidcJWK) rsaPublicKey() (*rsa.PublicKey, error) {
-	if !strings.EqualFold(k.Kty, "RSA") {
-		return nil, fmt.Errorf("unsupported JWK key type: %s", k.Kty)
-	}
-	nBytes, err := decodeJWKBase64(k.N)
-	if err != nil {
-		return nil, fmt.Errorf("invalid JWK modulus: %w", err)
-	}
-	eBytes, err := decodeJWKBase64(k.E)
-	if err != nil {
-		return nil, fmt.Errorf("invalid JWK exponent: %w", err)
-	}
-	if len(nBytes) == 0 || len(eBytes) == 0 {
-		return nil, errors.New("empty JWK modulus or exponent")
-	}
-	eInt := new(big.Int).SetBytes(eBytes)
-	if !eInt.IsInt64() {
-		return nil, errors.New("invalid JWK exponent value")
-	}
-	e := int(eInt.Int64())
-	if e <= 0 {
-		return nil, errors.New("invalid JWK exponent value")
-	}
-	return &rsa.PublicKey{N: new(big.Int).SetBytes(nBytes), E: e}, nil
-}
-
-func (jwks *oidcJWKS) rsaKeyForKid(kid string) (*rsa.PublicKey, error) {
-	var usable []oidcJWK
-	for _, k := range jwks.Keys {
-		if k.Use != "" && !strings.EqualFold(k.Use, "sig") {
-			continue
-		}
-		if k.Kty != "" && !strings.EqualFold(k.Kty, "RSA") {
-			continue
-		}
-		if kid != "" && k.Kid != kid {
-			continue
-		}
-		if _, err := k.rsaPublicKey(); err != nil {
-			continue
-		}
-		usable = append(usable, k)
-	}
-	if kid != "" {
-		if len(usable) == 0 {
-			return nil, fmt.Errorf("no matching JWKS RSA key for kid %q", kid)
-		}
-		return usable[0].rsaPublicKey()
-	}
-	if len(usable) == 0 {
-		return nil, errors.New("no matching JWKS key for id_token")
-	}
-	if len(usable) > 1 {
-		return nil, errors.New("id_token missing kid and JWKS contains multiple RSA signing keys")
-	}
-	return usable[0].rsaPublicKey()
-}
-
-// fetchOIDCJWKS loads the provider's JWKS document over the SSRF-safe client.
-func (s *userService) fetchOIDCJWKS(ctx context.Context, jwksURI string) (*oidcJWKS, error) {
-	if err := validateOIDCEndpoint("jwks", jwksURI, true); err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURI, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := newOIDCHTTPClient().Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 2048))
-		return nil, fmt.Errorf("JWKS request failed: status=%d", resp.StatusCode)
-	}
-
-	var jwks oidcJWKS
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&jwks); err != nil {
-		return nil, fmt.Errorf("failed to decode JWKS document: %w", err)
-	}
-	if len(jwks.Keys) == 0 {
-		return nil, errors.New("JWKS document contains no keys")
-	}
-	return &jwks, nil
-}
-
-const oidcIDTokenLeeway = 2 * time.Minute
-
-// verifyOIDCIDToken cryptographically verifies an OIDC id_token: it checks the
-// RSA signature against the provider's JWKS (matched by kid) and validates the
-// issuer, audience (client_id), expiry and subject. It returns the verified claims.
-func (s *userService) verifyOIDCIDToken(
-	ctx context.Context, cfg *config.OIDCAuthConfig, idToken string,
-) (map[string]interface{}, error) {
-	if strings.TrimSpace(cfg.JwksURI) == "" {
-		return nil, errors.New("cannot verify OIDC id_token: no jwks_uri configured")
-	}
-	if strings.TrimSpace(cfg.IssuerURL) == "" {
-		return nil, errors.New("cannot verify OIDC id_token: issuer is not configured")
-	}
-	if strings.TrimSpace(cfg.ClientID) == "" {
-		return nil, errors.New("cannot verify OIDC id_token: client_id is not configured")
-	}
-
-	jwks, err := s.fetchOIDCJWKS(ctx, cfg.JwksURI)
-	if err != nil {
-		return nil, err
-	}
-
-	keyFunc := func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected id_token signing method: %v", token.Header["alg"])
-		}
-		kid, _ := token.Header["kid"].(string)
-		return jwks.rsaKeyForKid(kid)
-	}
-
-	claims := jwt.MapClaims{}
-	if _, err := jwt.NewParser(
-		jwt.WithValidMethods([]string{"RS256", "RS384", "RS512"}),
-		jwt.WithExpirationRequired(),
-		jwt.WithLeeway(oidcIDTokenLeeway),
-		jwt.WithIssuer(strings.TrimSpace(cfg.IssuerURL)),
-		jwt.WithAudience(strings.TrimSpace(cfg.ClientID)),
-	).ParseWithClaims(idToken, claims, keyFunc); err != nil {
-		return nil, fmt.Errorf("id_token verification failed: %w", err)
-	}
-	verified := map[string]interface{}(claims)
-	if strings.TrimSpace(extractClaimAsString(verified, "sub")) == "" {
-		return nil, errors.New("id_token missing sub claim")
-	}
-	return verified, nil
-}
-
-func extractClaimAsString(claims map[string]interface{}, key string) string {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return ""
-	}
-	value, ok := claims[key]
-	if !ok || value == nil {
-		return ""
-	}
-	switch v := value.(type) {
-	case string:
-		return strings.TrimSpace(v)
-	default:
-		return strings.TrimSpace(fmt.Sprint(v))
-	}
-}
-
-func sanitizeUsernameCandidate(value string) string {
-	value = strings.TrimSpace(strings.ToLower(value))
-	if value == "" {
-		return ""
-	}
-	var b strings.Builder
-	lastDash := false
-	for _, r := range value {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '.' {
-			b.WriteRune(r)
-			lastDash = false
-			continue
-		}
-		if !lastDash {
-			b.WriteByte('-')
-			lastDash = true
-		}
-	}
-	result := strings.Trim(b.String(), "-._")
-	if len(result) > 50 {
-		result = strings.Trim(result[:50], "-._")
-	}
-	return result
-}
-
-func isUserLookupNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	return errors.Is(err, apprepo.ErrUserNotFound) || strings.Contains(strings.ToLower(err.Error()), "user not found")
 }

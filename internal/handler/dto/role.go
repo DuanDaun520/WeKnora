@@ -30,13 +30,3 @@ func apiKeyCanManageIntegrationSecrets(ctx context.Context) bool {
 	}
 	return scope.HasCapability(types.APIKeyCapabilityManageTenantSettings)
 }
-
-// RoleCanViewTenantAPIKey is true for Owner+ only.
-func RoleCanViewTenantAPIKey(role types.TenantRole) bool {
-	return role.HasPermission(types.TenantRoleOwner)
-}
-
-// CanViewTenantAPIKey is true for Owner+ only.
-func CanViewTenantAPIKey(ctx context.Context) bool {
-	return RoleCanViewTenantAPIKey(RoleFromContext(ctx))
-}

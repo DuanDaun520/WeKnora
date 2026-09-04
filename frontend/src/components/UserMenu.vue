@@ -73,12 +73,18 @@
             :title="$t('tenant.switcher.menuLabel')" />
         </div>
         <div class="menu-divider"></div>
-        <!-- 账号与空间是头像菜单的核心上下文；基础设施类配置统一收进「全部设置」。 -->
+        <!-- 账号与空间是头像菜单的核心上下文；企业版不再提供「全部设置」/
+             帮助文档 / GitHub 外链入口。 -->
         <div class="menu-item" @click="handleQuickNav('general')">
           <t-icon name="user" class="menu-icon" />
           <span>{{ $t('general.personalSettings') }}</span>
         </div>
-        <div v-if="!authStore.isLiteMode" class="menu-item" @click="handleQuickNav('tenant')">
+        <!-- 空间设置仅空间管理员可见；普通用户的入口由系统管理员在控制台维护。 -->
+        <div
+          v-if="!authStore.isLiteMode && authStore.hasRole('admin')"
+          class="menu-item"
+          @click="handleQuickNav('tenant')"
+        >
           <t-icon name="user-circle" class="menu-icon" />
           <span>{{ $t('settings.workspaceSettings') }}</span>
         </div>
@@ -88,18 +94,9 @@
           <t-icon name="usergroup" class="menu-icon" />
           <span>{{ $t('tenantMember.title') }}</span>
         </div>
-        <div v-if="canManageModels" class="menu-item" @click="handleQuickNav('models')">
-          <t-icon name="control-platform" class="menu-icon" />
-          <span>{{ $t('settings.modelManagement') }}</span>
-        </div>
         <div v-if="canManageSkills" class="menu-item" @click="handleQuickNav('skills')">
           <t-icon :name="SKILL_ICON" class="menu-icon" />
           <span>{{ $t('settings.skills.title') }}</span>
-        </div>
-        <div class="menu-divider"></div>
-        <div class="menu-item" @click="handleSettings">
-          <t-icon name="setting" class="menu-icon" />
-          <span>{{ $t('general.allSettings') }}</span>
         </div>
         <!--
           System administration entry — visible only to users with the
@@ -110,28 +107,6 @@
         <div v-if="authStore.isSystemAdmin" class="menu-item" @click="handleSystemAdmin">
           <t-icon name="server" class="menu-icon" />
           <span>{{ $t('settings.navGroups.systemAdministration') }}</span>
-        </div>
-        <div class="menu-divider"></div>
-        <div class="menu-item" @click="openDocs">
-          <t-icon name="help-circle" class="menu-icon" />
-          <span class="menu-text-with-icon">
-            <span>{{ $t('general.helpAndDocs') }}</span>
-            <svg class="menu-external-icon" viewBox="0 0 16 16" aria-hidden="true">
-              <path fill="currentColor"
-                d="M12.667 8a.667.667 0 0 1 .666.667v4a2.667 2.667 0 0 1-2.666 2.666H4.667a2.667 2.667 0 0 1-2.667-2.666V5.333a2.667 2.667 0 0 1 2.667-2.666h4a.667.667 0 1 1 0 1.333h-4a1.333 1.333 0 0 0-1.333 1.333v7.334A1.333 1.333 0 0 0 4.667 13.333h6a1.333 1.333 0 0 0 1.333-1.333v-4A.667.667 0 0 1 12.667 8Zm2.666-6.667v4a.667.667 0 0 1-1.333 0V3.276l-5.195 5.195a.667.667 0 0 1-.943-.943l5.195-5.195h-2.057a.667.667 0 0 1 0-1.333h4a.667.667 0 0 1 .666.666Z" />
-            </svg>
-          </span>
-        </div>
-        <div class="menu-item" :title="$t('common.githubStarTip')" @click="openGithub">
-          <t-icon name="logo-github" class="menu-icon" />
-          <span class="menu-text-with-icon">
-            <span>{{ $t('common.github') }}</span>
-            <t-icon name="star-filled" class="menu-github-star-icon" size="16px" aria-hidden="true" />
-            <svg class="menu-external-icon" viewBox="0 0 16 16" aria-hidden="true">
-              <path fill="currentColor"
-                d="M12.667 8a.667.667 0 0 1 .666.667v4a2.667 2.667 0 0 1-2.666 2.666H4.667a2.667 2.667 0 0 1-2.667-2.666V5.333a2.667 2.667 0 0 1 2.667-2.666h4a.667.667 0 1 1 0 1.333h-4a1.333 1.333 0 0 0-1.333 1.333v7.334A1.333 1.333 0 0 0 4.667 13.333h6a1.333 1.333 0 0 0 1.333-1.333v-4A.667.667 0 0 1 12.667 8Zm2.666-6.667v4a.667.667 0 0 1-1.333 0V3.276l-5.195 5.195a.667.667 0 0 1-.943-.943l5.195-5.195h-2.057a.667.667 0 0 1 0-1.333h4a.667.667 0 0 1 .666.666Z" />
-            </svg>
-          </span>
         </div>
         <template v-if="!authStore.isLiteMode">
           <div class="menu-divider"></div>
@@ -251,15 +226,11 @@ const showTenantIdentityLine = computed(() => {
   return (authStore.memberships ?? []).length > 1
 })
 
-// 快捷入口使用“管理能力”而不是页面最低可见角色：成员名册和模型列表允许
+// 快捷入口使用“管理能力”而不是页面最低可见角色：成员名册和技能目录允许
 // viewer 浏览，但头像菜单里的“管理”入口只服务实际能执行管理操作的角色。
+// 模型管理已随 000094 迁入系统管理控制台，由下方“系统管理”入口承载。
 const canManageMembers = computed(() =>
   authStore.canAccessAllTenants || authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.members),
-)
-const canManageModels = computed(() =>
-  authStore.canAccessAllTenants ||
-  authStore.isSystemAdmin ||
-  authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.models),
 )
 const canManageSkills = computed(() =>
   authStore.canAccessAllTenants ||
@@ -300,13 +271,6 @@ const handleQuickNav = (section: string) => {
   menuVisible.value = false
   uiStore.openSettings()
   router.push({ path: '/platform/settings', query: { section } })
-}
-
-// 打开设置
-const handleSettings = () => {
-  menuVisible.value = false
-  uiStore.openSettings()
-  router.push('/platform/settings')
 }
 
 // Open the platform administration group inside the standard Settings
@@ -501,17 +465,6 @@ const clampFloatingToViewport = (selector: string, target: { value: Record<strin
 const reopenGuide = () => {
   menuVisible.value = false
   openNewUserGuide()
-}
-
-const openDocs = () => {
-  menuVisible.value = false
-  window.open('https://github.com/Tencent/WeKnora/tree/main/docs', '_blank')
-}
-
-// 打开 GitHub
-const openGithub = () => {
-  menuVisible.value = false
-  window.open('https://github.com/Tencent/WeKnora', '_blank')
 }
 
 // 注销
@@ -1016,24 +969,6 @@ onUnmounted(() => {
     }
   }
 
-  .menu-text-with-icon {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    color: inherit;
-    min-width: 0;
-
-    >span:first-of-type {
-      display: inline-flex;
-      align-items: center;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-
   .menu-new-badge {
     flex-shrink: 0;
     font-size: 10px;
@@ -1044,24 +979,6 @@ onUnmounted(() => {
     background: var(--td-brand-color-light);
     color: var(--td-brand-color);
     letter-spacing: 0.02em;
-  }
-
-  .menu-github-star-icon {
-    flex-shrink: 0;
-    color: var(--td-warning-color);
-  }
-
-  .menu-external-icon {
-    width: 16px;
-    height: 16px;
-    color: var(--td-text-color-disabled);
-    flex-shrink: 0;
-    transition: color 0.2s ease;
-    pointer-events: none;
-  }
-
-  &:hover .menu-external-icon {
-    color: var(--td-brand-color);
   }
 }
 

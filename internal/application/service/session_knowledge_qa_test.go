@@ -111,6 +111,45 @@ func (s *stubModelService) ClearModelCredential(context.Context, string, string)
 	return nil
 }
 
+// ---- 平台目录 / 分配面（000094）：会话问答用例不触及，返回零值即可。 ----
+func (s *stubModelService) ListAllModels(context.Context, types.ModelType, string) ([]*types.Model, error) {
+	return nil, nil
+}
+
+func (s *stubModelService) GetPlatformModel(context.Context, string) (*types.Model, error) {
+	return nil, nil
+}
+
+func (s *stubModelService) CreatePlatformModel(context.Context, *types.Model) error {
+	return nil
+}
+
+func (s *stubModelService) UpdatePlatformModel(context.Context, *types.Model) error {
+	return nil
+}
+
+func (s *stubModelService) UpdatePlatformModelCredentials(
+	context.Context, string, *string, *string,
+) (*types.Model, error) {
+	return nil, nil
+}
+
+func (s *stubModelService) ClearPlatformModelCredential(context.Context, string, string) error {
+	return nil
+}
+
+func (s *stubModelService) DeletePlatformModel(context.Context, string) error {
+	return nil
+}
+
+func (s *stubModelService) ListTenantAssignedModels(context.Context, uint64) ([]*types.Model, error) {
+	return nil, nil
+}
+
+func (s *stubModelService) SetTenantModelAssignments(context.Context, uint64, []string, string) error {
+	return nil
+}
+
 func (s *stubModelService) GetEmbeddingModel(context.Context, string) (embedding.Embedder, error) {
 	return nil, nil
 }

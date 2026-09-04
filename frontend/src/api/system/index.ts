@@ -410,6 +410,246 @@ export async function createSystemUser(req: CreateSystemUserRequest): Promise<Cr
   return response as unknown as CreateSystemUserResponse
 }
 
+// ---- Enterprise user & workspace management (user-system rework) ----
+// Mirrors internal/handler/system_enterprise.go. All endpoints live behind
+// the SystemAdmin() group guard; responses are the unwrapped gin.H bodies
+// (the axios interceptor in utils/request.ts strips the envelope).
+
+/** User↔workspace membership projection; role is "admin" (空间管理员) or
+ *  "contributor" (普通用户) in the two-level enterprise model. */
+export interface EnterpriseBinding {
+  tenant_id: number
+  tenant_name: string
+  role: string
+}
+
+/** One row of GET /system/admin/users — UserInfo plus workspace tags. */
+export interface EnterpriseUserRow {
+  id: string
+  employee_id: string
+  username: string
+  email: string
+  avatar: string
+  tenant_id: number
+  is_active: boolean
+  can_access_all_tenants: boolean
+  is_system_admin: boolean
+  must_change_password: boolean
+  created_at: string
+  updated_at: string
+  bindings: EnterpriseBinding[]
+}
+
+export interface ListEnterpriseUsersParams {
+  /** Fuzzy match on employee_id / username / email. */
+  query?: string
+  /** Restrict to users bound to this workspace. */
+  tenant_id?: number
+  /** Filter by account state. */
+  is_active?: boolean
+  offset?: number
+  limit?: number
+}
+
+export interface ListEnterpriseUsersResponse {
+  total: number
+  users: EnterpriseUserRow[]
+}
+
+export async function listEnterpriseUsers(
+  params?: ListEnterpriseUsersParams,
+): Promise<ListEnterpriseUsersResponse> {
+  const qs = new URLSearchParams()
+  if (params?.query) qs.set('query', params.query)
+  if (params?.tenant_id != null) qs.set('tenant_id', String(params.tenant_id))
+  if (params?.is_active != null) qs.set('is_active', String(params.is_active))
+  if (params?.offset != null) qs.set('offset', String(params.offset))
+  if (params?.limit != null) qs.set('limit', String(params.limit))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const response = await get(`/api/v1/system/admin/users${suffix}`)
+  return response as unknown as ListEnterpriseUsersResponse
+}
+
+export interface CreateEnterpriseUserRequest {
+  /** 1-64 chars, immutable after creation, is the login identifier. */
+  employee_id: string
+  /** 2-50 chars display name. */
+  username: string
+  /** Optional contact field; null/omitted leaves it empty. */
+  email?: string
+  /** Omit (or null) to have the server generate one; returned once. */
+  password?: string
+  /** Workspaces to bind immediately; first success becomes home workspace. */
+  tenant_ids?: number[]
+}
+
+/** Per-tenant_ids[] outcome of the create call — partial failures don't
+ *  roll the account back, so the UI must surface them. */
+export interface EnterpriseBindResult {
+  tenant_id: number
+  ok: boolean
+  error?: string
+}
+
+export interface CreateEnterpriseUserResponse {
+  user: EnterpriseUserRow
+  generated_password?: string
+  bindings: EnterpriseBindResult[]
+}
+
+export async function createEnterpriseUser(
+  req: CreateEnterpriseUserRequest,
+): Promise<CreateEnterpriseUserResponse> {
+  const response = await post('/api/v1/system/admin/users', req)
+  return response as unknown as CreateEnterpriseUserResponse
+}
+
+export interface UpdateEnterpriseUserRequest {
+  username?: string
+  /** Empty string clears it; null/omitted leaves it unchanged. */
+  email?: string | null
+  /** Disable revokes every outstanding session of the target user. */
+  is_active?: boolean
+}
+
+export async function updateEnterpriseUser(
+  userId: string,
+  req: UpdateEnterpriseUserRequest,
+): Promise<EnterpriseUserRow> {
+  const response = await put(`/api/v1/system/admin/users/${encodeURIComponent(userId)}`, req)
+  return response as unknown as EnterpriseUserRow
+}
+
+/**
+ * Replace another user's password, arm the first-login forced rotation and
+ * revoke their sessions. The new password is required (no server-side
+ * generation on this endpoint); self-reset is rejected with 400.
+ */
+export async function resetEnterpriseUserPassword(
+  userId: string,
+  newPassword: string,
+): Promise<{ message: string }> {
+  const response = await post(
+    `/api/v1/system/admin/users/${encodeURIComponent(userId)}/reset-password`,
+    { new_password: newPassword },
+  )
+  return response as unknown as { message: string }
+}
+
+export async function listUserBindings(userId: string): Promise<{ bindings: EnterpriseBinding[] }> {
+  const response = await get(
+    `/api/v1/system/admin/users/${encodeURIComponent(userId)}/bindings`,
+  )
+  return response as unknown as { bindings: EnterpriseBinding[] }
+}
+
+export async function bindUserToTenant(
+  userId: string,
+  tenantId: number,
+  role: EnterpriseWorkspaceRole = 'contributor',
+): Promise<EnterpriseBinding> {
+  const response = await post(
+    `/api/v1/system/admin/users/${encodeURIComponent(userId)}/bindings`,
+    { tenant_id: tenantId, role },
+  )
+  return response as unknown as EnterpriseBinding
+}
+
+export async function unbindUserFromTenant(
+  userId: string,
+  tenantId: number,
+): Promise<{ message: string }> {
+  const response = await del(
+    `/api/v1/system/admin/users/${encodeURIComponent(userId)}/bindings/${tenantId}`,
+  )
+  return response as unknown as { message: string }
+}
+
+/** Platform workspace catalog row (types.Tenant). */
+export interface PlatformTenant {
+  id: number
+  name: string
+  description: string
+  status: string
+  business: string
+  storage_quota: number
+  storage_used: number
+  owner_id: string
+  created_at: string
+  updated_at: string
+}
+
+export async function listPlatformTenants(): Promise<{ tenants: PlatformTenant[] }> {
+  const response = await get('/api/v1/system/admin/tenants')
+  return response as unknown as { tenants: PlatformTenant[] }
+}
+
+export interface CreatePlatformTenantRequest {
+  name: string
+  description?: string
+  /** GB; omitted = system default (tenant.default_storage_quota_gb). */
+  storage_quota_gb?: number
+}
+
+/** 201 with the created tenant row (no envelope). */
+export async function createPlatformTenant(
+  req: CreatePlatformTenantRequest,
+): Promise<PlatformTenant> {
+  const response = await post('/api/v1/system/admin/tenants', req)
+  return response as unknown as PlatformTenant
+}
+
+// ---- Two-level workspace roles (空间管理员 / 普通用户) ----
+
+/** The two workspace roles the system admin can designate. */
+export type EnterpriseWorkspaceRole = 'admin' | 'contributor'
+
+/** One row of GET /system/admin/tenants/:id/members. */
+export interface EnterpriseWorkspaceMember {
+  user_id: string
+  employee_id: string
+  username: string
+  email: string
+  role: string
+  joined_at: string
+}
+
+export interface ListWorkspaceMembersParams {
+  /** Fuzzy match on employee_id / username / email. */
+  q?: string
+  page?: number
+  page_size?: number
+}
+
+export async function listWorkspaceMembers(
+  tenantId: number,
+  params?: ListWorkspaceMembersParams,
+): Promise<{ total: number; members: EnterpriseWorkspaceMember[] }> {
+  const qs = new URLSearchParams()
+  if (params?.q) qs.set('q', params.q)
+  if (params?.page != null) qs.set('page', String(params.page))
+  if (params?.page_size != null) qs.set('page_size', String(params.page_size))
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const response = await get(`/api/v1/system/admin/tenants/${tenantId}/members${suffix}`)
+  return response as unknown as { total: number; members: EnterpriseWorkspaceMember[] }
+}
+
+/**
+ * Designate a member's workspace role. Demoting the last workspace admin
+ * is rejected with 409 — catch it and surface the localized message.
+ */
+export async function updateWorkspaceMemberRole(
+  tenantId: number,
+  userId: string,
+  role: EnterpriseWorkspaceRole,
+): Promise<EnterpriseWorkspaceMember> {
+  const response = await put(
+    `/api/v1/system/admin/tenants/${tenantId}/members/${encodeURIComponent(userId)}`,
+    { role },
+  )
+  return response as unknown as EnterpriseWorkspaceMember
+}
+
 // ---- System Settings (P1) ----
 
 /**
@@ -1173,4 +1413,44 @@ export function getConfigSkillFile(
   return get(`/api/v1/sandbox-configs/${configId}/skills/${skillId}/files/content`, {
     params: { path },
   }) as unknown as Promise<{ data: ConfigSkillFileContent }>
+}
+
+// ----------------------------------------------------------------------------
+// 工作空间模型分配（000094 模型平台化：系统管理员把平台目录中的模型
+// 分配给空间使用）。接口在 /system/admin 下，返回体不带 {success,data}
+// 包装（axios 拦截器直接返回 body）。
+// ----------------------------------------------------------------------------
+
+/** 分配给空间的模型行（来自 GET model-assignments 的 models 数组） */
+export interface TenantAssignedModel {
+  id: string
+  name: string
+  display_name?: string
+  type: string
+  source?: string
+  is_builtin?: boolean
+}
+
+/** GET /system/admin/tenants/:tenant_id/model-assignments */
+export function listTenantModelAssignments(
+  tenantId: number,
+): Promise<{ tenant_id: number; models: TenantAssignedModel[] }> {
+  return get(`/api/v1/system/admin/tenants/${tenantId}/model-assignments`) as unknown as Promise<{
+    tenant_id: number
+    models: TenantAssignedModel[]
+  }>
+}
+
+/**
+ * PUT /system/admin/tenants/:tenant_id/model-assignments
+ * 整体替换该空间的已分配模型列表。移除仍被该空间 KB / 智能体 / 记忆
+ * 配置引用的模型时后端返回 409（e?.status === 409 可判别）。
+ */
+export function updateTenantModelAssignments(
+  tenantId: number,
+  modelIds: string[],
+): Promise<{ success: boolean; tenant_id: number; count: number }> {
+  return put(`/api/v1/system/admin/tenants/${tenantId}/model-assignments`, {
+    model_ids: modelIds,
+  }) as unknown as Promise<{ success: boolean; tenant_id: number; count: number }>
 }

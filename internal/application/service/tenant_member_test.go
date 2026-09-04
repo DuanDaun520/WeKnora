@@ -284,6 +284,12 @@ func (r *cleanupUserRepo) GetUserByEmail(context.Context, string) (*types.User, 
 func (r *cleanupUserRepo) GetUserByUsername(context.Context, string) (*types.User, error) {
 	return nil, nil
 }
+func (r *cleanupUserRepo) GetUserByEmployeeID(context.Context, string) (*types.User, error) {
+	return nil, nil
+}
+func (r *cleanupUserRepo) ListUsersPage(context.Context, string, uint64, *bool, int, int) ([]*types.User, int64, error) {
+	return nil, 0, nil
+}
 func (r *cleanupUserRepo) GetUserByTenantID(context.Context, uint64) (*types.User, error) {
 	return nil, nil
 }
@@ -341,7 +347,7 @@ func TestTenantMemberService_RemoveMember_ClearsStaleHomeAndRevokesTokens(t *tes
 	svc := NewTenantMemberService(memberRepo, nil, userRepo, tokenRepo)
 	ctx := context.Background()
 
-	if _, err := svc.EnsureOwner(ctx, "owner", 7); err != nil {
+	if _, err := svc.EnsureMember(ctx, "owner", 7); err != nil {
 		t.Fatalf("seed owner: %v", err)
 	}
 	if _, err := svc.AddMember(ctx, "contrib", 7, types.TenantRoleContributor, nil); err != nil {
@@ -378,7 +384,7 @@ func TestTenantMemberService_RemoveMember_RevokesTokensEvenWhenHomeUnchanged(t *
 	svc := NewTenantMemberService(memberRepo, nil, userRepo, tokenRepo)
 	ctx := context.Background()
 
-	if _, err := svc.EnsureOwner(ctx, "owner", 7); err != nil {
+	if _, err := svc.EnsureMember(ctx, "owner", 7); err != nil {
 		t.Fatalf("seed owner: %v", err)
 	}
 	if _, err := svc.AddMember(ctx, "contrib", 7, types.TenantRoleContributor, nil); err != nil {
@@ -448,29 +454,32 @@ func TestTenantMemberService_AddMember_MapsDuplicateKeyRace(t *testing.T) {
 	}
 }
 
-func TestTenantMemberService_EnsureOwner_Idempotent(t *testing.T) {
+func TestTenantMemberService_EnsureMember_Idempotent(t *testing.T) {
 	svc, repo := newServiceWithRepo()
 	ctx := context.Background()
-	first, err := svc.EnsureOwner(ctx, "u1", 1)
+	first, err := svc.EnsureMember(ctx, "u1", 1)
 	if err != nil {
-		t.Fatalf("first EnsureOwner: %v", err)
+		t.Fatalf("first EnsureMember: %v", err)
 	}
-	second, err := svc.EnsureOwner(ctx, "u1", 1)
+	if first.Role != types.TenantRoleAdmin {
+		t.Fatalf("bootstrapped role = %s, want admin (flattened roles)", first.Role)
+	}
+	second, err := svc.EnsureMember(ctx, "u1", 1)
 	if err != nil {
-		t.Fatalf("second EnsureOwner: %v", err)
+		t.Fatalf("second EnsureMember: %v", err)
 	}
 	if first.ID != second.ID {
-		t.Fatalf("EnsureOwner not idempotent: %d vs %d", first.ID, second.ID)
+		t.Fatalf("EnsureMember not idempotent: %d vs %d", first.ID, second.ID)
 	}
 	if len(repo.rows) != 1 {
-		t.Fatalf("want exactly 1 row after idempotent EnsureOwner, got %d", len(repo.rows))
+		t.Fatalf("want exactly 1 row after idempotent EnsureMember, got %d", len(repo.rows))
 	}
 }
 
 func TestTenantMemberService_UpdateRole_BlocksDemotingLastOwner(t *testing.T) {
 	svc, _ := newServiceWithRepo()
 	ctx := context.Background()
-	if _, err := svc.EnsureOwner(ctx, "owner", 1); err != nil {
+	if _, err := svc.AddMember(ctx, "owner", 1, types.TenantRoleOwner, nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	err := svc.UpdateRole(ctx, "owner", 1, types.TenantRoleAdmin)
@@ -506,7 +515,7 @@ func TestTenantMemberService_UpdateRole_APIKeyCannotPromoteOwner(t *testing.T) {
 func TestTenantMemberService_UpdateRole_AllowsDemotionWhenOtherOwnerExists(t *testing.T) {
 	svc, _ := newServiceWithRepo()
 	ctx := context.Background()
-	if _, err := svc.EnsureOwner(ctx, "owner1", 1); err != nil {
+	if _, err := svc.AddMember(ctx, "owner1", 1, types.TenantRoleOwner, nil); err != nil {
 		t.Fatalf("seed1: %v", err)
 	}
 	if _, err := svc.AddMember(ctx, "owner2", 1, types.TenantRoleOwner, nil); err != nil {
@@ -520,7 +529,7 @@ func TestTenantMemberService_UpdateRole_AllowsDemotionWhenOtherOwnerExists(t *te
 func TestTenantMemberService_UpdateRole_NoopOnSameRole(t *testing.T) {
 	svc, _ := newServiceWithRepo()
 	ctx := context.Background()
-	if _, err := svc.EnsureOwner(ctx, "owner", 1); err != nil {
+	if _, err := svc.AddMember(ctx, "owner", 1, types.TenantRoleOwner, nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	// 把"还是 Owner"作为 no-op 处理，必须不触发 ErrLastOwner（同一角色不算降级）。
@@ -532,7 +541,7 @@ func TestTenantMemberService_UpdateRole_NoopOnSameRole(t *testing.T) {
 func TestTenantMemberService_UpdateRole_RejectsInvalidRole(t *testing.T) {
 	svc, _ := newServiceWithRepo()
 	ctx := context.Background()
-	if _, err := svc.EnsureOwner(ctx, "owner", 1); err != nil {
+	if _, err := svc.AddMember(ctx, "owner", 1, types.TenantRoleOwner, nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	if err := svc.UpdateRole(ctx, "owner", 1, types.TenantRole("nope")); !errors.Is(err, ErrInvalidTenantRole) {
@@ -550,7 +559,7 @@ func TestTenantMemberService_UpdateRole_ReturnsNotFound(t *testing.T) {
 func TestTenantMemberService_RemoveMember_BlocksLastOwner(t *testing.T) {
 	svc, _ := newServiceWithRepo()
 	ctx := context.Background()
-	if _, err := svc.EnsureOwner(ctx, "owner", 1); err != nil {
+	if _, err := svc.AddMember(ctx, "owner", 1, types.TenantRoleOwner, nil); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	if err := svc.RemoveMember(ctx, "owner", 1); !errors.Is(err, ErrLastOwner) {
@@ -561,7 +570,7 @@ func TestTenantMemberService_RemoveMember_BlocksLastOwner(t *testing.T) {
 func TestTenantMemberService_RemoveMember_AllowsContributorRemoval(t *testing.T) {
 	svc, _ := newServiceWithRepo()
 	ctx := context.Background()
-	if _, err := svc.EnsureOwner(ctx, "owner", 1); err != nil {
+	if _, err := svc.AddMember(ctx, "owner", 1, types.TenantRoleOwner, nil); err != nil {
 		t.Fatalf("seed owner: %v", err)
 	}
 	if _, err := svc.AddMember(ctx, "contrib", 1, types.TenantRoleContributor, nil); err != nil {

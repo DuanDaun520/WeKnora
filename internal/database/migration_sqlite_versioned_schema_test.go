@@ -24,16 +24,16 @@ var versionedSQLiteTables = []string{
 // versionedSQLiteColumns maps each existing table to the columns that the
 // versioned migrations add and the SQLite baseline was missing.
 var versionedSQLiteColumns = map[string][]string{
-	"tenants":            {"api_principal_config"},           // 000064
-	"users":              {"is_system_admin"},                // 000053
-	"knowledges":         {"pending_subtasks_count"},         // 000056
-	"messages":           {"attachments", "usage"},           // 000034, 000085
-	"tenant_invitations": {"token", "accepted_count"},        // 000054
-	"embed_channels":     {"allow_memory"},                   // 000060
-	"mcp_oauth_tokens":   {"principal_type", "principal_id"}, // 000064
+	"tenants":            {"api_principal_config"},                          // 000064
+	"users":              {"is_system_admin", "employee_id", "must_change_password"}, // 000053, 000091
+	"knowledges":         {"pending_subtasks_count"},                        // 000056
+	"messages":           {"attachments", "usage"},                          // 000034, 000085
+	"tenant_invitations": {"token", "accepted_count"},                       // 000054
+	"embed_channels":     {"allow_memory"},                                  // 000060
+	"mcp_oauth_tokens":   {"principal_type", "principal_id"},                // 000064
 }
 
-const expectedSQLiteMigrationVersion = 12
+const expectedSQLiteMigrationVersion = 16
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)
@@ -92,6 +92,13 @@ func TestSQLiteMigrationsUpgradeV4PreservesData(t *testing.T) {
 		"legacy-knowledge-1", "legacy-kb-1", "legacy-tag-1",
 	)
 	require.NoError(t, err)
+	// A legacy account whose username should become its employee ID when
+	// migration 000013 (mirror of versioned 000091) rebuilds the table.
+	_, err = db.Exec(
+		"INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)",
+		"legacy-user-1", "legacy-admin", "legacy-admin@example.com", "hash",
+	)
+	require.NoError(t, err)
 
 	// Run the full migration set from the repo root.
 	chdirAndRestore(t, repoRoot)
@@ -128,6 +135,33 @@ func TestSQLiteMigrationsUpgradeV4PreservesData(t *testing.T) {
 	).Scan(&relationCount))
 	require.Equal(t, 1, relationCount)
 	require.False(t, sqliteColumnExists(t, db, "knowledges", "tag_id"))
+
+	// Enterprise login (000013): employee_id backfilled from the legacy
+	// username, must_change_password defaulted off, and the table rebuild
+	// preserved every row.
+	var employeeID string
+	var mustChange bool
+	require.NoError(t, db.QueryRow(
+		"SELECT employee_id, must_change_password FROM users WHERE id = ?",
+		"legacy-user-1",
+	).Scan(&employeeID, &mustChange))
+	require.Equal(t, "legacy-admin", employeeID)
+	require.False(t, mustChange)
+
+	// The rebuild must have dropped the inline UNIQUE on username/email:
+	// real names collide in enterprise mode. Distinct employee IDs keep
+	// the partial unique index satisfied.
+	_, err = db.Exec(
+		"INSERT INTO users (id, employee_id, username, email, password_hash) "+
+			"VALUES ('legacy-user-2', 'legacy-admin-2', 'legacy-admin', 'legacy-admin@example.com', 'hash')",
+	)
+	require.NoError(t, err, "duplicate username/email must be allowed after 000013")
+
+	_, err = db.Exec(
+		"INSERT INTO users (id, employee_id, username, email, password_hash) "+
+			"VALUES ('legacy-user-3', 'legacy-admin', 'another-name', 'another@example.com', 'hash')",
+	)
+	require.Error(t, err, "employee_id must stay unique among live rows")
 }
 
 func sqliteRepoRoot(t *testing.T) string {

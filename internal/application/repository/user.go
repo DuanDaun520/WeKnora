@@ -98,6 +98,70 @@ func (r *userRepository) GetUserByUsername(ctx context.Context, username string)
 	return &user, nil
 }
 
+// GetUserByEmployeeID gets a user by employee ID (工号). Exact match — the
+// identifier is case-sensitive so the query walks the partial unique index
+// created by the enterprise-login migration.
+func (r *userRepository) GetUserByEmployeeID(ctx context.Context, employeeID string) (*types.User, error) {
+	var user types.User
+	if err := r.db.WithContext(ctx).Where("employee_id = ?", employeeID).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, err
+	}
+	return &user, nil
+}
+
+// ListUsersPage lists users with the admin user-management filters.
+//
+// Matching is deliberately portable across the PostgreSQL and SQLite
+// dialects: LOWER(col) LIKE LOWER(?) instead of ILIKE, which the SQLite
+// build would reject at parse time (the existing SearchUsers ILIKE is a
+// latent lite-mode bug we do not replicate). The users table stays small
+// enough that the functional predicate is not a plan concern.
+//
+// The tenant filter matches *membership* (tenant_members), not the home
+// tenant column: admin-provisioned users start tenantless, so home would
+// silently hide them.
+func (r *userRepository) ListUsersPage(ctx context.Context, query string, tenantID uint64, isActive *bool, offset, limit int) ([]*types.User, int64, error) {
+	var users []*types.User
+	var total int64
+
+	base := r.db.WithContext(ctx).Model(&types.User{})
+	if query != "" {
+		pattern := "%" + query + "%"
+		base = base.Where(
+			"LOWER(employee_id) LIKE LOWER(?) OR LOWER(username) LIKE LOWER(?) OR LOWER(email) LIKE LOWER(?)",
+			pattern, pattern, pattern,
+		)
+	}
+	if tenantID > 0 {
+		base = base.Where(
+			"id IN (SELECT user_id FROM tenant_members WHERE tenant_id = ? AND deleted_at IS NULL)",
+			tenantID,
+		)
+	}
+	if isActive != nil {
+		base = base.Where("is_active = ?", *isActive)
+	}
+
+	if err := base.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	page := base.Order("created_at DESC, id ASC")
+	if limit > 0 {
+		page = page.Limit(limit)
+	}
+	if offset > 0 {
+		page = page.Offset(offset)
+	}
+	if err := page.Find(&users).Error; err != nil {
+		return nil, 0, err
+	}
+	return users, total, nil
+}
+
 // GetUserByTenantID gets the first user (owner) of a tenant
 func (r *userRepository) GetUserByTenantID(ctx context.Context, tenantID uint64) (*types.User, error) {
 	var user types.User

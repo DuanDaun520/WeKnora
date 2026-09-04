@@ -37,10 +37,14 @@ function isSafeLiteRestoreTarget(path: string) {
   return path.startsWith('/platform/') && !path.startsWith('/platform/organizations')
 }
 
-function hasPendingOIDCCallback() {
-  if (typeof window === 'undefined') return false
-  const hash = window.location.hash || ''
-  return hash.includes('oidc_result=') || hash.includes('oidc_error=')
+// 企业版"无空间用户"的统一落脚点：普通用户去等待分配页，系统管理员
+// （bootstrap 账号在绑定空间前 tenant_id=0）进管理控制台而不是被锁在
+// 只有退出按钮的 onboarding 页。所有"没有空间该去哪"的分支都必须走
+// 这里，避免有的入口把管理员送去 onboarding、有的送去控制台。
+function resolveWorkspaceEntry(authStore: ReturnType<typeof useAuthStore>): string {
+  if (authStore.hasValidTenant) return '/platform/knowledge-bases'
+  if (authStore.isSystemAdmin) return '/system/console'
+  return '/onboarding/workspace'
 }
 
 const router = createRouter({
@@ -58,21 +62,20 @@ const router = createRouter({
     },
     // Embed chat is a separate entry (embed.html + embed-main.ts), not this SPA.
     {
-      path: "/register",
-      name: "registerByInvite",
-      // Share-link landing page reuses the Login form: the same Vue
-      // component renders both modes and detects ?token=xxx on mount
-      // to switch into invite-register flow. Avoids a parallel page
-      // that would duplicate the OIDC / language-switch / styling
-      // surface for one extra field.
-      component: () => import("../views/auth/Login.vue"),
-      meta: { requiresAuth: false, requiresInit: false }
-    },
-    {
       path: "/onboarding/workspace",
       name: "workspaceOnboarding",
       component: () => import("../views/auth/WorkspaceOnboarding.vue"),
       meta: { requiresAuth: true, requiresInit: false, requiresTenant: false }
+    },
+    // 企业版系统管理控制台：独立于 /platform 外壳的完整页面 —— 外壳的
+    // 菜单/设置在挂载时会拉空间级资源，而 bootstrap 系统管理员登录时
+    // 尚未绑定任何空间。开户、重置密码、启停、绑定空间、空间管理都在
+    // 这里完成；管理员自己被绑定空间后可通过页头按钮进入工作台。
+    {
+      path: "/system/console",
+      name: "systemConsole",
+      component: () => import("../views/system/SystemConsole.vue"),
+      meta: { requiresAuth: true, requiresInit: true, requiresTenant: false, requiresSystemAdmin: true }
     },
     {
       path: "/join",
@@ -309,13 +312,6 @@ let liteDeepLinkRestoreDone = false
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
 
-  // OIDC 回跳登录结果依赖 App.vue 在挂载后消费 URL hash。
-  // 如果这里先按“未登录”拦截到 /login，会导致回调结果没有机会落盘。
-  if (hasPendingOIDCCallback()) {
-    next()
-    return
-  }
-
   // Lite：硬刷新后若落在默认首页，恢复本次会话中最后访问的 /platform 子路径
   if (!liteDeepLinkRestoreDone) {
     liteDeepLinkRestoreDone = true
@@ -342,6 +338,8 @@ router.beforeEach(async (to, from, next) => {
     }
     if (authStore.hasValidTenant) {
       next('/platform/knowledge-bases')
+    } else if (authStore.isSystemAdmin) {
+      next('/system/console')
     } else {
       next()
     }
@@ -352,7 +350,7 @@ router.beforeEach(async (to, from, next) => {
   if (to.meta.requiresAuth === false || to.meta.requiresInit === false) {
     // 如果已登录用户访问登录页面，重定向到知识库列表页面
     if (to.path === '/login' && authStore.isLoggedIn) {
-      next(authStore.hasValidTenant ? '/platform/knowledge-bases' : '/onboarding/workspace')
+      next(resolveWorkspaceEntry(authStore))
       return
     }
     next()
@@ -366,7 +364,7 @@ router.beforeEach(async (to, from, next) => {
       if (restored) {
         next(
           !authStore.hasValidTenant && to.meta.requiresTenant !== false
-            ? '/onboarding/workspace'
+            ? resolveWorkspaceEntry(authStore)
             : to.fullPath,
         )
         return
@@ -394,7 +392,9 @@ router.beforeEach(async (to, from, next) => {
   }
 
   if (to.meta.requiresTenant !== false && !authStore.hasValidTenant) {
-    next('/onboarding/workspace')
+    // 系统管理员没绑空间时不锁进 onboarding，送去管理控制台（那里可以
+    // 给自己绑空间或建新空间）；普通用户仍走等待分配页。
+    next(resolveWorkspaceEntry(authStore))
     return
   }
 
@@ -415,7 +415,7 @@ router.beforeEach(async (to, from, next) => {
   // the bounce. This is UI-only; the server enforces the real check.
   if (to.meta.requiresSystemAdmin === true) {
     if (!authStore.isSystemAdmin) {
-      next('/platform/knowledge-bases')
+      next(resolveWorkspaceEntry(authStore))
       return
     }
   }

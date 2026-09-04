@@ -8,16 +8,8 @@ import (
 
 // UserService defines the user service interface
 type UserService interface {
-	// Register creates a new user account
-	Register(ctx context.Context, req *types.RegisterRequest) (*types.User, error)
 	// Login authenticates a user and returns tokens
 	Login(ctx context.Context, req *types.LoginRequest) (*types.LoginResponse, error)
-	// GetOIDCAuthorizationURL builds the third-party OIDC authorization URL
-	GetOIDCAuthorizationURL(ctx context.Context, redirectURI string) (*types.OIDCAuthURLResponse, error)
-	// LoginWithOIDC exchanges the callback code, auto-provisions users if needed, and completes login.
-	// provisioning is the default tenant mode for a newly auto-created user
-	// (resolved by the caller from auth.default_tenant_mode).
-	LoginWithOIDC(ctx context.Context, code, redirectURI string, provisioning types.TenantProvisioningMode) (*types.OIDCCallbackResponse, error)
 	// GetUserByID gets a user by ID
 	GetUserByID(ctx context.Context, id string) (*types.User, error)
 	// GetUsersByIDs batch-fetches users by id, returning a map keyed by
@@ -29,6 +21,16 @@ type UserService interface {
 	GetUserByEmail(ctx context.Context, email string) (*types.User, error)
 	// GetUserByUsername gets a user by username
 	GetUserByUsername(ctx context.Context, username string) (*types.User, error)
+	// GetUserByEmployeeID gets a user by employee ID (工号) — the primary
+	// login identifier. Exact, case-sensitive match so it walks the partial
+	// unique index on users.employee_id.
+	GetUserByEmployeeID(ctx context.Context, employeeID string) (*types.User, error)
+	// ListUsersPage lists users for the system-admin user-management UI.
+	// query matches employee_id/username/email case-insensitively (empty =
+	// no filter); tenantID > 0 restricts to users with an active membership
+	// in that workspace; isActive nil = both states. Returns the page plus
+	// the total count after filters.
+	ListUsersPage(ctx context.Context, query string, tenantID uint64, isActive *bool, offset, limit int) ([]*types.User, int64, error)
 	// GetUserByTenantID gets the first user (owner) of a tenant
 	GetUserByTenantID(ctx context.Context, tenantID uint64) (*types.User, error)
 	// UpdateUser updates user information
@@ -84,11 +86,17 @@ type UserService interface {
 	ListSystemAdmins(ctx context.Context, offset, limit int) ([]*types.User, int64, error)
 	// AdminCreateUser provisions a new local user on behalf of a
 	// SystemAdmin. When req.Password is nil, a random password is generated
-	// and returned exactly once as the second result. provisioning is
-	// resolved by the caller from the shared auth.default_tenant_mode policy.
-	AdminCreateUser(
-		ctx context.Context, req *types.AdminCreateUserRequest, provisioning types.TenantProvisioningMode,
-	) (*types.User, string, error)
+	// and returned exactly once as the second result. The account is created
+	// tenantless with MustChangePassword=true; workspace bindings are
+	// managed separately via the admin bindings API.
+	AdminCreateUser(ctx context.Context, req *types.AdminCreateUserRequest) (*types.User, string, error)
+	// EnsureBootstrapAdmin guarantees at least one system administrator
+	// exists, creating the default admin account when the deployment has
+	// none. Idempotent and side-effect-free once any sysadmin exists.
+	// Returns whether a write happened and, for a newly created account
+	// with no password supplied, the generated initial password exactly
+	// once.
+	EnsureBootstrapAdmin(ctx context.Context, employeeID, password string) (bool, string, error)
 	// RevokeSystemAdmin removes system-admin privileges with the
 	// last-admin/self-revoke checks performed atomically.
 	RevokeSystemAdmin(ctx context.Context, userID, actorID string) (*types.User, error)
@@ -111,6 +119,13 @@ type UserRepository interface {
 	GetUserByEmail(ctx context.Context, email string) (*types.User, error)
 	// GetUserByUsername gets a user by username
 	GetUserByUsername(ctx context.Context, username string) (*types.User, error)
+	// GetUserByEmployeeID gets a user by employee ID (工号) — exact match
+	// on the partial unique index.
+	GetUserByEmployeeID(ctx context.Context, employeeID string) (*types.User, error)
+	// ListUsersPage lists users with the admin-UI filters (query/tenant/
+	// active) plus pagination metadata. See the UserService twin for the
+	// filter semantics.
+	ListUsersPage(ctx context.Context, query string, tenantID uint64, isActive *bool, offset, limit int) ([]*types.User, int64, error)
 	// GetUserByTenantID gets the first user (owner) of a tenant
 	GetUserByTenantID(ctx context.Context, tenantID uint64) (*types.User, error)
 	// UpdateUser updates a user

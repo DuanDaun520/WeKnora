@@ -185,40 +185,6 @@ func TestSwitchTenantSuperuserRecordsPreferenceWithoutMembership(t *testing.T) {
 	}
 }
 
-// TestSwitchTenantPreservesOidcOnlyLogin proves the preference write
-// goes through the PATCH merge, not a blob overwrite.
-func TestSwitchTenantPreservesOidcOnlyLogin(t *testing.T) {
-	ctx := context.Background()
-	oidcOnly := true
-	repo := &switchTenantUserRepo{users: map[string]types.User{
-		"alice": {
-			ID:       "alice",
-			TenantID: 7,
-			Preferences: types.UserPreferences{
-				OidcOnlyLogin: &oidcOnly,
-			},
-		},
-	}}
-	memberSvc := &membershipLookupService{
-		byTenant: map[uint64]*types.TenantMember{
-			42: {TenantID: 42, Status: types.TenantMemberStatusActive},
-		},
-	}
-	svc := newSwitchTenantTestService(repo, memberSvc)
-	user, _ := repo.GetUserByID(ctx, "alice")
-
-	if _, err := svc.SwitchTenant(ctx, user, 42, ""); err != nil {
-		t.Fatalf("SwitchTenant: %v", err)
-	}
-	stored, _ := repo.GetUserByID(ctx, "alice")
-	if stored.Preferences.OidcOnlyLogin == nil || !*stored.Preferences.OidcOnlyLogin {
-		t.Fatal("OidcOnlyLogin was dropped by the last-active write")
-	}
-	if stored.Preferences.LastActiveTenantID == nil || *stored.Preferences.LastActiveTenantID != 42 {
-		t.Fatalf("LastActiveTenantID = %v, want 42", stored.Preferences.LastActiveTenantID)
-	}
-}
-
 // TestSwitchTenantNonMemberWritesNoPreference guards the write
 // placement: the preference is only recorded after membership
 // validation passes, so a rejected switch leaves the user's state

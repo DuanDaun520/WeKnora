@@ -32,25 +32,12 @@ var (
 	errInvalidExternalUserToken = errors.New("invalid external user token")
 )
 
-// 无需认证的API列表
+// 无需认证的API列表。企业化改造后公网入口只剩登录/配置/令牌自举：
+// 注册、邀请链接与 OIDC 均已删除。
 var noAuthAPI = map[string][]string{
-	"/health":                 {"GET"},
-	"/api/v1/auth/register":   {"POST"},
-	"/api/v1/auth/login":      {"POST"},
-	"/api/v1/auth/auto-setup": {"POST"},
-	// Share-link surfaces accept a plaintext invite token from anonymous
-	// callers (an invitee who hasn't registered yet). They are registered
-	// as public routes in RegisterAuthRoutes and rate-limited by IP, so the
-	// global Auth middleware must let them through — otherwise opening a
-	// share link while logged out 401s and the frontend bounces the user to
-	// /login instead of the register page (issue #1617).
-	"/api/v1/auth/invitations/lookup": {"POST"},
-	"/api/v1/auth/register-by-invite": {"POST"},
-	"/api/v1/auth/config":             {"GET"},
-	"/api/v1/auth/oidc/config":        {"GET"},
-	"/api/v1/auth/oidc/url":           {"GET"},
-	"/api/v1/auth/oidc/start":         {"GET"},
-	"/api/v1/auth/oidc/callback":      {"GET"},
+	"/health":             {"GET"},
+	"/api/v1/auth/login":  {"POST"},
+	"/api/v1/auth/config": {"GET"},
 	// MCP OAuth provider redirect: the third-party authorization server
 	// redirects the browser here without a WeKnora bearer token. The request
 	// is authenticated by the opaque, single-use `state` parameter instead.
@@ -97,7 +84,10 @@ func isTenantOptionalAPI(path, method string) bool {
 		return true
 	case path == "/api/v1/tenants" && method == http.MethodPost:
 		return true
-	case strings.HasPrefix(path, "/api/v1/me/invitations"):
+	// 平台管理面（/system/admin/*）：引导出的系统管理员天然无空间，
+	// 必须先经由这组端点建空间/绑用户，否则鸡生蛋。路由组自身挂
+	// RequireSystemAdmin 守卫，tenantless 会话仅携带身份。
+	case strings.HasPrefix(path, "/api/v1/system/admin"):
 		return true
 	default:
 		return false
@@ -110,6 +100,26 @@ func attachTenantlessUserContext(c *gin.Context, user *types.User) {
 		Principal:   types.Principal{Type: types.PrincipalWebUser, ID: user.ID},
 		SystemAdmin: user.IsSystemAdmin,
 	})
+}
+
+// passwordRotationAllowlist lists the identity-level endpoints a user may
+// reach while MustChangePassword is set. Everything else answers
+// 403 PASSWORD_CHANGE_REQUIRED so the client funnels the user into the
+// forced password-change flow. API-key principals never carry the flag and
+// are structurally exempt (the check runs on the JWT path only).
+var passwordRotationAllowlist = map[string][]string{
+	"/api/v1/auth/me":              {"GET", "PUT"},
+	"/api/v1/auth/me/preferences":  {"PUT"},
+	"/api/v1/auth/change-password": {"POST"},
+	"/api/v1/auth/logout":          {"POST"},
+	"/api/v1/auth/validate":        {"GET"},
+}
+
+// isPasswordRotationAllowlisted reports whether the request may proceed
+// during a forced password rotation.
+func isPasswordRotationAllowlisted(path, method string) bool {
+	methods, ok := passwordRotationAllowlist[path]
+	return ok && slices.Contains(methods, method)
 }
 
 // Auth 认证中间件。按顺序尝试三条通道：
@@ -149,6 +159,20 @@ func Auth(
 			bearerPresented = true
 			user, jwtTenantID, err := userService.ValidateToken(c.Request.Context(), token)
 			if err == nil && user != nil {
+				// 强制改密拦截（单一 chokepoint：JWT 解析成功之后、空间/
+				// 角色解析之前）。管理员设置的初始/重置密码必须先轮换，
+				// 业务 API 一律 403，仅放行身份级白名单。
+				if user.MustChangePassword && !isPasswordRotationAllowlisted(c.Request.URL.Path, c.Request.Method) {
+					logger.Warnf(c.Request.Context(),
+						"[auth] user %s must change password before accessing %s %s",
+						user.ID, c.Request.Method, c.Request.URL.Path)
+					c.JSON(http.StatusForbidden, gin.H{
+						"error": "Password change required before accessing this resource",
+						"code":  "PASSWORD_CHANGE_REQUIRED",
+					})
+					c.Abort()
+					return
+				}
 				if authenticateJWTUser(c, tenantService, memberService, cfg, user, jwtTenantID) {
 					c.Next()
 				}
@@ -791,22 +815,21 @@ func resolveTenantRole(
 	}
 
 	// 3. 孤儿空间自愈：仅当用户登录的是自己的 home tenant、且该空间尚无任何活跃成员时
-	//    允许自动晋升为 Owner。跨空间 switch / JWT 指向他人空间的场景一律不进入此分支，
-	//    防止越权获得他人空间的 Owner 权限。
+	//    允许自动补建成员关系。跨空间 switch / JWT 指向他人空间的场景一律不进入此分支，
+	//    防止越权获得他人空间的成员资格。企业化改造后自愈角色随角色扁平化归一为
+	//    admin（EnsureMember），与 /system/admin 绑定端点写入的角色一致。
 	isHomeTenant := !crossTenantSwitch && targetTenantID == user.TenantID
 	if isHomeTenant {
 		hasAny, anyErr := memberService.HasAnyMembers(ctx, targetTenantID)
 		if anyErr == nil && !hasAny {
-			if _, e := memberService.AddMember(
-				ctx, user.ID, targetTenantID, types.TenantRoleOwner, nil,
-			); e == nil {
+			if _, e := memberService.EnsureMember(ctx, user.ID, targetTenantID); e == nil {
 				logger.Infof(ctx,
-					"[audit] Auto-promoted user %s to Owner of orphan tenant %d (home_tenant=true)",
+					"[audit] Auto-provisioned admin membership for user %s in orphan tenant %d (home_tenant=true)",
 					user.ID, targetTenantID,
 				)
-				return types.TenantRoleOwner, true
+				return types.TenantRoleAdmin, true
 			} else {
-				logger.Warnf(ctx, "Failed to auto-promote user %s in tenant %d: %v",
+				logger.Warnf(ctx, "Failed to auto-provision membership for user %s in tenant %d: %v",
 					user.ID, targetTenantID, e)
 			}
 		}

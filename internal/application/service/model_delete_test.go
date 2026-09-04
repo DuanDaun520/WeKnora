@@ -110,6 +110,35 @@ func (s *stubModelRepoForDelete) ClearDefaultByType(context.Context, uint, types
 	return nil
 }
 
+// ---- 平台目录 / 分配面（000094）：删除用例不触及，返回零值即可。 ----
+func (s *stubModelRepoForDelete) GetByIDAnyTenant(_ context.Context, id string) (*types.Model, error) {
+	if s.model != nil && s.model.ID == id {
+		return s.model, nil
+	}
+	return nil, nil
+}
+func (s *stubModelRepoForDelete) ListAll(context.Context, types.ModelType, types.ModelSource, string) ([]*types.Model, error) {
+	return nil, nil
+}
+func (s *stubModelRepoForDelete) DeleteAnyTenant(_ context.Context, id string) error {
+	if s.delete != nil {
+		return s.delete(id)
+	}
+	return nil
+}
+func (s *stubModelRepoForDelete) CountModelUsages(context.Context, uint64, string) (int64, int64, int64, error) {
+	return 0, 0, 0, nil
+}
+func (s *stubModelRepoForDelete) ListAssignedModelIDs(context.Context, uint64) ([]string, error) {
+	return nil, nil
+}
+func (s *stubModelRepoForDelete) ReplaceAssignments(context.Context, uint64, []string, string) error {
+	return nil
+}
+func (s *stubModelRepoForDelete) DeleteAssignmentsByModelID(context.Context, string) error {
+	return nil
+}
+
 func TestDeleteModel_RejectsWhenReferenced(t *testing.T) {
 	ctx := context.WithValue(context.Background(), types.TenantIDContextKey, uint64(1))
 	modelID := "model-in-use"

@@ -1,0 +1,80 @@
+// 系统管理控制台各面板共享样式（000094 控制台左侧菜单化改造后，
+// 原页签内嵌的工具栏 / 表格外壳样式迁到这里，供 UsersPanel /
+// WorkspacesPanel / ModelsPanel / OllamaPanel 复用）。
+.panel-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+// 面板标题行：四个面板（用户 / 工作空间 / 模型 / Ollama）共用，
+// 统一标题字号、间距与右侧操作区布局。
+.panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 0 6px;
+
+  h2 {
+    margin: 0 0 4px;
+    font-size: 18px;
+    line-height: 1.4;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+
+  .panel-header-desc {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--td-text-color-secondary);
+  }
+
+  .panel-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+    padding-top: 2px;
+  }
+}
+
+.console-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 16px 0;
+}
+
+.toolbar-search {
+  width: 260px;
+}
+
+.toolbar-select {
+  width: 180px;
+}
+
+.toolbar-spacer {
+  flex: 1;
+}
+
+.toolbar-hint {
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+}
+
+.console-table-shell {
+  background: var(--td-bg-color-container);
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 10px;
+  padding: 0 4px;
+}
+
+@media (max-width: 720px) {
+  .toolbar-search,
+  .toolbar-select {
+    width: 100%;
+  }
+}

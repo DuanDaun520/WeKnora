@@ -1635,6 +1635,9 @@ type ModelTestRequest struct {
 	ExtraConfig               map[string]string `json:"extraConfig,omitempty"`
 	// AppSecret 用于 LKEAP / Volcengine Rerank 等需要第二段密钥的场景（对应模型 Parameters.AppSecret）。
 	AppSecret string `json:"appSecret,omitempty"`
+	// AppID 用于 WeKnoraCloud（对应模型 Parameters.AppID）。000094 模型
+	// 平台化后 WeKnoraCloud 凭证随模型走，测试连接也需要能带上它。
+	AppID string `json:"appId,omitempty"`
 	// ModelID, when set, instructs the handler to substitute any missing
 	// secrets (APIKey, AppSecret via ExtraConfig) from the stored model
 	// record before assembling the test client. This lets the "Test
@@ -1657,10 +1660,20 @@ func (h *InitializationHandler) fillSecretsFromStoredModel(ctx context.Context, 
 	if req == nil || req.ModelID == "" {
 		return
 	}
-	if req.APIKey != "" && req.AppSecret != "" {
+	if req.APIKey != "" && req.AppSecret != "" && req.AppID != "" {
 		return
 	}
-	stored, err := h.modelService.GetModelByID(ctx, req.ModelID)
+	// The tenant-scoped lookup requires a tenant in the context; the
+	// /system/admin mirrors of these endpoints run for system admins who
+	// may have no workspace binding at all, so fall back to the platform
+	// catalog view there.
+	var stored *types.Model
+	var err error
+	if _, ok := types.TenantIDFromContext(ctx); ok {
+		stored, err = h.modelService.GetModelByID(ctx, req.ModelID)
+	} else {
+		stored, err = h.modelService.GetPlatformModel(ctx, req.ModelID)
+	}
 	if err != nil || stored == nil {
 		logger.Warnf(ctx, "test-connection: stored model %s not found, leaving secrets empty: %v",
 			utils.SanitizeForLog(req.ModelID), err)
@@ -1671,6 +1684,9 @@ func (h *InitializationHandler) fillSecretsFromStoredModel(ctx context.Context, 
 	}
 	if req.AppSecret == "" {
 		req.AppSecret = stored.Parameters.AppSecret
+	}
+	if req.AppID == "" {
+		req.AppID = stored.Parameters.AppID
 	}
 }
 
@@ -1710,6 +1726,7 @@ func (h *InitializationHandler) buildTestModel(
 			BaseURL:       req.BaseURL,
 			APIKey:        req.APIKey,
 			AppSecret:     req.AppSecret,
+			AppID:         req.AppID,
 			Provider:      req.Provider,
 			InterfaceType: req.InterfaceType,
 			ExtraConfig:   req.ExtraConfig,
@@ -1727,16 +1744,20 @@ func (h *InitializationHandler) buildTestModel(
 // 供测试连接端点补齐 appID/appSecret。与 service.resolveWeKnoraCloudCredentials
 // 对应，但因为 handler 还没有被注入 tenantService（历史原因），暂时从
 // TenantInfoFromContext 读取，等效果相同。
-func (h *InitializationHandler) resolveTenantWeKnoraCloudCreds(ctx context.Context) (string, string, bool) {
+//
+// Best-effort：空间上下文缺失（000094 后 /system/admin 镜像路由下的
+// 无空间绑定系统管理员）时返回空串，由调用方用请求/模型自带凭证兜底，
+// 而不是直接拒绝测试。
+func (h *InitializationHandler) resolveTenantWeKnoraCloudCreds(ctx context.Context) (string, string) {
 	tenantInfo, ok := types.TenantInfoFromContext(ctx)
 	if !ok {
-		return "", "", false
+		return "", ""
 	}
 	creds := tenantInfo.Credentials.GetWeKnoraCloud()
 	if creds == nil {
-		return "", "", true
+		return "", ""
 	}
-	return creds.AppID, creds.AppSecret, true
+	return creds.AppID, creds.AppSecret
 }
 
 // CheckRemoteModel godoc
@@ -1775,11 +1796,15 @@ func (h *InitializationHandler) CheckRemoteModel(c *gin.Context) {
 		c.Error(errors.NewBadRequestError(utils.FormatSSRFError("Base URL", req.BaseURL, err)))
 		return
 	}
-	appID, appSecret, ok := h.resolveTenantWeKnoraCloudCreds(ctx)
-	if !ok {
-		logger.Error(ctx, "Tenant info not found")
-		c.Error(errors.NewBadRequestError("空间信息未找到"))
-		return
+	// WeKnoraCloud 凭证解析顺序与 service.resolveWeKnoraCloudCredentials
+	// 一致：请求（含 fillSecretsFromStoredModel 从模型行补齐的值）优先，
+	// 空间凭证只补缺口。
+	appID, appSecret := h.resolveTenantWeKnoraCloudCreds(ctx)
+	if req.AppID != "" {
+		appID = req.AppID
+	}
+	if req.AppSecret != "" {
+		appSecret = req.AppSecret
 	}
 
 	model := h.buildTestModel(&req, types.ModelTypeKnowledgeQA, types.ModelSourceRemote)
@@ -1849,11 +1874,13 @@ func (h *InitializationHandler) TestEmbeddingModel(c *gin.Context) {
 		}
 	}
 
-	appID, appSecret, ok := h.resolveTenantWeKnoraCloudCreds(ctx)
-	if !ok {
-		logger.Error(ctx, "Tenant info not found")
-		c.Error(errors.NewBadRequestError("空间信息未找到"))
-		return
+	// 同 CheckRemoteModel：请求/模型自带凭证优先，空间凭证补缺口。
+	appID, appSecret := h.resolveTenantWeKnoraCloudCreds(ctx)
+	if req.AppID != "" {
+		appID = req.AppID
+	}
+	if req.AppSecret != "" {
+		appSecret = req.AppSecret
 	}
 
 	model := h.buildTestModel(&req, types.ModelTypeEmbedding, types.ModelSourceRemote)
@@ -2001,11 +2028,13 @@ func (h *InitializationHandler) CheckRerankModel(c *gin.Context) {
 		return
 	}
 
-	appID, appSecret, ok := h.resolveTenantWeKnoraCloudCreds(ctx)
-	if !ok {
-		logger.Error(ctx, "Tenant info not found")
-		c.Error(errors.NewBadRequestError("空间信息未找到"))
-		return
+	// 同 CheckRemoteModel：请求/模型自带凭证优先，空间凭证补缺口。
+	appID, appSecret := h.resolveTenantWeKnoraCloudCreds(ctx)
+	if req.AppID != "" {
+		appID = req.AppID
+	}
+	if req.AppSecret != "" {
+		appSecret = req.AppSecret
 	}
 
 	model := h.buildTestModel(&req, types.ModelTypeRerank, types.ModelSourceRemote)

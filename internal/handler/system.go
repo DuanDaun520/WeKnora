@@ -45,6 +45,13 @@ type SystemHandler struct {
 	userSvc          interfaces.UserService
 	systemSettingSvc interfaces.SystemSettingService
 	apiKeySvc        interfaces.TenantAPIKeyService
+	// memberSvc backs the enterprise user↔workspace binding endpoints
+	// (system_enterprise.go). Optional — nil in partially-wired unit tests,
+	// in which case the binding routes degrade to 503 rather than panicking.
+	memberSvc interfaces.TenantMemberService
+	// tokenRepo revokes every session of a user the system admin disables.
+	// Optional for the same nil-safety reason as memberSvc.
+	tokenRepo interfaces.AuthTokenRepository
 	// auditSvc is optional — when nil, emitAdminAudit no-ops so unit
 	// tests that wire a partial container still compile. In production
 	// the dig graph always provides one.
@@ -76,6 +83,8 @@ func NewSystemHandler(cfg *config.Config,
 	userSvc interfaces.UserService,
 	systemSettingSvc interfaces.SystemSettingService,
 	apiKeySvc interfaces.TenantAPIKeyService,
+	memberSvc interfaces.TenantMemberService,
+	tokenRepo interfaces.AuthTokenRepository,
 	auditSvc interfaces.AuditLogService,
 	taskInspector interfaces.TaskInspector,
 	knowledgeSvc interfaces.KnowledgeService,
@@ -90,6 +99,8 @@ func NewSystemHandler(cfg *config.Config,
 		userSvc:            userSvc,
 		systemSettingSvc:   systemSettingSvc,
 		apiKeySvc:          apiKeySvc,
+		memberSvc:          memberSvc,
+		tokenRepo:          tokenRepo,
 		auditSvc:           auditSvc,
 		taskInspector:      taskInspector,
 		knowledgeSvc:       knowledgeSvc,
@@ -1278,24 +1289,23 @@ func (h *SystemHandler) ResolveDocumentReader(ctx context.Context, addr string) 
 
 // PromoteUserToSystemAdminRequest defines the request for promoting a user to system admin.
 //
-// Either user_id (UUID) or email must be supplied. When both are present
-// user_id wins — explicit IDs are unambiguous, an email collision (extremely
-// rare in practice but possible during a tenant merge) would otherwise
-// silently target the wrong row.
+// Either user_id (UUID) or employee_id must be supplied. When both are
+// present user_id wins — explicit IDs are unambiguous, and the employee
+// ID remains the operator-facing handle.
 //
 // We don't expose a `binding:"required"` tag on either field because gin's
 // validator can't express the OR constraint; the handler does the check
 // manually and returns 400 with a specific message for each branch.
 type PromoteUserToSystemAdminRequest struct {
-	UserID string `json:"user_id"`
-	Email  string `json:"email"`
+	UserID     string `json:"user_id"`
+	EmployeeID string `json:"employee_id"`
 }
 
 // PromoteUserToSystemAdmin godoc
 // @Summary      Promote a user to system administrator
 // @Description  Grant system administrator privileges to a user (SystemAdmin only).
 // @Description  Idempotent: re-promoting an existing system admin returns 200 with no DB write.
-// @Description  Identify the user by email (preferred for human operators) or user_id (UUID, for API clients).
+// @Description  Identify the user by employee_id (preferred for human operators) or user_id (UUID, for API clients).
 // @Tags         System Admin
 // @Accept       json
 // @Produce      json
@@ -1315,16 +1325,16 @@ func (h *SystemHandler) PromoteUserToSystemAdmin(c *gin.Context) {
 	}
 
 	userID := strings.TrimSpace(req.UserID)
-	email := strings.TrimSpace(req.Email)
-	if userID == "" && email == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Either user_id or email is required"})
+	employeeID := strings.TrimSpace(req.EmployeeID)
+	if userID == "" && employeeID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Either user_id or employee_id is required"})
 		return
 	}
 
 	// Resolve user. user_id takes priority when both are sent (see request
-	// struct doc); otherwise we look up by email. Both branches funnel
+	// struct doc); otherwise we look up by employee ID. Both branches funnel
 	// into the same {nil-user / error} 404 so we don't leak whether a
-	// given email exists in the system to non-admins — though SystemAdmin
+	// given account exists in the system to non-admins — though SystemAdmin
 	// is already a high-trust role, the parity keeps the surface clean.
 	var (
 		user *types.User
@@ -1334,10 +1344,10 @@ func (h *SystemHandler) PromoteUserToSystemAdmin(c *gin.Context) {
 	case userID != "":
 		user, err = h.userSvc.GetUserByID(ctx, userID)
 	default:
-		user, err = h.userSvc.GetUserByEmail(ctx, email)
+		user, err = h.userSvc.GetUserByEmployeeID(ctx, employeeID)
 	}
 	if err != nil {
-		logger.Errorf(ctx, "Error fetching user (id=%q email=%q): %v", userID, email, err)
+		logger.Errorf(ctx, "Error fetching user (id=%q employee_id=%q): %v", userID, employeeID, err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
@@ -1351,7 +1361,7 @@ func (h *SystemHandler) PromoteUserToSystemAdmin(c *gin.Context) {
 		// success. We still emit an audit row so probing the endpoint
 		// leaves a forensic trail (idempotent=true marks it as noop).
 		h.emitAdminAudit(ctx, types.AuditActionSystemAdminPromoted, user, map[string]any{
-			"target_email":    user.Email,
+			"target_employee_id": user.EmployeeID,
 			"target_username": user.Username,
 			"idempotent":      true,
 		})
@@ -1367,7 +1377,7 @@ func (h *SystemHandler) PromoteUserToSystemAdmin(c *gin.Context) {
 
 	logger.Infof(ctx, "User %s (ID: %s) promoted to system admin", user.Username, user.ID)
 	h.emitAdminAudit(ctx, types.AuditActionSystemAdminPromoted, user, map[string]any{
-		"target_email":    user.Email,
+		"target_employee_id": user.EmployeeID,
 		"target_username": user.Username,
 		"idempotent":      false,
 	})
@@ -1411,7 +1421,7 @@ func (h *SystemHandler) RevokeSystemAdmin(c *gin.Context) {
 		// Real revoke — privileges were actually removed.
 		logger.Infof(ctx, "System admin privileges revoked from user %s (ID: %s)", user.Username, user.ID)
 		h.emitAdminAudit(ctx, types.AuditActionSystemAdminRevoked, user, map[string]any{
-			"target_email":    user.Email,
+			"target_employee_id": user.EmployeeID,
 			"target_username": user.Username,
 			"changed":         true,
 		})
@@ -1430,7 +1440,7 @@ func (h *SystemHandler) RevokeSystemAdmin(c *gin.Context) {
 		}
 		logger.Infof(ctx, "Revoke noop (user %s was not a system admin)", user.ID)
 		h.emitAdminAudit(ctx, types.AuditActionSystemAdminRevoked, user, map[string]any{
-			"target_email":    user.Email,
+			"target_employee_id": user.EmployeeID,
 			"target_username": user.Username,
 			"changed":         false,
 		})
@@ -1521,18 +1531,17 @@ func (h *SystemHandler) ListSystemAdmins(c *gin.Context) {
 }
 
 // ResetUserPasswordRequest defines the system-administrator password-reset
-// payload. Email is intentionally the only user-facing identifier: the UI is
-// an operator tool and emails are easier to verify than UUIDs. The password is
-// never written to logs or audit details.
+// payload. Employee ID is the user-facing identifier and the canonical
+// account key. The password is never written to logs or audit details.
 type ResetUserPasswordRequest struct {
-	Email       string `json:"email" binding:"required,email"`
+	EmployeeID  string `json:"employee_id" binding:"required"`
 	NewPassword string `json:"new_password" binding:"required"`
 }
 
 // ResetUserPassword godoc
 // @Summary      Reset another user's password
 // @Description  Replace another user's local password and revoke all of their existing sessions (SystemAdmin only).
-// @Description  A system administrator cannot reset their own password through this endpoint; self-service password change still requires the old password.
+// @Description  Identify the target by employee_id. A system administrator cannot reset their own password through this endpoint; self-service password change still requires the old password.
 // @Tags         System Admin
 // @Accept       json
 // @Produce      json
@@ -1550,14 +1559,14 @@ func (h *SystemHandler) ResetUserPassword(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid password reset request"})
 		return
 	}
-	req.Email = strings.TrimSpace(req.Email)
+	req.EmployeeID = strings.TrimSpace(req.EmployeeID)
 
 	if err := service.ValidatePasswordPolicy(req.NewPassword, h.complexPasswordEnabled(ctx)); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	user, err := h.userSvc.GetUserByEmail(ctx, req.Email)
+	user, err := h.userSvc.GetUserByEmployeeID(ctx, req.EmployeeID)
 	if err != nil || user == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
@@ -1580,9 +1589,9 @@ func (h *SystemHandler) ResetUserPassword(c *gin.Context) {
 
 	logger.Infof(ctx, "Password reset by system administrator for user ID: %s", user.ID)
 	h.emitAdminAudit(ctx, types.AuditActionSystemUserPasswordReset, user, map[string]any{
-		"target_email":     user.Email,
-		"target_username":  user.Username,
-		"sessions_revoked": true,
+		"target_employee_id": user.EmployeeID,
+		"target_username":    user.Username,
+		"sessions_revoked":   true,
 	})
 	c.JSON(http.StatusOK, gin.H{"message": "Password reset successfully"})
 }
@@ -1601,20 +1610,20 @@ type CreateSystemUserResponse struct {
 // CreateSystemUser godoc
 // @Summary      Create a new user (SystemAdmin)
 // @Description  Provision a new local user account (SystemAdmin only).
-// @Description  When `password` is omitted or null, a cryptographically random
-// @Description  password is generated (OIDC-style crypto/rand + base64url)
-// @Description  and returned once in the response body. Any provided value,
-// @Description  including empty string, is policy-checked. Tenant provisioning
-// @Description  follows the shared auth.default_tenant_mode policy.
+// @Description  The account is keyed by `employee_id` (immutable after
+// @Description  creation), created tenantless, and must change its password
+// @Description  on first login. When `password` is omitted or null, a
+// @Description  cryptographically random password is generated (crypto/rand +
+// @Description  base64url) and returned once in the response body. Any provided
+// @Description  value, including empty string, is policy-checked.
 // @Tags         System Admin
 // @Accept       json
 // @Produce      json
 // @Param        request body types.AdminCreateUserRequest true "User creation request"
 // @Success      201  {object}  CreateSystemUserResponse  "User created successfully"
-// @Success      200  {object}  CreateSystemUserResponse  "Identity already exists, returns the existing user"
+// @Success      200  {object}  CreateSystemUserResponse  "Employee ID already exists, returns the existing user"
 // @Failure      400  {object}  map[string]interface{}  "Invalid request or weak password"
 // @Failure      403  {object}  map[string]interface{}  "Forbidden: not a system admin"
-// @Failure      409  {object}  map[string]interface{}  "Email and username refer to conflicting identities"
 // @Failure      500  {object}  map[string]interface{}  "Internal error"
 // @Router       /system/admin/users/create [post]
 func (h *SystemHandler) CreateSystemUser(c *gin.Context) {
@@ -1625,11 +1634,15 @@ func (h *SystemHandler) CreateSystemUser(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user creation request"})
 		return
 	}
+	req.EmployeeID = strings.TrimSpace(req.EmployeeID)
 	req.Username = secutils.SanitizeForLog(strings.TrimSpace(req.Username))
-	req.Email = secutils.SanitizeForLog(strings.TrimSpace(req.Email))
+	if req.Email != nil {
+		sanitized := secutils.SanitizeForLog(strings.TrimSpace(*req.Email))
+		req.Email = &sanitized
+	}
 	// Password is intentionally NOT trimmed or sanitized.
-	if req.Username == "" || req.Email == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Username and email are required"})
+	if req.EmployeeID == "" || req.Username == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Employee ID and username are required"})
 		return
 	}
 	// Binding's min=2/max=50 ran on the raw JSON, re-check the trimmed value.
@@ -1638,18 +1651,18 @@ func (h *SystemHandler) CreateSystemUser(c *gin.Context) {
 		return
 	}
 
-	user, generatedPassword, err := h.userSvc.AdminCreateUser(ctx, &req, h.resolveDefaultTenantMode(ctx))
+	user, generatedPassword, err := h.userSvc.AdminCreateUser(ctx, &req)
 	if err != nil {
 		switch {
-		case errors.Is(err, service.ErrUserEmailExists) || errors.Is(err, service.ErrUserUsernameExists):
+		case errors.Is(err, service.ErrUserEmployeeIDExists):
 			if user == nil {
-				logger.Errorf(ctx, "Duplicate identity error without a resolved user: %v", err)
+				logger.Errorf(ctx, "Duplicate employee ID error without a resolved user: %v", err)
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
 				return
 			}
-			logger.Infof(ctx, "Create user noop (identity already exists, ID: %s)", user.ID)
+			logger.Infof(ctx, "Create user noop (employee ID already exists, ID: %s)", user.ID)
 			h.emitAdminAudit(ctx, types.AuditActionSystemUserCreated, user, map[string]any{
-				"target_email":       user.Email,
+				"target_employee_id": user.EmployeeID,
 				"target_username":    user.Username,
 				"password_generated": false,
 				"idempotent":         true,
@@ -1657,8 +1670,6 @@ func (h *SystemHandler) CreateSystemUser(c *gin.Context) {
 			c.JSON(http.StatusOK, CreateSystemUserResponse{User: user.ToUserInfo()})
 		case errors.Is(err, service.ErrPasswordPolicy):
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		case errors.Is(err, service.ErrUserIdentityConflict):
-			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		default:
 			logger.Errorf(ctx, "Failed to create user: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create user"})
@@ -1666,9 +1677,9 @@ func (h *SystemHandler) CreateSystemUser(c *gin.Context) {
 		return
 	}
 
-	logger.Infof(ctx, "System admin created user %s (ID: %s)", user.Username, user.ID)
+	logger.Infof(ctx, "System admin created user %s (employee ID: %s, ID: %s)", user.Username, user.EmployeeID, user.ID)
 	h.emitAdminAudit(ctx, types.AuditActionSystemUserCreated, user, map[string]any{
-		"target_email":       user.Email,
+		"target_employee_id": user.EmployeeID,
 		"target_username":    user.Username,
 		"password_generated": generatedPassword != "",
 		"idempotent":         false,

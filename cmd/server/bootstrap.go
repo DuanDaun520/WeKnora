@@ -17,25 +17,25 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
 
-// bootstrapEnvVar is the env var that names the email of the user who
-// may be promoted to system administrator when the deployment has no
-// existing system administrators.
-//
-// Why an env var (vs a CLI subcommand)?
-//   - Zero-friction in docker-compose / k8s deploys: set it once in the
-//     manifest and the very first user account that signs up with that
-//     email is auto-promoted, with no extra ops step.
-//   - Idempotent: if the user is already a system admin, bootstrapping is
-//     a no-op.
-//   - Safe to leave set: once at least one system admin exists, the env
-//     var stops granting privileges. That prevents a UI revoke from being
-//     silently undone on the next restart.
-const bootstrapEnvVar = "WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL"
+const (
+	// bootstrapAdminEmployeeIDEnv names the employee ID of the default
+	// admin account created when a deployment boots with no system
+	// administrators. Defaults to defaultBootstrapAdminEmployeeID.
+	bootstrapAdminEmployeeIDEnv = "WEKNORA_BOOTSTRAP_ADMIN_EMPLOYEE_ID"
+	// bootstrapAdminPasswordEnv optionally fixes the default admin's
+	// initial password. When unset a random policy-compliant password is
+	// generated and printed to the log exactly once; either way the
+	// account starts with MustChangePassword=true.
+	bootstrapAdminPasswordEnv = "WEKNORA_BOOTSTRAP_ADMIN_PASSWORD"
+	// defaultBootstrapAdminEmployeeID is the employee ID used for the
+	// bootstrap account when the env var above is not set.
+	defaultBootstrapAdminEmployeeID = "admin"
+)
 
 // runStartupBootstrap consults the env and applies any one-shot
-// bootstrap actions. Currently it only handles system-admin promotion;
-// future bootstrap steps (default model seeding, etc.) can be added
-// here as additional dig.Invoke calls.
+// bootstrap actions. Currently: legacy api-key hash backfill and the
+// default-admin guarantee; future bootstrap steps (default model
+// seeding, etc.) can be added here as additional dig.Invoke calls.
 func runStartupBootstrap(c *dig.Container) {
 	ctx := context.Background()
 
@@ -52,74 +52,48 @@ func runStartupBootstrap(c *dig.Container) {
 		logger.Warnf(ctx, "[bootstrap] failed to resolve TenantAPIKeyService: %v", err)
 	}
 
-	email := strings.TrimSpace(os.Getenv(bootstrapEnvVar))
-	if email == "" {
-		return
-	}
 	// dig.Invoke resolves UserService from the container; if user
 	// service registration is broken we want to know loudly, but still
 	// not abort startup — bootstrap is best-effort.
 	if err := c.Invoke(func(userSvc interfaces.UserService) {
-		bootstrapSystemAdmin(ctx, userSvc, email)
+		bootstrapDefaultAdmin(ctx, userSvc)
 	}); err != nil {
 		logger.Warnf(ctx, "[bootstrap] failed to resolve UserService: %v", err)
 	}
 }
 
-// bootstrapSystemAdmin promotes the user identified by `email` to system
-// administrator only when the deployment currently has no system admins.
-// The function is idempotent and non-fatal — it warns and returns on
-// every error path.
-//
-// The bootstrap intentionally does NOT create a user when the email is
-// not yet registered: account creation is a workflow with side effects
-// (password hashing, tenant assignment, audit) that we don't want to
-// short-circuit. Operators should sign up normally first, then set the
-// env var on the next restart.
-func bootstrapSystemAdmin(ctx context.Context, userSvc interfaces.UserService, email string) {
-	user, err := userSvc.GetUserByEmail(ctx, email)
-	if err != nil {
-		// "not found" surfaces as an error in this codebase; treat it
-		// gently — operators commonly set the var before the user has
-		// signed up. The next restart after registration will succeed.
-		logger.Warnf(ctx,
-			"[bootstrap] %s=%s: user lookup failed (have they signed up yet?): %v",
-			bootstrapEnvVar, email, err)
-		return
+// bootstrapDefaultAdmin guarantees the deployment has a system
+// administrator: with none present it creates the default admin account
+// (tenantless, forced password change on first login). Safe to leave the
+// env vars set permanently — once any sysadmin exists this is a no-op, so
+// a UI revoke cannot be silently undone by a restart.
+func bootstrapDefaultAdmin(ctx context.Context, userSvc interfaces.UserService) {
+	employeeID := strings.TrimSpace(os.Getenv(bootstrapAdminEmployeeIDEnv))
+	if employeeID == "" {
+		employeeID = defaultBootstrapAdminEmployeeID
 	}
-	if user == nil {
-		logger.Warnf(ctx,
-			"[bootstrap] %s=%s: no matching user (will retry on next restart)",
-			bootstrapEnvVar, email)
-		return
-	}
-	if user.IsSystemAdmin {
-		logger.Infof(ctx,
-			"[bootstrap] %s=%s: user %s is already a system admin (no-op)",
-			bootstrapEnvVar, email, user.ID)
-		return
-	}
-	_, total, err := userSvc.ListSystemAdmins(ctx, 0, 1)
+	// Deliberately NOT trimmed: passwords may legitimately begin or end
+	// with whitespace under the policy.
+	password := os.Getenv(bootstrapAdminPasswordEnv)
+
+	changed, generatedPassword, err := userSvc.EnsureBootstrapAdmin(ctx, employeeID, password)
 	if err != nil {
 		logger.Warnf(ctx,
-			"[bootstrap] %s=%s: cannot verify existing system admins, skipping promotion: %v",
-			bootstrapEnvVar, email, err)
+			"[bootstrap] default-admin guarantee failed (will retry on next restart): %v", err)
 		return
 	}
-	if total > 0 {
-		logger.Infof(ctx,
-			"[bootstrap] %s=%s: %d system admin(s) already exist; not promoting user %s",
-			bootstrapEnvVar, email, total, user.ID)
+	if !changed {
 		return
 	}
-	user.IsSystemAdmin = true
-	if err := userSvc.UpdateUser(ctx, user); err != nil {
-		logger.Warnf(ctx,
-			"[bootstrap] %s=%s: failed to promote user %s: %v",
-			bootstrapEnvVar, email, user.ID, err)
+	if generatedPassword != "" {
+		logger.Infof(ctx, "[bootstrap] ***********************************************************")
+		logger.Infof(ctx, "[bootstrap] * default system admin created — employee ID: %s", employeeID)
+		logger.Infof(ctx, "[bootstrap] * initial password (shown ONCE, not stored): %s", generatedPassword)
+		logger.Infof(ctx, "[bootstrap] * you will be required to change it on first login")
+		logger.Infof(ctx, "[bootstrap] ***********************************************************")
 		return
 	}
 	logger.Infof(ctx,
-		"[bootstrap] promoted user %s (%s) to system admin via %s",
-		user.ID, email, bootstrapEnvVar)
+		"[bootstrap] default system admin ready — employee ID: %s (password from %s, change required on first login)",
+		employeeID, bootstrapAdminPasswordEnv)
 }

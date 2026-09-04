@@ -196,9 +196,9 @@
           </div>
 
           <!--
-            weknoracloud: 凭证状态 — 不再用大块卡片。已配置 / 加载中 / 未配置
-            统一用 inline alert：图标 + 一行文案 + 行尾跳转 link，体量
-            匹配"一条信息"该有的样子。
+            weknoracloud: 凭证状态 + 内联编辑。解析引擎消费的是空间级
+            tenants.credentials（与模型的 app_id/app_secret 相互独立），
+            WeKnoraCloud 设置页移除后凭证就在这里直接维护，仅系统管理员可写。
           -->
           <template v-if="currentEngine.Name === 'weknoracloud'">
             <div v-if="wkcState === 'configured'" class="inline-alert inline-alert--ok">
@@ -215,11 +215,34 @@
                 <span v-if="wkcState === 'expired'">{{ $t('settings.weknoraCloud.credentialExpired') }}</span>
                 <span v-else>{{ $t('settings.weknoraCloud.unconfigured') }}</span>
               </span>
-              <a class="inline-alert__action" @click="goToWkcSettings">
-                {{ $t('settings.weknoraCloud.goToSettings') }}
-                <t-icon name="chevron-right" />
-              </a>
             </div>
+
+            <template v-if="authStore.isSystemAdmin && wkcState !== 'loading'">
+              <div class="form-item">
+                <label class="form-label">{{ $t('settings.weknoraCloud.appIdLabel') }}</label>
+                <t-input
+                  v-model="wkcCreds.appId"
+                  :placeholder="$t('settings.weknoraCloud.appIdPlaceholder')"
+                  clearable
+                />
+                <p class="form-desc">{{ $t('settings.weknoraCloud.appIdDesc') }}</p>
+              </div>
+              <div class="form-item">
+                <label class="form-label">{{ $t('settings.weknoraCloud.appSecretLabel') }}</label>
+                <t-input
+                  v-model="wkcCreds.appSecret"
+                  type="password"
+                  :placeholder="$t('settings.weknoraCloud.appSecretPlaceholder')"
+                  clearable
+                />
+                <p class="form-desc">{{ $t('settings.weknoraCloud.saveHint') }}</p>
+              </div>
+              <div class="form-item">
+                <t-button theme="primary" :loading="wkcSaving" @click="saveWkcCredentials">
+                  {{ $t('settings.weknoraCloud.saveBtn') }}
+                </t-button>
+              </div>
+            </template>
           </template>
         </section>
 
@@ -380,9 +403,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useUIStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 import { MessagePlugin } from 'tdesign-vue-next'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
@@ -394,10 +416,9 @@ import {
   type ParserEngineInfo,
   type ParserEngineConfig,
 } from '@/api/system'
-import { getWeKnoraCloudStatus } from '@/api/model'
+import { getWeKnoraCloudStatus, saveWeKnoraCloudCredentials } from '@/api/model'
 
 const { t } = useI18n()
-const uiStore = useUIStore()
 const authStore = useAuthStore()
 
 const CONFIGURABLE_ENGINES = new Set(['mineru', 'mineru_cloud', 'paddleocr_vl', 'paddleocr_vl_cloud'])
@@ -688,8 +709,12 @@ async function onSave() {
   }
 }
 
-// ---- WeKnoraCloud 凭证状态 ----
+// ---- WeKnoraCloud 凭证状态与内联编辑 ----
+// 解析引擎消费空间级 tenants.credentials，与每模型的 app_id/app_secret
+// 相互独立；保存路由仅系统管理员可调（000094 收权）。
 const wkcState = ref<'loading' | 'unconfigured' | 'configured' | 'expired'>('loading')
+const wkcCreds = ref({ appId: '', appSecret: '' })
+const wkcSaving = ref(false)
 
 async function checkWkcStatus() {
   wkcState.value = 'loading'
@@ -707,12 +732,25 @@ async function checkWkcStatus() {
   }
 }
 
-async function goToWkcSettings() {
-  if (uiStore.showSettingsModal) {
-    uiStore.closeSettings()
-    await nextTick()
+async function saveWkcCredentials() {
+  const appId = wkcCreds.value.appId.trim()
+  const appSecret = wkcCreds.value.appSecret.trim()
+  if (!appId || !appSecret) {
+    MessagePlugin.warning(t('settings.weknoraCloud.fillRequired'))
+    return
   }
-  uiStore.openSettings('weknoracloud')
+  wkcSaving.value = true
+  try {
+    await saveWeKnoraCloudCredentials({ app_id: appId, app_secret: appSecret })
+    MessagePlugin.success(t('settings.weknoraCloud.saveSuccess'))
+    wkcCreds.value.appId = ''
+    wkcCreds.value.appSecret = ''
+    await checkWkcStatus()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('settings.weknoraCloud.saveFailed'))
+  } finally {
+    wkcSaving.value = false
+  }
 }
 
 onMounted(loadAll)
@@ -1048,27 +1086,6 @@ onMounted(loadAll)
 .inline-alert__text {
   flex: 1 1 auto;
   min-width: 0;
-}
-
-// 行尾 link：跟普通 doc-link 一致的主题色，但更紧凑，行内排版
-.inline-alert__action {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--td-brand-color);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: color 0.15s ease;
-
-  &:hover {
-    color: var(--td-brand-color-active);
-  }
-
-  .t-icon {
-    font-size: 14px;
-  }
 }
 
 @keyframes spin {

@@ -194,10 +194,14 @@ export function initializeSystemByKB(kbId: string, config: InitializationConfig)
     });
 }
 
+// ---- 以下 Ollama / 连接测试 / 厂商列表接口自 000094 模型收权后仅服务于
+// 系统管理控制台（模型管理 / Ollama 运行时），统一走 /system/admin 镜像
+// 路由：无空间绑定的系统管理员也能调用。KB 向导相关接口不在其中。
+
 // 检查Ollama服务状态
 export function checkOllamaStatus(): Promise<{ available: boolean; version?: string; error?: string; baseUrl?: string }> {
     return new Promise((resolve, reject) => {
-        get('/api/v1/initialization/ollama/status')
+        get('/api/v1/system/admin/ollama/status')
             .then((response: any) => {
                 resolve(response.data || { available: false });
             })
@@ -219,7 +223,7 @@ export interface OllamaModelInfo {
 // 列出已安装的 Ollama 模型（详细信息）
 export function listOllamaModels(): Promise<OllamaModelInfo[]> {
     return new Promise((resolve, reject) => {
-        get('/api/v1/initialization/ollama/models')
+        get('/api/v1/system/admin/ollama/models')
             .then((response: any) => {
                 resolve((response.data && response.data.models) || []);
             })
@@ -233,7 +237,7 @@ export function listOllamaModels(): Promise<OllamaModelInfo[]> {
 // 检查Ollama模型状态
 export function checkOllamaModels(models: string[]): Promise<{ models: Record<string, boolean> }> {
     return new Promise((resolve, reject) => {
-        post('/api/v1/initialization/ollama/models/check', { models })
+        post('/api/v1/system/admin/ollama/models/check', { models })
             .then((response: any) => {
                 resolve(response.data || { models: {} });
             })
@@ -247,7 +251,7 @@ export function checkOllamaModels(models: string[]): Promise<{ models: Record<st
 // 启动Ollama模型下载（异步）
 export function downloadOllamaModel(modelName: string): Promise<{ taskId: string; modelName: string; status: string; progress: number }> {
     return new Promise((resolve, reject) => {
-        post('/api/v1/initialization/ollama/models/download', { modelName })
+        post('/api/v1/system/admin/ollama/models/download', { modelName })
             .then((response: any) => {
                 resolve(response.data || { taskId: '', modelName, status: 'failed', progress: 0 });
             })
@@ -261,7 +265,7 @@ export function downloadOllamaModel(modelName: string): Promise<{ taskId: string
 // 查询下载进度
 export function getDownloadProgress(taskId: string): Promise<DownloadTask> {
     return new Promise((resolve, reject) => {
-        get(`/api/v1/initialization/ollama/download/progress/${taskId}`)
+        get(`/api/v1/system/admin/ollama/download/progress/${taskId}`)
             .then((response: any) => {
                 resolve(response.data);
             })
@@ -275,7 +279,7 @@ export function getDownloadProgress(taskId: string): Promise<DownloadTask> {
 // 获取所有下载任务
 export function listDownloadTasks(): Promise<DownloadTask[]> {
     return new Promise((resolve, reject) => {
-        get('/api/v1/initialization/ollama/download/tasks')
+        get('/api/v1/system/admin/ollama/download/tasks')
             .then((response: any) => {
                 resolve(response.data || []);
             })
@@ -307,8 +311,10 @@ interface BaseModelTestPayload {
     customHeaders?: Record<string, string>;
     extraConfig?: Record<string, string>;
     interfaceType?: string;
-    /** 第二段密钥（如 LKEAP Rerank 的腾讯云 SecretKey） */
+    /** 第二段密钥（如 LKEAP Rerank 的腾讯云 SecretKey、WeKnoraCloud 的 App Secret） */
     appSecret?: string;
+    /** WeKnoraCloud App ID（对应后端 ModelTestRequest.AppID） */
+    appId?: string;
 }
 
 // 检查远程API模型
@@ -325,7 +331,7 @@ export function checkRemoteModel(modelConfig: {
     message?: string;
 }> {
     return new Promise((resolve, reject) => {
-        post('/api/v1/initialization/remote/check', modelConfig)
+        post('/api/v1/system/admin/initialization/remote/check', modelConfig)
             .then((response: any) => {
                 resolve(response.data || {});
             })
@@ -348,7 +354,7 @@ export function testEmbeddingModel(modelConfig: {
     modelId?: string;
 } & BaseModelTestPayload): Promise<{ available: boolean; message?: string; dimension?: number }> {
     return new Promise((resolve, reject) => {
-        post('/api/v1/initialization/embedding/test', modelConfig)
+        post('/api/v1/system/admin/initialization/embedding/test', modelConfig)
             .then((response: any) => {
                 resolve(response.data || {});
             })
@@ -371,7 +377,7 @@ export function checkRerankModel(modelConfig: {
     message?: string;
 }> {
     return new Promise((resolve, reject) => {
-        post('/api/v1/initialization/rerank/check', modelConfig)
+        post('/api/v1/system/admin/initialization/rerank/check', modelConfig)
             .then((response: any) => {
                 resolve(response.data || {});
             })
@@ -394,7 +400,7 @@ export function checkASRModel(modelConfig: {
     message?: string;
 }> {
     return new Promise((resolve, reject) => {
-        post('/api/v1/initialization/asr/check', modelConfig)
+        post('/api/v1/system/admin/initialization/asr/check', modelConfig)
             .then((response: any) => {
                 resolve(response.data || {});
             })
@@ -478,7 +484,7 @@ export function testMultimodalFunction(testData: {
         }
 
         // 使用原生fetch因为需要发送FormData
-        fetch('/api/v1/initialization/multimodal/test', {
+        fetch('/api/v1/system/admin/initialization/multimodal/test', {
             method: 'POST',
             headers,
             body: formData
@@ -592,8 +598,8 @@ export interface ModelProviderOption {
 export function listModelProviders(modelType?: string): Promise<ModelProviderOption[]> {
     return new Promise((resolve, reject) => {
         const url = modelType
-            ? `/api/v1/models/providers?model_type=${encodeURIComponent(modelType)}`
-            : '/api/v1/models/providers';
+            ? `/api/v1/system/admin/models/providers?model_type=${encodeURIComponent(modelType)}`
+            : '/api/v1/system/admin/models/providers';
         get(url)
             .then((response: any) => {
                 resolve(response.data || []);

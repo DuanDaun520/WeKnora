@@ -49,13 +49,17 @@ export interface ModelConfig {
   deleted_at?: string | null;
 }
 
-// 创建模型
+// ---- 模型目录管理（000094 收权）：写操作全部走 /system/admin 镜像路由，
+// 仅系统管理员可用（无空间绑定的系统管理员同样可调）。读接口
+// listModels 仍走空间级 /api/v1/models，供各处模型选择器使用。 ----
+
+// 创建模型（平台目录）
 export function createModel(data: ModelConfig): Promise<ModelConfig> {
   return new Promise((resolve, reject) => {
-    post('/api/v1/models', data)
+    post('/api/v1/system/admin/models', data)
       .then((response: any) => {
-        if (response.success && response.data) {
-          resolve(response.data);
+        if (response && response.model) {
+          resolve(response.model);
         } else {
           reject(new Error(response.message || t('error.model.createFailed')));
         }
@@ -65,6 +69,16 @@ export function createModel(data: ModelConfig): Promise<ModelConfig> {
         reject(error);
       });
   });
+}
+
+// 平台模型目录全量列表（含内置模型），供系统管理控制台使用
+export async function listSystemModels(params?: { type?: string; q?: string }): Promise<ModelConfig[]> {
+  const qs = new URLSearchParams()
+  if (params?.type) qs.set('type', params.type)
+  if (params?.q) qs.set('q', params.q)
+  const suffix = qs.toString() ? `?${qs.toString()}` : ''
+  const response: any = await get(`/api/v1/system/admin/models${suffix}`)
+  return (response && response.models) || []
 }
 
 // 获取模型列表
@@ -91,13 +105,13 @@ export function listModels(type?: string): Promise<ModelConfig[]> {
   });
 }
 
-// 获取单个模型
+// 获取单个模型（平台目录）
 export function getModel(id: string): Promise<ModelConfig> {
   return new Promise((resolve, reject) => {
-    get(`/api/v1/models/${id}`)
+    get(`/api/v1/system/admin/models/${id}`)
       .then((response: any) => {
-        if (response.success && response.data) {
-          resolve(response.data);
+        if (response && response.model) {
+          resolve(response.model);
         } else {
           reject(new Error(response.message || t('error.model.getFailed')));
         }
@@ -109,13 +123,13 @@ export function getModel(id: string): Promise<ModelConfig> {
   });
 }
 
-// 更新模型
+// 更新模型（平台目录）
 export function updateModel(id: string, data: Partial<ModelConfig>): Promise<ModelConfig> {
   return new Promise((resolve, reject) => {
-    put(`/api/v1/models/${id}`, data)
+    put(`/api/v1/system/admin/models/${id}`, data)
       .then((response: any) => {
-        if (response.success && response.data) {
-          resolve(response.data);
+        if (response && response.model) {
+          resolve(response.model);
         } else {
           reject(new Error(response.message || t('error.model.updateFailed')));
         }
@@ -127,10 +141,10 @@ export function updateModel(id: string, data: Partial<ModelConfig>): Promise<Mod
   });
 }
 
-// 删除模型
+// 删除模型（平台目录）
 export function deleteModel(id: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    del(`/api/v1/models/${id}`)
+    del(`/api/v1/system/admin/models/${id}`)
       .then((response: any) => {
         if (response.success) {
           resolve();
@@ -177,7 +191,7 @@ export async function debugModel(
   form.append('options', JSON.stringify(data.options || {}))
   if (data.file) form.append('file', data.file)
   const response: any = await postUpload(
-    `/api/v1/models/${id}/debug`,
+    `/api/v1/system/admin/models/${id}/debug`,
     form,
     undefined,
     { timeout: 300000 },
@@ -201,7 +215,7 @@ export async function putModelCredentials(
   id: string,
   body: Partial<Record<ModelCredentialField, string>>,
 ): Promise<ModelCredentialsResponse> {
-  const response: any = await put(`/api/v1/models/${id}/credentials`, body)
+  const response: any = await put(`/api/v1/system/admin/models/${id}/credentials`, body)
   return (response.data ?? response) as ModelCredentialsResponse
 }
 
@@ -209,53 +223,32 @@ export async function deleteModelCredentialField(
   id: string,
   field: ModelCredentialField,
 ): Promise<void> {
-  await del(`/api/v1/models/${id}/credentials/${field}`)
+  await del(`/api/v1/system/admin/models/${id}/credentials/${field}`)
 }
 
-export interface InitializeWeKnoraCloudRequest {
-  app_id: string
-  app_secret: string
+// ---- WeKnoraCloud 空间级凭证 ----
+// 模型凭证已随 000094 平台化改为每模型 app_id / app_secret（见上方
+// credentials 子资源）；这对接口操作的是空间级 tenants.credentials，
+// 目前唯一的消费方是文档解析引擎（ParserEngineSettings）。写路由仅
+// 系统管理员可调。
+export interface WeKnoraCloudTenantCredentials {
+  app_id: string;
+  app_secret: string;
 }
 
-// 仅保存 WeKnoraCloud 凭证，不自动创建模型
-export function saveWeKnoraCloudCredentials(data: InitializeWeKnoraCloudRequest): Promise<{ success: boolean; message: string }> {
-  return new Promise((resolve, reject) => {
-    post('/api/v1/weknoracloud/credentials', data)
-      .then((response: any) => {
-        if (response.success) {
-          resolve(response)
-        } else {
-          reject(new Error(response.message || response.error || '凭证保存失败'))
-        }
-      })
-      .catch((error: any) => {
-        console.error('Failed to save WeKnoraCloud credentials:', error)
-        reject(error)
-      })
-  })
+export interface WeKnoraCloudStatus {
+  has_models: boolean;
+  needs_reinit: boolean;
+  reason?: string;
 }
 
-export interface WeKnoraCloudStatusResult {
-  has_models: boolean
-  needs_reinit: boolean
-  reason?: string
+export async function saveWeKnoraCloudCredentials(
+  data: WeKnoraCloudTenantCredentials,
+): Promise<void> {
+  await post('/api/v1/weknoracloud/credentials', data)
 }
 
-export function getWeKnoraCloudStatus(): Promise<WeKnoraCloudStatusResult> {
-  return new Promise((resolve, reject) => {
-    get('/api/v1/models/weknoracloud/status')
-      .then((response: any) => {
-        // status 接口直接返回对象，不包在 success/data 中
-        if (response && typeof response.has_models === 'boolean') {
-          resolve(response)
-        } else if (response?.success && response?.data) {
-          resolve(response.data)
-        } else {
-          resolve({ has_models: false, needs_reinit: false })
-        }
-      })
-      .catch(() => {
-        resolve({ has_models: false, needs_reinit: false })
-      })
-  })
+export async function getWeKnoraCloudStatus(): Promise<WeKnoraCloudStatus> {
+  const response: any = await get('/api/v1/models/weknoracloud/status')
+  return (response?.data ?? response) as WeKnoraCloudStatus
 }

@@ -132,6 +132,28 @@ const (
 	AuditActionSystemAPIKeyCreated AuditAction = "system.api_key_created"
 	AuditActionSystemAPIKeyRevoked AuditAction = "system.api_key_revoked"
 
+	// Enterprise user-lifecycle actions fired by the /system/admin/users*
+	// endpoints. user_updated covers name/email edits; user_enabled /
+	// user_disabled record lifecycle transitions (disabling also revokes
+	// every session). TenantID=0 (system scope); TargetUserID identifies
+	// the affected user. Workspace bind/unbind keep their existing
+	// rbac.member_added / rbac.member_removed actions (emitted by
+	// TenantMemberService), so a single audit timeline covers both.
+	AuditActionSystemUserUpdated  AuditAction = "system.user_updated"
+	AuditActionSystemUserEnabled  AuditAction = "system.user_enabled"
+	AuditActionSystemUserDisabled AuditAction = "system.user_disabled"
+
+	// Platform model-governance actions fired by the /system/admin/models*
+	// endpoints (000094 rework: models are configured by the system admin
+	// and shared with workspaces through explicit assignments). TenantID=0
+	// (system scope); TargetType=model / TargetID=<model id>. Assignment
+	// changes carry TargetType=tenant / TargetID=<tenant id>.
+	AuditActionSystemModelCreated     AuditAction = "system.model_created"
+	AuditActionSystemModelUpdated     AuditAction = "system.model_updated"
+	AuditActionSystemModelDeleted     AuditAction = "system.model_deleted"
+	AuditActionSystemModelCredentials AuditAction = "system.model_credentials_changed"
+	AuditActionSystemModelsAssigned   AuditAction = "system.tenant_models_assigned"
+
 	// Runtime queue mutations are privileged SystemAdmin actions. Retrying an
 	// archived task can repeat its original side effects; deleting one removes
 	// the Redis failure record. Both must leave a platform audit trail.

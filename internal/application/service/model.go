@@ -23,6 +23,10 @@ import (
 // ErrModelNotFound is returned when a model cannot be found in the repository
 var ErrModelNotFound = errors.New("model not found")
 
+// ErrModelInUse is returned when a workspace assignment removal would strand
+// references to the model inside that workspace (KB / agent / memory config).
+var ErrModelInUse = errors.New("model is in use")
+
 // modelService implements the model service interface
 type modelService struct {
 	repo          interfaces.ModelRepository
@@ -155,6 +159,18 @@ func (s *modelService) CreateModel(ctx context.Context, model *types.Model) erro
 	return nil
 }
 
+// getModelRowForContext resolves a model row for the caller's context.
+// Tenant-bound callers (all workspace routes and workers) resolve through
+// the assignment-aware GetByID; contexts without a tenant are system-admin
+// paths (console model debug), which resolve platform-wide instead of
+// panicking on the missing context key.
+func (s *modelService) getModelRowForContext(ctx context.Context, id string) (*types.Model, error) {
+	if tenantID, ok := types.TenantIDFromContext(ctx); ok {
+		return s.repo.GetByID(ctx, tenantID, id)
+	}
+	return s.repo.GetByIDAnyTenant(ctx, id)
+}
+
 // GetModelByID retrieves a model by its ID
 // Returns an error if the model is not found or is in a non-active state
 func (s *modelService) GetModelByID(ctx context.Context, id string) (*types.Model, error) {
@@ -164,14 +180,11 @@ func (s *modelService) GetModelByID(ctx context.Context, id string) (*types.Mode
 		return nil, errors.New("model ID cannot be empty")
 	}
 
-	tenantID := types.MustTenantIDFromContext(ctx)
-
 	// Fetch model from repository
-	model, err := s.repo.GetByID(ctx, tenantID, id)
+	model, err := s.getModelRowForContext(ctx, id)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
-			"model_id":  id,
-			"tenant_id": tenantID,
+			"model_id": id,
 		})
 		return nil, err
 	}
@@ -264,27 +277,12 @@ func (s *modelService) UpdateModel(ctx context.Context, model *types.Model) erro
 	return nil
 }
 
-// UpdateModelCredentials writes one or more credential fields on the model's
-// Parameters jsonb. Models are not pooled per-instance the way MCP clients
-// are (each call to GetEmbeddingModel/GetChatModel rebuilds the client from
-// the current Parameters), so no explicit cache invalidation is required —
-// the next call will pick up the new credential automatically.
-func (s *modelService) UpdateModelCredentials(
-	ctx context.Context, id string, apiKey, appSecret *string,
+// applyCredentialUpdate mutates `existing` with the requested credential
+// fields and persists it. Shared by the workspace-scoped and platform
+// (system-admin) credential endpoints.
+func (s *modelService) applyCredentialUpdate(
+	ctx context.Context, existing *types.Model, apiKey, appSecret *string,
 ) (*types.Model, error) {
-	tenantID := types.MustTenantIDFromContext(ctx)
-	existing, err := s.repo.GetByID(ctx, tenantID, id)
-	if err != nil {
-		return nil, err
-	}
-	if existing == nil {
-		return nil, ErrModelNotFound
-	}
-	if existing.IsBuiltin && !types.IsSystemAdminFromContext(ctx) {
-		return nil, apperrors.NewForbiddenError(
-			"only system administrators can modify builtin model credentials")
-	}
-
 	changed := false
 	if apiKey != nil && *apiKey != "" && *apiKey != existing.Parameters.APIKey {
 		existing.Parameters.APIKey = *apiKey
@@ -304,25 +302,13 @@ func (s *modelService) UpdateModelCredentials(
 	if err := s.repo.Update(ctx, existing); err != nil {
 		return nil, err
 	}
-	logger.Infof(ctx, "Model credentials updated: id=%s", id)
+	logger.Infof(ctx, "Model credentials updated: id=%s", existing.ID)
 	return existing, nil
 }
 
-// ClearModelCredential removes a single credential field. Idempotent.
-func (s *modelService) ClearModelCredential(ctx context.Context, id, field string) error {
-	tenantID := types.MustTenantIDFromContext(ctx)
-	existing, err := s.repo.GetByID(ctx, tenantID, id)
-	if err != nil {
-		return err
-	}
-	if existing == nil {
-		return ErrModelNotFound
-	}
-	if existing.IsBuiltin && !types.IsSystemAdminFromContext(ctx) {
-		return apperrors.NewForbiddenError(
-			"only system administrators can modify builtin model credentials")
-	}
-
+// applyCredentialClear removes a single credential field from `existing` and
+// persists it. Shared by the workspace-scoped and platform endpoints.
+func (s *modelService) applyCredentialClear(ctx context.Context, existing *types.Model, field string) error {
 	changed := false
 	switch field {
 	case "api_key":
@@ -347,8 +333,48 @@ func (s *modelService) ClearModelCredential(ctx context.Context, id, field strin
 	if err := s.repo.Update(ctx, existing); err != nil {
 		return err
 	}
-	logger.Infof(ctx, "Model credential cleared by user: id=%s field=%s", id, field)
+	logger.Infof(ctx, "Model credential cleared: id=%s field=%s", existing.ID, field)
 	return nil
+}
+
+// UpdateModelCredentials writes one or more credential fields on the model's
+// Parameters jsonb. Models are not pooled per-instance the way MCP clients
+// are (each call to GetEmbeddingModel/GetChatModel rebuilds the client from
+// the current Parameters), so no explicit cache invalidation is required —
+// the next call will pick up the new credential automatically.
+func (s *modelService) UpdateModelCredentials(
+	ctx context.Context, id string, apiKey, appSecret *string,
+) (*types.Model, error) {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	existing, err := s.repo.GetByID(ctx, tenantID, id)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, ErrModelNotFound
+	}
+	if existing.IsBuiltin && !types.IsSystemAdminFromContext(ctx) {
+		return nil, apperrors.NewForbiddenError(
+			"only system administrators can modify builtin model credentials")
+	}
+	return s.applyCredentialUpdate(ctx, existing, apiKey, appSecret)
+}
+
+// ClearModelCredential removes a single credential field. Idempotent.
+func (s *modelService) ClearModelCredential(ctx context.Context, id, field string) error {
+	tenantID := types.MustTenantIDFromContext(ctx)
+	existing, err := s.repo.GetByID(ctx, tenantID, id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrModelNotFound
+	}
+	if existing.IsBuiltin && !types.IsSystemAdminFromContext(ctx) {
+		return apperrors.NewForbiddenError(
+			"only system administrators can modify builtin model credentials")
+	}
+	return s.applyCredentialClear(ctx, existing, field)
 }
 
 // DeleteModel removes a model from the repository
@@ -427,6 +453,212 @@ func (s *modelService) DeleteModel(ctx context.Context, id string) error {
 
 	logger.Infof(ctx, "Model deleted successfully: %s", id)
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// System-admin platform catalog + workspace assignments (000094 model
+// governance rework). These methods must not read the tenant from the
+// request context: a system admin may have no workspace binding at all.
+// ---------------------------------------------------------------------------
+
+// ListAllModels returns the whole platform catalog (builtin included).
+func (s *modelService) ListAllModels(
+	ctx context.Context, modelType types.ModelType, nameQuery string,
+) ([]*types.Model, error) {
+	return s.repo.ListAll(ctx, modelType, "", nameQuery)
+}
+
+// GetPlatformModel fetches a model regardless of workspace visibility and
+// applies the same status gating as GetModelByID.
+func (s *modelService) GetPlatformModel(ctx context.Context, id string) (*types.Model, error) {
+	if id == "" {
+		return nil, errors.New("model ID cannot be empty")
+	}
+	model, err := s.repo.GetByIDAnyTenant(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if model == nil {
+		return nil, ErrModelNotFound
+	}
+	switch model.Status {
+	case types.ModelStatusActive:
+		return model, nil
+	case types.ModelStatusDownloading:
+		return nil, errors.New("model is currently downloading")
+	case types.ModelStatusDownloadFailed:
+		return nil, errors.New("model download failed")
+	default:
+		return nil, errors.New("abnormal model status")
+	}
+}
+
+// CreatePlatformModel creates a platform-owned (tenant_id = 0) model. Local
+// models keep the asynchronous Ollama download behaviour of CreateModel.
+func (s *modelService) CreatePlatformModel(ctx context.Context, model *types.Model) error {
+	model.TenantID = 0
+	return s.CreateModel(ctx, model)
+}
+
+// UpdatePlatformModel updates a model without a workspace scope. Callers are
+// SystemAdmin-guarded at the router layer, so the builtin-model restriction
+// reduces to preserving the row's shared semantics on save.
+func (s *modelService) UpdatePlatformModel(ctx context.Context, model *types.Model) error {
+	existing, err := s.repo.GetByIDAnyTenant(ctx, model.ID)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrModelNotFound
+	}
+	if existing.IsBuiltin {
+		// A UI edit is an explicit runtime override. Clear YAML ownership so
+		// the startup reconciler does not silently replace the saved values.
+		model.TenantID = existing.TenantID
+		model.IsBuiltin = true
+		model.ManagedBy = ""
+	}
+	return s.repo.Update(ctx, model)
+}
+
+// UpdatePlatformModelCredentials is the workspace-scope-free variant of
+// UpdateModelCredentials for the system-admin console.
+func (s *modelService) UpdatePlatformModelCredentials(
+	ctx context.Context, id string, apiKey, appSecret *string,
+) (*types.Model, error) {
+	existing, err := s.repo.GetByIDAnyTenant(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, ErrModelNotFound
+	}
+	return s.applyCredentialUpdate(ctx, existing, apiKey, appSecret)
+}
+
+// ClearPlatformModelCredential is the workspace-scope-free variant of
+// ClearModelCredential for the system-admin console.
+func (s *modelService) ClearPlatformModelCredential(ctx context.Context, id, field string) error {
+	existing, err := s.repo.GetByIDAnyTenant(ctx, id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrModelNotFound
+	}
+	return s.applyCredentialClear(ctx, existing, field)
+}
+
+// DeletePlatformModel removes a model after checking references across every
+// workspace (KBs, agents, tenant memory pins).
+func (s *modelService) DeletePlatformModel(ctx context.Context, id string) error {
+	existing, err := s.repo.GetByIDAnyTenant(ctx, id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrModelNotFound
+	}
+	if existing.IsBuiltin {
+		return apperrors.NewBadRequestError("builtin models cannot be deleted")
+	}
+
+	kbCount, agentCount, memoryCount, err := s.repo.CountModelUsages(ctx, 0, id)
+	if err != nil {
+		return err
+	}
+	if kbCount > 0 || agentCount > 0 || memoryCount > 0 {
+		logger.Warnf(ctx, "Platform model %s is in use: kb=%d agent=%d memory=%d", id, kbCount, agentCount, memoryCount)
+		return apperrors.NewBadRequestError(formatModelInUseMessage(kbCount, agentCount, memoryCount > 0))
+	}
+
+	if err := s.repo.DeleteAnyTenant(ctx, id); err != nil {
+		return err
+	}
+	// A deleted model must not linger in any workspace assignment.
+	if err := s.repo.DeleteAssignmentsByModelID(ctx, id); err != nil {
+		logger.Warnf(ctx, "Failed to purge assignments of deleted model %s: %v", id, err)
+	}
+	logger.Infof(ctx, "Platform model deleted successfully: %s", id)
+	return nil
+}
+
+// ListTenantAssignedModels returns the non-builtin models assigned to a
+// workspace. Builtin models are visible to everyone without an assignment
+// row and are therefore not part of the assignable set.
+func (s *modelService) ListTenantAssignedModels(ctx context.Context, tenantID uint64) ([]*types.Model, error) {
+	ids, err := s.repo.ListAssignedModelIDs(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	models := make([]*types.Model, 0, len(ids))
+	for _, id := range ids {
+		m, err := s.repo.GetByIDAnyTenant(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if m == nil || m.IsBuiltin {
+			// Soft-deleted or pruned models: skip silently.
+			continue
+		}
+		models = append(models, m)
+	}
+	return models, nil
+}
+
+// SetTenantModelAssignments replaces the full assignment list of a
+// workspace. Removing a model the workspace still references fails with
+// ErrModelInUse so knowledge bases and agents never point at an invisible
+// model.
+func (s *modelService) SetTenantModelAssignments(
+	ctx context.Context, tenantID uint64, modelIDs []string, assignedBy string,
+) error {
+	seen := make(map[string]struct{}, len(modelIDs))
+	deduped := make([]string, 0, len(modelIDs))
+	for _, id := range modelIDs {
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		model, err := s.repo.GetByIDAnyTenant(ctx, id)
+		if err != nil {
+			return err
+		}
+		if model == nil {
+			return apperrors.NewBadRequestError(fmt.Sprintf("model not found: %s", id))
+		}
+		deduped = append(deduped, id)
+	}
+
+	current, err := s.repo.ListAssignedModelIDs(ctx, tenantID)
+	if err != nil {
+		return err
+	}
+	currentSet := make(map[string]struct{}, len(current))
+	for _, id := range current {
+		currentSet[id] = struct{}{}
+	}
+	for _, id := range current {
+		if _, keep := seen[id]; keep {
+			continue
+		}
+		kbCount, agentCount, memoryCount, err := s.repo.CountModelUsages(ctx, tenantID, id)
+		if err != nil {
+			return err
+		}
+		if kbCount > 0 || agentCount > 0 || memoryCount > 0 {
+			logger.Warnf(ctx,
+				"Cannot unassign in-use model %s from tenant %d: kb=%d agent=%d memory=%d",
+				id, tenantID, kbCount, agentCount, memoryCount)
+			return apperrors.NewConflictError(
+				formatModelInUseMessage(kbCount, agentCount, memoryCount > 0))
+		}
+	}
+
+	return s.repo.ReplaceAssignments(ctx, tenantID, deduped, assignedBy)
 }
 
 // GetEmbeddingModel retrieves and initializes an embedding model instance
@@ -544,14 +776,12 @@ func (s *modelService) GetChatModel(ctx context.Context, modelId string) (chat.C
 		return nil, errors.New("model ID cannot be empty")
 	}
 
-	tenantID := types.MustTenantIDFromContext(ctx)
-
-	// Get the model directly from repository to avoid status checks
-	model, err := s.repo.GetByID(ctx, tenantID, modelId)
+	// Get the model directly from repository to avoid status checks.
+	// Tenantless contexts (system-admin console debug) resolve platform-wide.
+	model, err := s.getModelRowForContext(ctx, modelId)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
-			"model_id":  modelId,
-			"tenant_id": tenantID,
+			"model_id": modelId,
 		})
 		return nil, err
 	}
@@ -583,13 +813,10 @@ func (s *modelService) GetVLMModel(ctx context.Context, modelId string) (vlm.VLM
 		return nil, errors.New("model ID cannot be empty")
 	}
 
-	tenantID := types.MustTenantIDFromContext(ctx)
-
-	model, err := s.repo.GetByID(ctx, tenantID, modelId)
+	model, err := s.getModelRowForContext(ctx, modelId)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
-			"model_id":  modelId,
-			"tenant_id": tenantID,
+			"model_id": modelId,
 		})
 		return nil, err
 	}
@@ -623,13 +850,10 @@ func (s *modelService) GetASRModel(ctx context.Context, modelId string) (asr.ASR
 		return nil, errors.New("model ID cannot be empty")
 	}
 
-	tenantID := types.MustTenantIDFromContext(ctx)
-
-	model, err := s.repo.GetByID(ctx, tenantID, modelId)
+	model, err := s.getModelRowForContext(ctx, modelId)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
-			"model_id":  modelId,
-			"tenant_id": tenantID,
+			"model_id": modelId,
 		})
 		return nil, err
 	}

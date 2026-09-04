@@ -22,7 +22,7 @@ type resetPasswordUserService struct {
 	resetUserID string
 }
 
-func (s *resetPasswordUserService) GetUserByEmail(context.Context, string) (*types.User, error) {
+func (s *resetPasswordUserService) GetUserByEmployeeID(context.Context, string) (*types.User, error) {
 	s.lookupCalls++
 	return s.target, nil
 }
@@ -60,13 +60,13 @@ func performPasswordReset(t *testing.T, r *gin.Engine, body map[string]string) *
 
 func TestResetUserPasswordResetsOtherUserAndAuditsWithoutSecret(t *testing.T) {
 	users := &resetPasswordUserService{target: &types.User{
-		ID: "target-user", Username: "alice", Email: "alice@example.com",
+		ID: "target-user", EmployeeID: "10001", Username: "alice", Email: "alice@example.com",
 	}}
 	audits := &capturingAuditService{}
 	h := &SystemHandler{userSvc: users, auditSvc: audits}
 
 	w := performPasswordReset(t, passwordResetRouter(h, "admin-user"), map[string]string{
-		"email": "alice@example.com", "new_password": "FreshPass9",
+		"employee_id": "10001", "new_password": "FreshPass9",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
@@ -80,16 +80,19 @@ func TestResetUserPasswordResetsOtherUserAndAuditsWithoutSecret(t *testing.T) {
 	if strings.Contains(string(audits.entries[0].Details), "FreshPass9") {
 		t.Fatal("audit details leaked the new password")
 	}
+	if !strings.Contains(string(audits.entries[0].Details), `"target_employee_id":"10001"`) {
+		t.Fatalf("audit details must carry the employee ID, got %s", audits.entries[0].Details)
+	}
 }
 
 func TestResetUserPasswordRejectsSelfReset(t *testing.T) {
 	users := &resetPasswordUserService{target: &types.User{
-		ID: "admin-user", Username: "admin", Email: "admin@example.com",
+		ID: "admin-user", EmployeeID: "10001", Username: "admin",
 	}}
 	h := &SystemHandler{userSvc: users}
 
 	w := performPasswordReset(t, passwordResetRouter(h, "admin-user"), map[string]string{
-		"email": "admin@example.com", "new_password": "FreshPass9",
+		"employee_id": "10001", "new_password": "FreshPass9",
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
@@ -104,7 +107,7 @@ func TestResetUserPasswordRejectsWeakPasswordBeforeUserLookup(t *testing.T) {
 	h := &SystemHandler{userSvc: users}
 
 	w := performPasswordReset(t, passwordResetRouter(h, "admin-user"), map[string]string{
-		"email": "alice@example.com", "new_password": "password",
+		"employee_id": "10001", "new_password": "password",
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())

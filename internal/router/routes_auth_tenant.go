@@ -6,26 +6,33 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/Tencent/WeKnora/internal/handler"
-	"github.com/Tencent/WeKnora/internal/middleware"
 	"github.com/Tencent/WeKnora/internal/types"
 )
 
 // RegisterTenantRoutes 注册空间相关的路由
 //
-// Tenant-internal RBAC for /tenants/:id:
-//   - GET   /:id          Viewer+ (read tenant settings)
-//   - PUT   /:id          Owner+ (mutate tenant config)
-//   - DELETE /:id         Owner+ (also normally a CanAccessAllTenants op)
-//   - GET/POST/PUT/DELETE /:id/api-keys   Owner+ (scoped API key management)
-//   - GET    /:id/members            Viewer+ (any member can see who else is in)
-//   - POST   /:id/members            Owner+ (only Owner can add new members)
-//   - PUT    /:id/members/:user_id   Owner+ (only Owner can change roles)
-//   - DELETE /:id/members/:user_id   Owner+ (only Owner can remove members)
-//   - POST   /:id/leave              Viewer+ (any member can quit on their own)
+// Tenant-internal RBAC for /tenants/:id after the enterprise user-system
+// rework (roles flattened to a single "admin" rank inside a workspace):
+//   - GET   /:id          Viewer+ (read tenant settings — equal rights)
+//   - PUT   /:id          SystemAdmin only (tenant config is a platform
+//     admin surface; workspace members cannot re-shape
+//     quotas/status that the sysadmin owns)
+//   - DELETE /:id         SystemAdmin only (deleting a workspace affects
+//     the whole platform)
+//   - GET/POST/PUT/DELETE /:id/api-keys, api-principal-*  Admin+ via
+//     AdminOrSystemAdmin (flat members manage their
+//     integration credentials; the fallback lets a
+//     tenantless system admin operate platform tenants)
+//   - GET    /:id/members            Viewer+ (read-only roster; binding
+//     changes go through /system/admin/users/:id/bindings)
+//
+// Member mutation (add/re-role/remove/leave) and the invitation flow were
+// removed with the rework: user↔workspace binding is configured by the
+// system admin exclusively.
 //
 // All /tenants/:id endpoints share g.PathTenantMatch() at the group
 // level: middleware/access.go enforces "URL :id == active tenant"
-// (with the cross-tenant superuser carve-out) so an Owner-of-A cannot
+// (with the cross-tenant superuser carve-out) so a member of A cannot
 // drive operations against tenant B by changing the URL. This used to
 // be authorizeTenantAccess in tenant.go and resolveTenantIDFromPath in
 // tenant_member.go; collapsing it into one route guard means the
@@ -44,7 +51,6 @@ func RegisterTenantRoutes(
 	r *gin.RouterGroup,
 	handler *handler.TenantHandler,
 	memberHandler *handler.TenantMemberHandler,
-	invitationHandler *handler.TenantInvitationHandler,
 	auditLogHandler *handler.AuditLogHandler,
 	g *rbacGuards,
 ) {
@@ -60,14 +66,9 @@ func RegisterTenantRoutes(
 	// 空间路由组
 	tenantRoutes := r.Group("/tenants")
 	{
-		// 创建空间对所有已登录用户开放：用户可以为自己再开一个工作区，
-		// handler 内部会调 EnsureOwner 把调用者写成新空间的 Owner。
-		// 跨空间超管走同一个端点，但能携带 storage_quota / status 等
-		// 全字段（见 handler.CreateTenant 内部分支）。
-		// 安全说明：这里不挂 g.CrossTenant()，因为 self-service 创建
-		// 不需要跨空间特权；handler 也不读写 X-Tenant-ID 指向的现有
-		// 空间，所以越过 PathTenantMatch 守卫不会扩大攻击面。
-		// 创建空间不对 API key 开放（注册在原始 group，默认拒绝）。
+		// 创建空间仅系统管理员（handler 内部按 IsSystemAdmin 收口）；
+		// platform API key 经 system_tenants_manage 能力走同一端点。
+		// 普通用户的自助开户已在企业化改造中移除。
 		g.apiKeyRoute(tenantRoutes, http.MethodPost, "",
 			apiKeyPlatform(types.APIKeyCapabilitySystemTenantsManage), handler.CreateTenant)
 		g.apiKeyRoute(tenantRoutes, http.MethodGet, "", apiKeyManageTenantSettings(apiKeyFullAccess()), handler.ListTenants)
@@ -90,50 +91,27 @@ func RegisterTenantRoutes(
 			g.apiKeyRoute(tenantByID, http.MethodGet, "",
 				apiKeyPlatform(types.APIKeyCapabilitySystemTenantsRead, types.APIKeyCapabilitySystemTenantsManage),
 				g.Viewer(), handler.GetTenant)
+			// 空间级配置/删除是平台管理面：仅系统管理员（或 platform key）。
 			g.apiKeyRoute(tenantByID, http.MethodPut, "",
-				apiKeyPlatform(types.APIKeyCapabilitySystemTenantsManage), g.Owner(), handler.UpdateTenant)
+				apiKeyPlatform(types.APIKeyCapabilitySystemTenantsManage), g.SystemAdmin(), handler.UpdateTenant)
 			g.apiKeyRoute(tenantByID, http.MethodDelete, "",
-				apiKeyPlatform(types.APIKeyCapabilitySystemTenantsManage), g.Owner(), handler.DeleteTenant)
-			tenantByID.GET("/api-keys", g.Owner(), handler.ListAPIKeys)
-			tenantByID.POST("/api-keys", g.Owner(), handler.CreateAPIKey)
-			tenantByID.PUT("/api-keys/:key_id", g.Owner(), handler.UpdateAPIKey)
-			tenantByID.DELETE("/api-keys/:key_id", g.Owner(), handler.DeleteAPIKey)
-			tenantByID.GET("/api-principal-config", g.Owner(), handler.GetAPIPrincipalConfig)
-			tenantByID.PUT("/api-principal-config", g.Owner(), handler.UpdateAPIPrincipalConfig)
-			tenantByID.POST("/api-principal-test-token", g.Owner(), handler.CreateAPIPrincipalTestToken)
+				apiKeyPlatform(types.APIKeyCapabilitySystemTenantsManage), g.SystemAdmin(), handler.DeleteTenant)
+			// 集成凭证管理随角色扁平化放宽到 Admin+；AdminOrSystemAdmin
+			// 兜底覆盖未绑定该空间的系统管理员。
+			tenantByID.GET("/api-keys", g.AdminOrSystemAdmin(), handler.ListAPIKeys)
+			tenantByID.POST("/api-keys", g.AdminOrSystemAdmin(), handler.CreateAPIKey)
+			tenantByID.PUT("/api-keys/:key_id", g.AdminOrSystemAdmin(), handler.UpdateAPIKey)
+			tenantByID.DELETE("/api-keys/:key_id", g.AdminOrSystemAdmin(), handler.DeleteAPIKey)
+			tenantByID.GET("/api-principal-config", g.AdminOrSystemAdmin(), handler.GetAPIPrincipalConfig)
+			tenantByID.PUT("/api-principal-config", g.AdminOrSystemAdmin(), handler.UpdateAPIPrincipalConfig)
+			tenantByID.POST("/api-principal-test-token", g.AdminOrSystemAdmin(), handler.CreateAPIPrincipalTestToken)
 
-			// Tenant member management (PR 3 of #1303). Listing is
-			// Viewer+ so any active member can see the roster; mutation
-			// is Owner+ because membership changes are the highest-impact
-			// tenant op. /:id/leave is Viewer+ — any member can quit on
-			// their own; the service still rejects when it would leave
-			// the tenant without an Owner.
+			// 成员名册只读（PR 3 of #1303 保留的列表面）。企业化改造后
+			// 用户与空间的绑定统一由系统管理员经
+			// /system/admin/users/:user_id/bindings 配置，加人/改角色/
+			// 踢人/自助退出不再经空间内路由开放。
 			if memberHandler != nil {
 				g.apiKeyRoute(tenantByID, http.MethodGet, "/members", apiKeyManageMembers(apiKeyFullAccess()), g.Viewer(), memberHandler.ListMembers)
-				g.apiKeyRoute(tenantByID, http.MethodPost, "/members", apiKeyManageMembers(apiKeyFullAccess()), g.Owner(), memberHandler.AddMember)
-				g.apiKeyRoute(tenantByID, http.MethodPut, "/members/:user_id", apiKeyManageMembers(apiKeyFullAccess()), g.Owner(), memberHandler.UpdateMemberRole)
-				g.apiKeyRoute(tenantByID, http.MethodDelete, "/members/:user_id", apiKeyManageMembers(apiKeyFullAccess()), g.Owner(), memberHandler.RemoveMember)
-				tenantByID.POST("/leave", g.Viewer(), memberHandler.LeaveTenant)
-			}
-
-			// Tenant invitation flow. The UI-driven "Invite Member"
-			// button hits POST /invitations rather than POST /members,
-			// so the invitee gets to confirm via /me/invitations
-			// before any tenant_members row is written. List is
-			// Viewer+ so any member can see pending invites in the
-			// management view; create/revoke are Owner+ to match the
-			// existing /members mutation gates. nil-skip pattern
-			// mirrors memberHandler above for environments built
-			// without the invitation dependency wired.
-			if invitationHandler != nil {
-				g.apiKeyRoute(tenantByID, http.MethodGet, "/invitations", apiKeyManageMembers(apiKeyFullAccess()), g.Viewer(), invitationHandler.ListTenantInvitations)
-				g.apiKeyRoute(tenantByID, http.MethodPost, "/invitations", apiKeyManageMembers(apiKeyFullAccess()), g.Owner(), invitationHandler.CreateInvitation)
-				g.apiKeyRoute(tenantByID, http.MethodDelete, "/invitations/:inv_id", apiKeyManageMembers(apiKeyFullAccess()), g.Owner(), invitationHandler.RevokeInvitation)
-				// Share-link create lives under /invite-links so the URL
-				// reads as "create a link" rather than another flavour
-				// of /invitations; the underlying row still lives in the
-				// tenant_invitations table and shows up in the GET above.
-				g.apiKeyRoute(tenantByID, http.MethodPost, "/invite-links", apiKeyManageMembers(apiKeyFullAccess()), g.Owner(), invitationHandler.CreateInviteLink)
 			}
 
 			// Audit log feed (PR 6 of #1303). Admin+ so denied-action
@@ -145,34 +123,6 @@ func RegisterTenantRoutes(
 				tenantByID.GET("/audit-log", g.Admin(), auditLogHandler.ListTenantAuditLog)
 			}
 		}
-	}
-}
-
-// RegisterMyInvitationRoutes wires the per-user invitation inbox under
-// /me/invitations. The v1 group already applies middleware.Auth so we
-// don't need a role gate here — the service enforces "only the invitee
-// can accept/decline". The list endpoint mounts under /me to make the
-// "show me MY invitations" semantics obvious in URLs and logs (vs the
-// tenant-scoped /tenants/:id/invitations which lists ALL invitations
-// for the tenant). pending-count is a separate, ultra-light endpoint
-// the avatar-row badge polls; splitting it off so polling doesn't
-// transfer the full list every cycle.
-//
-// invitationHandler may be nil in environments built without the
-// invitation dependency wired; that's a no-op registration which is
-// preferable to a startup crash.
-func RegisterMyInvitationRoutes(r *gin.RouterGroup, invitationHandler *handler.TenantInvitationHandler) {
-	if invitationHandler == nil {
-		return
-	}
-	me := r.Group("/me")
-	{
-		me.GET("/invitations", invitationHandler.ListMyInvitations)
-		me.GET("/invitations/pending-count", invitationHandler.CountMyPendingInvitations)
-		me.POST("/invitations/:inv_id/accept", invitationHandler.AcceptMyInvitation)
-		me.POST("/invitations/:inv_id/decline", invitationHandler.DeclineMyInvitation)
-		// 已登录用户用共享链接 token 加入空间（对应 register-by-invite，但不建新账号）。
-		me.POST("/invitations/accept-by-token", invitationHandler.AcceptMyInvitationByToken)
 	}
 }
 
@@ -202,26 +152,19 @@ func RegisterMyEnvVarRoutes(r *gin.RouterGroup, h *handler.MeEnvVarHandler) {
 	}
 }
 
-// RegisterAuthRoutes registers authentication routes
+// RegisterAuthRoutes registers authentication routes.
+//
+// Enterprise rework: self-service registration, invite-link registration,
+// OIDC and Lite AutoSetup are gone — accounts are provisioned exclusively
+// by the system admin via /system/admin/users, and login is
+// employee_id + password. /auth/login is the only unauthenticated
+// mutation left (plus token refresh/validate/logout), so the public
+// rate limiter that used to guard the share-link endpoints retired
+// with them.
 func RegisterAuthRoutes(r *gin.RouterGroup, handler *handler.AuthHandler, g *rbacGuards) {
-	r.POST("/auth/register", handler.Register)
-	// Share-link surfaces are unauthenticated and accept a plaintext
-	// token from the caller; rate-limit by IP to bound brute-force /
-	// enumeration / abuse traffic. Limiter is shared across both
-	// endpoints (see middleware/auth_public_ratelimit.go) so total
-	// budget per IP is intuitive.
-	publicAuthRL := middleware.PublicAuthRateLimit()
-	r.POST("/auth/register-by-invite", publicAuthRL, handler.RegisterByInvite)
-	r.POST("/auth/invitations/lookup", publicAuthRL, handler.LookupInvitationByToken)
 	r.POST("/auth/login", handler.Login)
-	r.POST("/auth/auto-setup", handler.AutoSetup)
 	r.GET("/auth/config", handler.GetAuthConfig)
 	r.POST("/auth/switch-tenant", handler.SwitchTenant)
-	r.GET("/auth/oidc/config", handler.GetOIDCConfig)
-	r.GET("/auth/oidc/url", handler.GetOIDCAuthorizationURL)
-	r.GET("/auth/oidc/callback", handler.OIDCRedirectCallback)
-	// /auth/oidc/start：直连 302 跳转到 OIDC 提供方，供前端无法走 JS 拉取 URL 的场景直接发起登录
-	r.GET("/auth/oidc/start", handler.OIDCStart)
 	r.POST("/auth/refresh", handler.RefreshToken)
 	r.GET("/auth/validate", handler.ValidateToken)
 	r.POST("/auth/logout", handler.Logout)
@@ -290,6 +233,29 @@ func RegisterSystemAdminRoutes(
 		adminRoutes.GET("/list", handler.ListSystemAdmins)
 		adminRoutes.POST("/users/reset-password", handler.ResetUserPassword)
 		adminRoutes.POST("/users/create", handler.CreateSystemUser)
+
+		// Enterprise user & workspace management (user-system rework):
+		// paginated user list with workspace tags, provisioning with
+		// initial bindings, profile/lifecycle updates, per-user password
+		// reset, user↔workspace binding management, and the platform
+		// workspace catalog. Static siblings (/users/create,
+		// /users/reset-password) take precedence over the :user_id
+		// wildcard in gin's radix tree, so the legacy email-era routes
+		// keep resolving until Phase 5 removes them.
+		adminRoutes.GET("/users", handler.ListEnterpriseUsers)
+		adminRoutes.POST("/users", handler.CreateEnterpriseUser)
+		adminRoutes.PUT("/users/:user_id", handler.UpdateEnterpriseUser)
+		adminRoutes.POST("/users/:user_id/reset-password", handler.ResetEnterpriseUserPassword)
+		adminRoutes.GET("/users/:user_id/bindings", handler.ListUserBindings)
+		adminRoutes.POST("/users/:user_id/bindings", handler.BindUserToTenant)
+		adminRoutes.DELETE("/users/:user_id/bindings/:tenant_id", handler.UnbindUserFromTenant)
+		adminRoutes.GET("/tenants", handler.ListPlatformTenants)
+		adminRoutes.POST("/tenants", handler.CreatePlatformTenant)
+		// Two-level workspace roles: the workspace member roster and the
+		// 空间管理员/普通用户 designation surface of the admin console.
+		adminRoutes.GET("/tenants/:tenant_id/members", handler.ListWorkspaceMembers)
+		adminRoutes.PUT("/tenants/:tenant_id/members/:user_id", handler.UpdateWorkspaceMemberRole)
+
 		adminRoutes.GET("/api-keys", handler.ListPlatformAPIKeys)
 		adminRoutes.POST("/api-keys", handler.CreatePlatformAPIKey)
 		adminRoutes.DELETE("/api-keys/:key_id", handler.DeletePlatformAPIKey)

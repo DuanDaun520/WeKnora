@@ -101,6 +101,27 @@ func TestModelResponse_SystemAdminCanManageBuiltinConfig(t *testing.T) {
 	assert.NotContains(t, string(body), "also-never-returned")
 }
 
+// Console path: a tenantless system admin carries no tenant role at all,
+// yet must see the endpoint of the platform models they configure — the
+// editor round-trips base_url on every save, so stripping it here made the
+// detail view blank (and an unaware save would wipe the stored value).
+func TestModelResponse_TenantlessSystemAdminSeesPlatformModelDetail(t *testing.T) {
+	ctx := context.WithValue(context.Background(), types.SystemAdminContextKey, true)
+	m := &types.Model{
+		ID:       "platform-1",
+		TenantID: 0,
+		Parameters: types.ModelParameters{
+			BaseURL:       "https://platform-model.example.com",
+			CustomHeaders: map[string]string{"X-Route": "a"},
+			ExtraConfig:   map[string]string{"region": "ap-guangzhou"},
+		},
+	}
+	resp := NewModelResponse(ctx, m)
+	assert.Equal(t, "https://platform-model.example.com", resp.Parameters.BaseURL)
+	assert.Equal(t, map[string]string{"region": "ap-guangzhou"}, resp.Parameters.ExtraConfig)
+	assert.Equal(t, map[string]string{"X-Route": "a"}, resp.Parameters.CustomHeaders)
+}
+
 func TestModelResponse_ViewerStripsIntegrationDetail(t *testing.T) {
 	m := &types.Model{
 		ID: "m-2",

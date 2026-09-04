@@ -3,9 +3,9 @@ import i18n from '@/i18n'
 
 const t = (key: string) => i18n.global.t(key)
 
-// 用户登录接口
+// 用户登录接口（企业模式：工号 employee_id 为唯一登录标识）
 export interface LoginRequest {
-  email: string
+  employee_id: string
   password: string
 }
 
@@ -14,16 +14,20 @@ export interface LoginResponse {
   message?: string
   user?: {
     id: string
+    employee_id: string
     username: string
     email: string
     avatar?: string
     tenant_id: number
     can_access_all_tenants?: boolean
     is_system_admin?: boolean
+    must_change_password?: boolean
     is_active: boolean
     created_at: string
     updated_at: string
   }
+  // 顶层冗余一份，便于客户端不深挖 user 对象即可判断强制改密状态
+  must_change_password?: boolean
   tenant?: {
     id: number
     name: string
@@ -106,6 +110,7 @@ export interface UserPreferences {
 // 用户信息接口
 export interface UserInfo {
   id: string
+  employee_id: string
   username: string
   email: string
   avatar?: string
@@ -113,6 +118,7 @@ export interface UserInfo {
   can_access_all_tenants?: boolean
   preferences?: UserPreferences
   is_system_admin?: boolean
+  must_change_password?: boolean
   created_at: string
   updated_at: string
 }
@@ -146,12 +152,14 @@ export function userInfoFromApi(
   const tid = Number(rawTenantId) > 0 ? rawTenantId : ''
   return {
     id: u?.id || '',
+    employee_id: u?.employee_id || '',
     username: u?.username || '',
     email: u?.email || '',
     avatar: u?.avatar,
     tenant_id: String(tid) || '',
     can_access_all_tenants: u?.can_access_all_tenants === true,
     is_system_admin: u?.is_system_admin === true,
+    must_change_password: u?.must_change_password === true,
     preferences: u?.preferences,
     created_at: u?.created_at || new Date().toISOString(),
     updated_at: u?.updated_at || new Date().toISOString(),

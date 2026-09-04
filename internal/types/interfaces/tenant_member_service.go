@@ -16,12 +16,11 @@ type TenantMemberService interface {
 	// (user, tenant) already has an active membership.
 	AddMember(ctx context.Context, userID string, tenantID uint64, role types.TenantRole, invitedBy *string) (*types.TenantMember, error)
 
-	// EnsureOwner is an idempotent helper used by the registration flow:
-	// if the user already has an active membership in the tenant, return
-	// it; otherwise create one with role=owner. This is the common path
-	// for self-service registration where the registrant becomes the
-	// Owner of the tenant their account just created.
-	EnsureOwner(ctx context.Context, userID string, tenantID uint64) (*types.TenantMember, error)
+	// EnsureMember is an idempotent helper that guarantees the user has an
+	// active membership in the tenant, creating an admin row when absent
+	// (roles are flat in the enterprise model; "initial member" is always
+	// admin, never owner).
+	EnsureMember(ctx context.Context, userID string, tenantID uint64) (*types.TenantMember, error)
 
 	// GetMembership returns the active (user, tenant) membership, or
 	// (nil, nil) if no such row exists.

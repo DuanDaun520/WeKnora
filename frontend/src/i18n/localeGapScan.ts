@@ -79,8 +79,9 @@ for (const file of walk(SOURCE_ROOT)) {
 }
 
 const usage = collectI18nUsageFromSources()
-const enKeys = collectLocaleKeys(LOCALE_BUNDLES['en-US'])
-const referenced = collectReferencedLocaleKeys(LOCALE_BUNDLES['en-US'], usage)
+// 单语言部署：主应用语言包仅 zh-CN（embed 页保留独立多语言包）。
+const zhKeys = collectLocaleKeys(LOCALE_BUNDLES['zh-CN'])
+const referenced = collectReferencedLocaleKeys(LOCALE_BUNDLES['zh-CN'], usage)
 
 function prefixMatchesConfigured(prefix: string): boolean {
   const normalized = prefix.endsWith('.') ? prefix : `${prefix}.`
@@ -92,7 +93,7 @@ function prefixMatchesConfigured(prefix: string): boolean {
 
 function keysUnderPrefix(prefix: string): string[] {
   const normalized = prefix.endsWith('.') ? prefix : `${prefix}.`
-  return [...enKeys].filter((key) => key.startsWith(normalized))
+  return [...zhKeys].filter((key) => key.startsWith(normalized))
 }
 
 function missingUnderPrefix(prefix: string): string[] {
@@ -219,7 +220,7 @@ if (embedMissing.length) console.log(embedMissing.slice(0, 10).join('\n'))
 if (embedDrift.length) console.log(embedDrift.slice(0, 10).join('\n'))
 
 console.log('\n=== Main locale uncovered keys (in bundle, not referenced) ===')
-const uncovered = [...enKeys].filter((key) => !referenced.has(key))
+const uncovered = [...zhKeys].filter((key) => !referenced.has(key))
 console.log(`Count: ${uncovered.length}`)
 
 console.log('\n=== Indirect i18n keys (computed / inline ternary) ===')
@@ -234,6 +235,6 @@ const indirectCandidates = [
 ]
 for (const key of indirectCandidates) {
   console.log(
-    `${key}: tracked=${staticKeys.has(key)} locale=${enKeys.has(key)} referenced=${referenced.has(key)}`,
+    `${key}: tracked=${staticKeys.has(key)} locale=${zhKeys.has(key)} referenced=${referenced.has(key)}`,
   )
 }

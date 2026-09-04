@@ -23,7 +23,7 @@
         <svg class="node-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <ellipse cx="12" cy="5" rx="9" ry="3" />
           <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
-          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+          <path d="M3 5v14c0 1.66 4 3 9 3s9-1.66 9-3V5" />
         </svg>
       </div>
       <div class="knowledge-node node-5">
@@ -119,27 +119,6 @@
         </svg>
         <span class="link-text">GitHub</span>
       </a>
-
-      <div class="language-switch">
-        <button @click="toggleLanguageMenu" class="header-link" :title="currentLangOption?.label">
-          <span class="lang-flag-icon">{{ currentLangOption?.flag }}</span>
-          <span class="link-text">{{ currentLangOption?.shortLabel }}</span>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
-            stroke-linecap="round">
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
-        </button>
-
-        <!-- Language Dropdown -->
-        <div v-if="showLanguageMenu" class="language-dropdown">
-          <div v-for="lang in languageOptions" :key="lang.value" @click="selectLanguage(lang.value)"
-            class="language-option" :class="{ active: currentLanguage === lang.value }">
-            <span class="lang-flag">{{ lang.flag }}</span>
-            <span class="lang-label">{{ lang.label }}</span>
-            <span v-if="currentLanguage === lang.value" class="check-icon">✓</span>
-          </div>
-        </div>
-      </div>
     </div>
 
     <!-- Left Showcase Section -->
@@ -175,35 +154,58 @@
     <!-- Right Form Section -->
     <div class="form-section">
       <div class="form-panel">
-        <!-- Login Card -->
-        <div class="form-card" v-if="!isRegisterMode">
-          <!-- invite_only 模式下共享链接停在登录卡，同样需要邀请上下文。 -->
-          <div v-if="inviteLookup" class="invite-banner">
-            <t-icon name="link" class="invite-banner__icon" />
-            <div class="invite-banner__text">
-              <div class="invite-banner__title">
-                {{ $t('inviteRegister.bannerTitle', { tenant: inviteLookup.tenant_name || '' }) }}
-              </div>
-              <div class="invite-banner__hint">
-                {{ $t('inviteRegister.bannerHintLogin') }}
-              </div>
+        <!-- 强制改密卡片：管理员开户/重置的密码（MustChangePassword=true）首登必须轮换 -->
+        <div class="form-card" v-if="mustChangeMode">
+          <div class="form-header">
+            <h2 class="form-title">{{ $t('auth.mustChangePassword.title') }}</h2>
+            <p class="form-subtitle">{{ $t('auth.mustChangePassword.description') }}</p>
+          </div>
+
+          <div class="form-content">
+            <t-form ref="mustChangeFormRef" :data="mustChangeForm" :rules="mustChangeRules"
+              @submit="handleMustChangeSubmit" layout="vertical" label-align="top">
+              <t-form-item :label="$t('userProfile.changePassword.currentLabel')" name="oldPassword">
+                <t-input v-model="mustChangeForm.oldPassword" :placeholder="$t('userProfile.changePassword.currentPlaceholder')"
+                  type="password" autocomplete="current-password" size="large" :disabled="mustChangeLoading" />
+              </t-form-item>
+
+              <t-form-item :label="$t('userProfile.changePassword.newLabel')" name="newPassword">
+                <t-input v-model="mustChangeForm.newPassword" :placeholder="$t('userProfile.changePassword.newPlaceholder')"
+                  type="password" autocomplete="new-password" size="large" :disabled="mustChangeLoading" />
+              </t-form-item>
+
+              <t-form-item :label="$t('userProfile.changePassword.confirmLabel')" name="confirmPassword">
+                <t-input v-model="mustChangeForm.confirmPassword" :placeholder="$t('userProfile.changePassword.confirmPlaceholder')"
+                  type="password" autocomplete="new-password" size="large" :disabled="mustChangeLoading"
+                  @enter="handleMustChangeSubmit" />
+              </t-form-item>
+
+              <t-button type="submit" theme="primary" size="large" block :loading="mustChangeLoading" class="submit-button">
+                {{ $t('auth.mustChangePassword.submit') }}
+              </t-button>
+            </t-form>
+
+            <div class="form-footer">
+              <a href="#" @click.prevent="exitMustChangeMode" class="link-button">
+                {{ $t('auth.mustChangePassword.backToLogin') }}
+              </a>
             </div>
           </div>
-          <div v-else-if="inviteLookupError" class="invite-banner invite-banner--error">
-            {{ inviteLookupError }}
-          </div>
+        </div>
+
+        <!-- Login Card -->
+        <div class="form-card" v-if="!mustChangeMode">
           <div class="form-header">
             <h2 class="form-title">{{ $t('auth.login') }}</h2>
             <p class="form-welcome">{{ $t('auth.subtitle') }}</p>
-            <p v-if="registrationEnabled" class="form-hint">{{ $t('auth.loginHint') }}</p>
           </div>
 
           <div class="form-content">
             <t-form ref="formRef" :data="formData" :rules="formRules" @submit="handleLogin" layout="vertical"
               label-align="top">
-              <t-form-item :label="$t('auth.email')" name="email">
-                <t-input v-model="formData.email" :placeholder="$t('auth.emailPlaceholder')" type="text"
-                  autocomplete="email" size="large" :disabled="loading" />
+              <t-form-item :label="$t('auth.employeeId')" name="email">
+                <t-input v-model="formData.email" :placeholder="$t('auth.employeeIdPlaceholder')" type="text"
+                  autocomplete="username" size="large" :disabled="loading" />
               </t-form-item>
 
               <t-form-item :label="$t('auth.password')" name="password">
@@ -213,25 +215,6 @@
 
               <t-button type="submit" theme="primary" size="large" block :loading="loading" class="submit-button">
                 {{ loading ? $t('auth.loggingIn') : $t('auth.login') }}
-              </t-button>
-
-              <div class="register-cta" v-if="registrationEnabled">
-                <div class="register-cta__divider">
-                  <span>{{ $t('auth.firstTime') }}</span>
-                </div>
-                <t-button theme="default" variant="outline" size="large" block class="register-cta__button"
-                  :disabled="loading" @click="toggleMode">
-                  {{ $t('auth.createAccount') }}
-                </t-button>
-              </div>
-
-              <div v-if="oidcEnabled" class="oidc-divider">
-                <span>{{ $t('auth.orContinueWith') }}</span>
-              </div>
-
-              <t-button v-if="oidcEnabled" theme="default" size="large" block :loading="oidcLoading" :disabled="loading"
-                class="oidc-button" @click="handleOIDCLogin">
-                {{ oidcLoading ? $t('auth.redirectingToOIDC') : oidcLoginText }}
               </t-button>
             </t-form>
 
@@ -252,94 +235,13 @@
             </div>
           </div>
         </div>
-
-        <!-- Register Card. Renders when the user is in register mode
-             AND either self-service registration is enabled OR they
-             arrived with a valid share-link token (which bypasses the
-             invite_only gate). -->
-        <div class="form-card" v-if="isRegisterMode && (registrationEnabled || inviteLookup)">
-          <!-- Share-link banner: shown only when ?token= resolved to a
-               real invitation row. Sits above the form header so the
-               invitee instantly sees who invited them and into which
-               workspace, without bumping the existing register UX. -->
-          <div v-if="inviteLookup" class="invite-banner">
-            <t-icon name="link" class="invite-banner__icon" />
-            <div class="invite-banner__text">
-              <div class="invite-banner__title">
-                {{ $t('inviteRegister.bannerTitle', { tenant: inviteLookup.tenant_name || '' }) }}
-              </div>
-              <div class="invite-banner__hint">
-                {{ $t('inviteRegister.bannerHint') }}
-              </div>
-            </div>
-          </div>
-          <div v-else-if="inviteLookupError" class="invite-banner invite-banner--error">
-            {{ inviteLookupError }}
-          </div>
-          <div class="form-header">
-            <h2 class="form-title">{{ $t('auth.createAccount') }}</h2>
-            <p class="form-subtitle">{{ $t('auth.registerSubtitle') }}</p>
-          </div>
-
-          <div class="form-content">
-            <t-form ref="registerFormRef" :data="registerData" :rules="registerRules" @submit="handleRegister"
-              layout="vertical" label-align="top">
-              <t-form-item :label="$t('auth.username')" name="username">
-                <t-input v-model="registerData.username" :placeholder="$t('auth.usernamePlaceholder')" size="large"
-                  :disabled="loading" />
-              </t-form-item>
-
-              <t-form-item :label="$t('auth.email')" name="email">
-                <t-input v-model="registerData.email" :placeholder="$t('auth.emailPlaceholder')" type="text"
-                  autocomplete="email" size="large" :disabled="loading" />
-              </t-form-item>
-
-              <t-form-item :label="$t('auth.password')" name="password">
-                <t-input v-model="registerData.password" :placeholder="$t('auth.passwordPlaceholder')" type="password"
-                  autocomplete="new-password" size="large" :disabled="loading" />
-              </t-form-item>
-
-              <t-form-item :label="$t('auth.confirmPassword')" name="confirmPassword">
-                <t-input v-model="registerData.confirmPassword" :placeholder="$t('auth.confirmPasswordPlaceholder')"
-                  type="password" autocomplete="new-password" size="large" :disabled="loading" @enter="handleRegister" />
-              </t-form-item>
-
-              <t-button type="submit" theme="primary" size="large" block :loading="loading" class="submit-button">
-                {{ loading ? $t('auth.registering') : $t('auth.register') }}
-              </t-button>
-            </t-form>
-
-            <div class="form-footer">
-              <span>{{ $t('auth.haveAccount') }}</span>
-              <a href="#" @click.prevent="toggleMode" class="link-button">
-                {{ $t('auth.backToLogin') }}
-              </a>
-            </div>
-
-            <!-- Features list for register -->
-            <div class="login-features">
-              <div class="feature-item">
-                <span class="feature-icon">✓</span>
-                <span class="feature-text">{{ $t('platform.independentTenant') }}</span>
-              </div>
-              <div class="feature-item">
-                <span class="feature-icon">✓</span>
-                <span class="feature-text">{{ $t('platform.fullApiAccess') }}</span>
-              </div>
-              <div class="feature-item">
-                <span class="feature-icon">✓</span>
-                <span class="feature-text">{{ $t('platform.knowledgeBaseManagement') }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, nextTick, onMounted, onBeforeUnmount, computed } from 'vue'
+import { ref, reactive, nextTick, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useRoleLabel } from '@/composables/useRoleLabel'
@@ -352,15 +254,8 @@ import 'swiper/css/effect-fade'
 import 'swiper/css/pagination'
 import {
   login,
-  register,
-  getOIDCAuthorizationURL,
-  getOIDCConfig,
-  autoSetup,
-  getAuthConfig,
+  changePassword,
   userInfoFromApi,
-  getInvitationByToken,
-  registerByInvite,
-  type InviteLookup,
 } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
@@ -374,7 +269,7 @@ import screenshot4 from '@/assets/img/screenshot-4.svg'
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
-const { t, tm, locale } = useI18n()
+const { t, tm } = useI18n()
 const { formatRole, roleIcon } = useRoleLabel()
 
 // Swiper modules
@@ -406,48 +301,24 @@ const slides = [
 
 // Form references
 const formRef = ref()
-const registerFormRef = ref()
 
 // State management
 const loading = ref(false)
-const oidcLoading = ref(false)
-const isRegisterMode = ref(false)
-const showLanguageMenu = ref(false)
-const oidcEnabled = ref(false)
-const oidcProviderName = ref('')
-// registrationEnabled defaults to true so that on first paint the Register
-// link is visible; the actual mode is fetched from /auth/config in onMounted.
-// In invite_only mode the link/card are hidden.
-const registrationEnabled = ref(true)
 const complexPasswordEnabled = ref(false)
 
-// invite-link state. When the URL carries ?token=xxx we resolve it to
-// the originating tenant + role and switch the form into a "register
-// via invitation" mode. The token bypasses the normal invite_only
-// gate — possessing it IS the authorisation. Submitting the register
-// form with this set hits /auth/register-by-invite (auto-login on
-// success) instead of /auth/register.
-const inviteToken = ref('')
-const inviteLookup = ref<InviteLookup | null>(null)
-const inviteLookupError = ref('')
-const inviteLookupLoading = ref(false)
-
-// Language options
-const languageOptions = [
-  { value: 'zh-CN', label: '简体中文', shortLabel: '中文', flag: '🇨🇳' },
-  { value: 'en-US', label: 'English', shortLabel: 'EN', flag: '🇺🇸' },
-  { value: 'ru-RU', label: 'Русский', shortLabel: 'RU', flag: '🇷🇺' },
-  { value: 'ko-KR', label: '한국어', shortLabel: '한국어', flag: '🇰🇷' }
-]
-
-const currentLanguage = computed(() => locale.value)
-const oidcLoginText = computed(() => {
-  if (oidcProviderName.value) {
-    return t('auth.oidcLoginWithProvider', { provider: oidcProviderName.value })
-  }
-  return t('auth.oidcLogin')
+// 强制改密状态。登录响应带 must_change_password=true（管理员开户/重置
+// 密码）或存量会话被 403 PASSWORD_CHANGE_REQUIRED 拦回登录页时切入该
+// 卡片：改密成功后后端吊销全部 token，本地会话整体清空并回到登录卡片
+// 用新密码重新进入。
+const mustChangeMode = ref(false)
+const mustChangeFormRef = ref()
+const mustChangeLoading = ref(false)
+const mustChangeForm = reactive({
+  employeeId: '',
+  oldPassword: '',
+  newPassword: '',
+  confirmPassword: '',
 })
-const currentLangOption = computed(() => languageOptions.find(l => l.value === currentLanguage.value))
 
 // Login form data
 const formData = reactive<{ [key: string]: any }>({
@@ -455,19 +326,10 @@ const formData = reactive<{ [key: string]: any }>({
   password: '',
 })
 
-// Register form data
-const registerData = reactive<{ [key: string]: any }>({
-  username: '',
-  email: '',
-  password: '',
-  confirmPassword: ''
-})
-
-// Login form validation rules
+// Login form validation rules（登录标识是工号，只做必填校验，不做邮箱格式校验）
 const formRules = computed(() => ({
   email: [
-    { required: true, message: t('auth.emailRequired'), type: 'error' },
-    { email: true, message: t('auth.emailInvalid'), type: 'error' }
+    { required: true, message: t('auth.employeeIdRequired'), type: 'error' }
   ],
   password: [
     { required: true, message: t('auth.passwordRequired'), type: 'error' },
@@ -476,84 +338,85 @@ const formRules = computed(() => ({
   ],
 }))
 
-// Register form validation rules
-const registerRules = computed(() => ({
-  username: [
-    { required: true, message: t('auth.usernameRequired'), type: 'error' },
-    { min: 2, message: t('auth.usernameMinLength'), type: 'error' },
-    { max: 20, message: t('auth.usernameMaxLength'), type: 'error' },
-    {
-      pattern: /^[a-zA-Z0-9_\u4e00-\u9fa5]+$/,
-      message: t('auth.usernameInvalid'),
-      type: 'error'
-    }
+// 强制改密表单校验：新密码复用注册处的密码策略（含复杂密码开关），
+// 文案沿用个人资料页改密弹层的 key，避免两套说法。
+const mustChangeRules = computed(() => ({
+  oldPassword: [
+    { required: true, message: t('userProfile.changePassword.currentRequired'), type: 'error' }
   ],
-  email: [
-    { required: true, message: t('auth.emailRequired'), type: 'error' },
-    { email: true, message: t('auth.emailInvalid'), type: 'error' }
-  ],
-  password: newPasswordRules(t, complexPasswordEnabled.value),
+  newPassword: newPasswordRules(t, complexPasswordEnabled.value),
   confirmPassword: [
     { required: true, message: t('auth.confirmPasswordRequired'), type: 'error' },
     {
-      validator: (val: string) => val === registerData.password,
+      validator: (val: string) => val === mustChangeForm.newPassword,
       message: t('auth.passwordMismatch'),
       type: 'error'
     }
   ]
 }))
 
-// Toggle login/register mode
-const toggleMode = () => {
-  isRegisterMode.value = !isRegisterMode.value
-
-  Object.keys(registerData).forEach(key => {
-    (registerData as any)[key] = ''
-  })
+// 登录成功且 must_change_password=true 时切入强制改密卡片。先持久化会话
+// （change-password 在后端白名单内，需要携带有效 Authorization），旧密码
+// 用刚输入的值代填。改密成功后这套会话会被整体吊销清空。
+const enterMustChangeMode = async (response: any) => {
+  await persistLoginResponse(response, true)
+  mustChangeForm.employeeId = response.user?.employee_id || formData.email.trim()
+  mustChangeForm.oldPassword = formData.password
+  mustChangeForm.newPassword = ''
+  mustChangeForm.confirmPassword = ''
+  mustChangeMode.value = true
+  await nextTick()
 }
 
-// Toggle language menu
-const toggleLanguageMenu = () => {
-  showLanguageMenu.value = !showLanguageMenu.value
+// 放弃改密回到登录卡片。token 除白名单外全部 403，留着只会触发更多
+// 拦截，直接清空本地会话。
+const exitMustChangeMode = () => {
+  authStore.logout()
+  mustChangeMode.value = false
+  formData.password = ''
+  mustChangeForm.oldPassword = ''
+  mustChangeForm.newPassword = ''
+  mustChangeForm.confirmPassword = ''
 }
 
-// Select language
-const selectLanguage = (lang: string) => {
-  locale.value = lang
-  localStorage.setItem('locale', lang)
-  showLanguageMenu.value = false
-  MessagePlugin.success(t('language.languageSaved'))
-}
+const handleMustChangeSubmit = async () => {
+  try {
+    const valid = await mustChangeFormRef.value?.validate()
+    if (valid !== true) return
 
-// Close language menu when clicking outside
-const handleClickOutside = (event: MouseEvent) => {
-  const target = event.target as HTMLElement
-  if (!target.closest('.language-switch')) {
-    showLanguageMenu.value = false
+    mustChangeLoading.value = true
+    const result = await changePassword({
+      old_password: mustChangeForm.oldPassword,
+      new_password: mustChangeForm.newPassword,
+    })
+    if (!result.success) {
+      // changePassword 内部已把后端错误映射成本地化文案
+      MessagePlugin.error(result.message || t('userProfile.changePassword.failed'))
+      return
+    }
+
+    // 改密成功：后端已吊销全部 token，清空本地会话，回登录卡片用新
+    // 密码重新进入（工号代填，密码留空）。
+    const employeeId = mustChangeForm.employeeId
+    authStore.logout()
+    mustChangeMode.value = false
+    formData.email = employeeId
+    formData.password = ''
+    mustChangeForm.oldPassword = ''
+    mustChangeForm.newPassword = ''
+    mustChangeForm.confirmPassword = ''
+    MessagePlugin.success(t('auth.mustChangePassword.success'))
+  } catch (error: any) {
+    console.error('强制改密错误:', error)
+    MessagePlugin.error(error.message || t('userProfile.changePassword.failed'))
+  } finally {
+    mustChangeLoading.value = false
   }
 }
 
-// Add click outside listener
-onMounted(() => {
-  document.addEventListener('click', handleClickOutside)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('click', handleClickOutside)
-})
-
 const persistLoginResponse = async (response: any, skipRedirect = false) => {
-  // Backend renamed `tenant` to `active_tenant` and added `memberships`
-  // when tenant-level RBAC landed (issue #1303). The two are otherwise
-  // identical — `active_tenant` is the tenant whose ID is encoded in the
-  // JWT, defaulting to the user's home tenant on a fresh login.
   const activeTenant = response.active_tenant || response.tenant
   if (response.user && response.token) {
-    // user.tenant_id must be the user's HOME tenant (the immutable row
-    // on the users table); useHomeTenant() and the home-badge logic both
-    // assume so. The ACTIVE tenant (which can differ from home when the
-    // server honoured a remembered last-active-tenant preference) is
-    // expressed separately via setSelectedTenant below.
     const homeTenantIdRaw = response.user.tenant_id ?? activeTenant?.id ?? ''
     authStore.setUser(userInfoFromApi(response.user, homeTenantIdRaw))
     authStore.setToken(response.token)
@@ -574,11 +437,6 @@ const persistLoginResponse = async (response: any, skipRedirect = false) => {
     if (Array.isArray(response.memberships)) {
       authStore.setMemberships(response.memberships)
     }
-    // If the backend dropped us into a non-home tenant (honoured a
-    // remembered "last active tenant" preference), set the override so
-    // subsequent requests carry X-Tenant-ID and the UI stays consistent.
-    // Otherwise clear any stale override left in localStorage by a
-    // previous session for a different account.
     const activeIdNum = Number(activeTenant?.id)
     const homeIdNum = Number(homeTenantIdRaw)
     if (Number.isFinite(activeIdNum) && Number.isFinite(homeIdNum) && activeIdNum !== homeIdNum) {
@@ -588,83 +446,18 @@ const persistLoginResponse = async (response: any, skipRedirect = false) => {
     }
   }
 
-  // Pull runtime capabilities (including whether ordinary users may create
-  // workspaces) before entering the main UI so create actions never flash
-  // briefly when the deployment is invitation-only.
   await authStore.refreshFromAuthMe()
   await nextTick()
   if (skipRedirect) return
-  router.replace(authStore.hasValidTenant ? '/platform/knowledge-bases' : '/onboarding/workspace')
-}
-
-const getBackendOIDCRedirectURI = () => `${window.location.origin}/api/v1/auth/oidc/callback`
-
-const loadOIDCConfig = async () => {
-  try {
-    const response = await getOIDCConfig()
-    oidcEnabled.value = !!response.success && !!response.enabled
-    oidcProviderName.value = response.provider_display_name || ''
-  } catch {
-    oidcEnabled.value = false
-    oidcProviderName.value = ''
-  }
-}
-
-// loadAuthConfig fetches /auth/config and caches whether self-service
-// registration is allowed. Failures fall back to "enabled" so a transient
-// network glitch doesn't lock new users out of an open deployment.
-const loadAuthConfig = async () => {
-  try {
-    const response = await getAuthConfig()
-    registrationEnabled.value = response.registration_mode !== 'invite_only'
-    complexPasswordEnabled.value = response.complex_password_enabled
-  } catch {
-    registrationEnabled.value = true
-    complexPasswordEnabled.value = false
-  }
-}
-
-const handleOIDCLogin = async () => {
-  try {
-    oidcLoading.value = true
-    const response = await getOIDCAuthorizationURL(getBackendOIDCRedirectURI())
-    const authorizationURL = response.authorization_url
-
-    if (!response.success || !authorizationURL) {
-      MessagePlugin.error(response.message || t('auth.oidcLoginFailed'))
-      return
-    }
-
-    // 跳转 IdP 会丢失 URL 中的 token，暂存到 sessionStorage，回调后由 App.vue 兑换。
-    if (inviteToken.value) {
-      sessionStorage.setItem('weknora_pending_invite_token', inviteToken.value)
-    }
-    window.location.href = authorizationURL
-  } catch (error: any) {
-    console.error('OIDC 登录跳转失败:', error)
-    MessagePlugin.error(error.message || t('auth.oidcLoginFailed'))
-  } finally {
-    oidcLoading.value = false
-  }
-}
-
-// 用 token 加入空间并进入应用。会话此时已有效，故即便 token 失效也照常进入（避免困在登录页）。
-const acceptAndEnter = async (token: string) => {
-  loading.value = true
-  try {
-    const result = await authStore.acceptInvitationByTokenAndRefresh(token)
-    if (result.ok) {
-      MessagePlugin.success(t('inviteRegister.joined'))
-    } else {
-      MessagePlugin.warning(t('inviteRegister.invalidBody'))
-    }
-  } catch {
-    MessagePlugin.warning(t('inviteRegister.invalidBody'))
-  } finally {
-    loading.value = false
-    await nextTick()
-    router.replace('/platform/knowledge-bases')
-  }
+  // 无空间时的落脚点：系统管理员（bootstrap 账号）进管理控制台，
+  // 普通用户进等待分配页 —— 与路由守卫 resolveWorkspaceEntry 保持一致。
+  router.replace(
+    authStore.hasValidTenant
+      ? '/platform/knowledge-bases'
+      : authStore.isSystemAdmin
+        ? '/system/console'
+        : '/onboarding/workspace',
+  )
 }
 
 // Handle login
@@ -676,21 +469,21 @@ const handleLogin = async () => {
     loading.value = true
 
     const response = await login({
-      email: formData.email,
+      employee_id: formData.email.trim(),
       password: formData.password,
     })
 
     if (response.success) {
-      if (inviteToken.value) {
-        // 从邀请链接登录：持久化会话后兑换 token 并进入对应空间。
-        await persistLoginResponse(response, true)
-        await acceptAndEnter(inviteToken.value)
+      // 管理员开户/重置密码的首登：优先于一切后续流程，
+      // 先完成改密再重新登录。
+      if (response.must_change_password || response.user?.must_change_password) {
+        await enterMustChangeMode(response)
         return
       }
       await persistLoginResponse(response)
       notifyLoginSuccess(response, t, tm, formatRole, roleIcon)
     } else {
-      MessagePlugin.error(response.message || t('auth.loginError'))
+      MessagePlugin.error(response.message || t('auth.loginErrorEmployeeId'))
     }
   } catch (error: any) {
     console.error('登录错误:', error)
@@ -700,136 +493,28 @@ const handleLogin = async () => {
   }
 }
 
-// Handle registration. Dispatches based on whether the user arrived
-// with a share-link token: with token -> register-by-invite (auto-
-// login on success); without -> the normal self-service register
-// (drops back to the login form for the user to sign in).
-const handleRegister = async () => {
-  try {
-    const valid = await registerFormRef.value?.validate()
-    if (valid !== true) return
-
-    loading.value = true
-
-    if (inviteToken.value) {
-      const response = await registerByInvite({
-        token: inviteToken.value,
-        username: registerData.username,
-        email: registerData.email,
-        password: registerData.password,
-      })
-      if (!response.success) {
-        MessagePlugin.error(response.message || t('auth.registerFailed'))
-        return
-      }
-      MessagePlugin.success(t('auth.registerSuccess'))
-      // register-by-invite returns the same shape as login (token +
-      // active_tenant + memberships), so reuse the login persistence
-      // path — same store writes, same redirect target.
-      await persistLoginResponse(response)
-      return
-    }
-
-    const response = await register({
-      username: registerData.username,
-      email: registerData.email,
-      password: registerData.password
-    })
-
-    if (response.success) {
-      MessagePlugin.success(t('auth.registerSuccess'))
-
-      // Switch to login mode and fill in email
-      isRegisterMode.value = false
-      formData.email = registerData.email
-
-      // Clear register form
-      Object.keys(registerData).forEach(key => {
-        (registerData as any)[key] = ''
-      })
-    } else {
-      MessagePlugin.error(response.message || t('auth.registerFailed'))
-    }
-  } catch (error: any) {
-    console.error('注册错误:', error)
-    MessagePlugin.error(error.message || t('auth.registerError'))
-  } finally {
-    loading.value = false
-  }
-}
-
-// Check if already logged in; for lite edition, attempt transparent auto-setup
+// Check if already logged in
 onMounted(async () => {
-  // Share-link landing: ?token=xxx switches the form into invite-
-  // register mode before any other auto-flow (logged-in redirect /
-  // auto-setup / OIDC) gets a chance to redirect. Resolution failure
-  // surfaces inline; the user can still log in normally if they
-  // already have an account. We check this BEFORE the isLoggedIn
-  // redirect so an existing session doesn't bounce the user to
-  // /platform (and possibly back to /login if the session is stale),
-  // dropping the invite token along the way.
-  const tokenFromQuery = String(route.query.token || '').trim()
-  if (tokenFromQuery) {
-    inviteToken.value = tokenFromQuery
-    inviteLookupLoading.value = true
-    // 1. 先校验 token：无效/过期则停在登录页报错，不进注册模式。
-    try {
-      const resp = await getInvitationByToken(tokenFromQuery)
-      if (resp.success && resp.data) {
-        inviteLookup.value = resp.data
-      } else {
-        inviteLookupError.value = resp.message || t('inviteRegister.invalidBody')
-        loadOIDCConfig()
-        loadAuthConfig()
-        return
-      }
-    } catch {
-      inviteLookupError.value = t('inviteRegister.invalidBody')
-      loadOIDCConfig()
-      loadAuthConfig()
-      return
-    } finally {
-      inviteLookupLoading.value = false
-    }
-
-    // 2. 已登录则直接兑换 token 进入空间（两种模式通用）。
-    if (authStore.isLoggedIn && (await authStore.refreshFromAuthMe())) {
-      await acceptAndEnter(tokenFromQuery)
-      return
-    }
-
-    // 3. 未登录：按注册模式决定界面。invite_only 停在登录页、登录后再兑换；self_serve 保持注册流程。
-    const cfg = await getAuthConfig()
-    const inviteOnly = cfg.registration_mode === 'invite_only'
-    registrationEnabled.value = !inviteOnly
-    isRegisterMode.value = !inviteOnly
-    loadOIDCConfig()
-    return
-  }
-
   if (authStore.isLoggedIn) {
-    router.replace('/platform/knowledge-bases')
+    // 管理员重置密码后，存量会话的后续请求被 403 PASSWORD_CHANGE_REQUIRED
+    // 拦回登录页。此时本地会话仍有效，若照常跳平台页会形成
+    // /login → 平台页 → 403 → /login 的循环；检测到强制改密标记则直接
+    // 进入改密卡片（旧密码需用户自行输入——存量会话没有明文密码）。
+    if (authStore.user?.must_change_password) {
+      mustChangeForm.employeeId = authStore.user.employee_id || ''
+      mustChangeForm.oldPassword = ''
+      mustChangeMode.value = true
+      return
+    }
+    router.replace(
+      authStore.hasValidTenant
+        ? '/platform/knowledge-bases'
+        : authStore.isSystemAdmin
+          ? '/system/console'
+          : '/onboarding/workspace',
+    )
     return
   }
-
-  const AUTO_SETUP_FAILED_KEY = 'weknora_auto_setup_failed'
-  if (localStorage.getItem(AUTO_SETUP_FAILED_KEY) !== 'true') {
-    try {
-      const response = await autoSetup()
-      if (response.success) {
-        authStore.setLiteMode(true)
-        await persistLoginResponse(response)
-        return
-      } else {
-        localStorage.setItem(AUTO_SETUP_FAILED_KEY, 'true')
-      }
-    } catch {
-      localStorage.setItem(AUTO_SETUP_FAILED_KEY, 'true')
-    }
-  }
-
-  loadOIDCConfig()
-  loadAuthConfig()
 })
 </script>
 
@@ -1250,81 +935,6 @@ onMounted(async () => {
   }
 }
 
-.language-switch {
-  position: relative;
-
-  button {
-    background: rgba(255, 255, 255, 0.2);
-    border: 1px solid rgba(255, 255, 255, 0.25);
-    color: var(--td-text-color-anti);
-
-    .lang-flag-icon {
-      font-size: 16px;
-      line-height: 1;
-      flex-shrink: 0;
-    }
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.3);
-      border-color: rgba(255, 255, 255, 0.4);
-    }
-
-    svg:last-child {
-      margin-left: 2px;
-      flex-shrink: 0;
-    }
-  }
-}
-
-.language-dropdown {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  min-width: 160px;
-  background: rgba(255, 255, 255, 0.97);
-  border: 1px solid var(--td-component-stroke);
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
-  overflow: hidden;
-  z-index: 1000;
-}
-
-.language-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  cursor: pointer;
-  font-size: 13px;
-  font-family: var(--app-font-family);
-  color: var(--td-text-color-primary);
-
-  .lang-flag {
-    font-size: 16px;
-    flex-shrink: 0;
-  }
-
-  .lang-label {
-    flex: 1;
-  }
-
-  .check-icon {
-    color: var(--td-success-color);
-    font-weight: 700;
-    font-size: 14px;
-    flex-shrink: 0;
-  }
-
-  &:hover {
-    background: var(--td-bg-color-secondarycontainer);
-  }
-
-  &.active {
-    background: var(--td-success-color-light);
-    color: var(--td-brand-color-active);
-  }
-}
-
 .form-card {
   background: rgba(255, 255, 255, 0.97);
   border-radius: 16px;
@@ -1333,57 +943,6 @@ onMounted(async () => {
   box-sizing: border-box;
   border: none;
   width: 100%;
-}
-
-/* Share-link invitation banner. Sits above the register form when the
- * user arrived via /register?token=xxx; gives them confirmation of who
- * invited them before they fill anything in. Subtle, neutral card —
- * the page background is heavily brand-coloured already, so a loud
- * tinted banner clashes; we lean on the form's own surface tokens. */
-.invite-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 14px;
-  margin-bottom: 20px;
-  border-radius: 10px;
-  background: var(--td-bg-color-container-hover, rgba(0, 0, 0, 0.03));
-  border: 1px solid var(--td-component-stroke);
-  color: var(--td-text-color-primary);
-}
-
-.invite-banner__icon {
-  margin-top: 2px;
-  font-size: 18px;
-  flex-shrink: 0;
-  color: var(--td-text-color-secondary);
-}
-
-.invite-banner__text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.invite-banner__title {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.4;
-  color: var(--td-text-color-primary);
-}
-
-.invite-banner__hint {
-  font-size: 12px;
-  color: var(--td-text-color-secondary);
-  line-height: 1.5;
-}
-
-.invite-banner--error {
-  background: var(--td-error-color-1, rgba(220, 38, 38, 0.06));
-  border-color: var(--td-error-color-3, rgba(220, 38, 38, 0.2));
-  color: var(--td-error-color, #b91c1c);
-  font-size: 13px;
 }
 
 .form-header {
@@ -1404,63 +963,6 @@ onMounted(async () => {
   color: var(--td-text-color-secondary);
   margin: 0;
   font-family: var(--app-font-family);
-}
-
-.form-hint {
-  margin: 10px 0 0;
-  padding: 8px 12px;
-  border-radius: 8px;
-  background: var(--td-success-color-light, rgba(7, 192, 95, 0.08));
-  color: var(--td-brand-color-active);
-  font-size: 12.5px;
-  line-height: 1.5;
-  font-family: var(--app-font-family);
-}
-
-/* 注册入口：从底部小字链接升级为带分隔线的醒目次级按钮，
-   让首次访客一眼就能找到「创建账户」。 */
-.register-cta {
-  margin-top: 8px;
-
-  &__divider {
-    position: relative;
-    text-align: center;
-    margin: 4px 0 14px;
-    color: var(--td-text-color-secondary);
-    font-size: 13px;
-    font-family: var(--app-font-family);
-
-    span {
-      position: relative;
-      z-index: 1;
-      padding: 0 12px;
-      background: rgba(255, 255, 255, 0.97);
-    }
-
-    &::before {
-      content: '';
-      position: absolute;
-      left: 0;
-      right: 0;
-      top: 50%;
-      border-top: 1px solid var(--td-component-stroke);
-    }
-  }
-
-  &__button {
-    height: 46px;
-    border-radius: 8px;
-    font-size: 15px;
-    font-weight: 500;
-    border-color: var(--td-brand-color);
-    color: var(--td-brand-color);
-
-    &:hover {
-      border-color: var(--td-brand-color-active);
-      color: var(--td-brand-color-active);
-      background: var(--td-success-color-light, rgba(7, 192, 95, 0.08));
-    }
-  }
 }
 
 .form-subtitle {
@@ -1539,37 +1041,6 @@ onMounted(async () => {
   margin: 20px 0 16px 0;
 }
 
-.oidc-divider {
-  position: relative;
-  margin: 4px 0 6px;
-  text-align: center;
-  color: var(--td-text-color-placeholder);
-  font-size: 12px;
-
-  span {
-    position: relative;
-    z-index: 1;
-    padding: 0 12px;
-    background: rgba(255, 255, 255, 0.95);
-  }
-
-  &::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 50%;
-    border-top: 1px solid var(--td-component-stroke);
-  }
-}
-
-.oidc-button {
-  height: 46px;
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 500;
-}
-
 .form-footer {
   text-align: center;
   font-size: 14px;
@@ -1591,12 +1062,6 @@ onMounted(async () => {
       text-decoration: underline;
     }
   }
-}
-
-.login-form-footer {
-  border-bottom: none;
-  padding-bottom: 8px;
-  margin-top: 12px;
 }
 
 .login-features {
@@ -1844,21 +1309,6 @@ html[theme-mode="dark"] {
     }
   }
 
-  .language-switch button {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.15);
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.2);
-    }
-  }
-
-  .language-dropdown {
-    background: rgba(36, 36, 36, 0.97) !important;
-    border-color: var(--td-component-stroke) !important;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4) !important;
-  }
-
   .tag {
     background: rgba(255, 255, 255, 0.12);
   }
@@ -1866,10 +1316,6 @@ html[theme-mode="dark"] {
   .form-card {
     background: rgba(36, 36, 36, 0.97) !important;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4) !important;
-  }
-
-  .register-cta__divider span {
-    background: rgba(36, 36, 36, 0.97);
   }
 
   .form-content .t-input {

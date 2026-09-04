@@ -22,36 +22,25 @@
 
     <!-- Content -->
     <div v-else class="settings-group">
-      <!-- 用户 ID -->
+      <!-- 工号 -->
       <div class="setting-row">
         <div class="setting-info">
-          <label>{{ $t('tenant.api.userIdLabel') }}</label>
-          <p class="desc">{{ $t('tenant.api.userIdDescription') }}</p>
+          <label>{{ $t('userProfile.employeeIdLabel') }}</label>
+          <p class="desc">{{ $t('userProfile.employeeIdDescription') }}</p>
         </div>
         <div class="setting-control">
-          <span class="info-value">{{ userInfo?.id || '-' }}</span>
+          <span class="info-value">{{ userInfo?.employee_id || '-' }}</span>
         </div>
       </div>
 
-      <!-- 用户名 -->
+      <!-- 姓名 -->
       <div class="setting-row">
         <div class="setting-info">
-          <label>{{ $t('tenant.api.usernameLabel') }}</label>
-          <p class="desc">{{ $t('tenant.api.usernameDescription') }}</p>
+          <label>{{ $t('userProfile.nameLabel') }}</label>
+          <p class="desc">{{ $t('userProfile.nameDescription') }}</p>
         </div>
         <div class="setting-control">
           <span class="info-value">{{ userInfo?.username || '-' }}</span>
-        </div>
-      </div>
-
-      <!-- 邮箱 -->
-      <div class="setting-row">
-        <div class="setting-info">
-          <label>{{ $t('tenant.api.emailLabel') }}</label>
-          <p class="desc">{{ $t('tenant.api.emailDescription') }}</p>
-        </div>
-        <div class="setting-control">
-          <span class="info-value">{{ userInfo?.email || '-' }}</span>
         </div>
       </div>
 
@@ -63,6 +52,17 @@
         </div>
         <div class="setting-control">
           <span class="info-value">{{ formatDate(userInfo?.created_at) }}</span>
+        </div>
+      </div>
+
+      <!-- 用户 ID（企业版置底，日常以工号为主标识） -->
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>{{ $t('tenant.api.userIdLabel') }}</label>
+          <p class="desc">{{ $t('tenant.api.userIdDescription') }}</p>
+        </div>
+        <div class="setting-control">
+          <span class="info-value">{{ userInfo?.id || '-' }}</span>
         </div>
       </div>
 

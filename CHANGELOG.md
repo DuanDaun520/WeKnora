@@ -2,6 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased] - Enterprise User Management
+
+### Breaking Changes
+
+**This release transforms WeKnora from a self-service SaaS model to an enterprise-provisioned user management system.**
+
+- **BREAKING**: **Removed self-registration** — Users can no longer self-register. All accounts must be created by system administrators via the new `/system/admin/users` endpoints.
+- **BREAKING**: **Removed invitation links** — The invitation-link registration flow (`/auth/register-by-invite`, `/auth/invitations/*`) has been removed. User↔workspace bindings are now managed by system administrators.
+- **BREAKING**: **Removed OIDC authentication** — OIDC integration (`/auth/oidc/*`) has been completely removed.
+- **BREAKING**: **Login with employee ID** — The login endpoint now requires `employee_id` instead of `email`. Existing users have `employee_id` backfilled from their username.
+- **BREAKING**: **Workspace creation restricted** — Only system administrators can create workspaces (`POST /tenants` requires system admin or platform API key with `SystemTenantsManage`).
+- **BREAKING**: **Flattened workspace roles** — All workspace members are now `admin` role (no distinction between owner/admin/contributor/viewer). The `tenant_members.role` column is migrated to `admin` for all active members.
+
+### New Features
+
+- **NEW**: **Enterprise user management** — System administrators can create users, reset passwords, enable/disable accounts, and manage workspace bindings via `/system/admin/users` and `/system/admin/users/:id/bindings`.
+- **NEW**: **Employee ID as primary identifier** — Users login with `employee_id` (工号). The `users.employee_id` column is added with a unique partial index.
+- **NEW**: **First-login forced password change** — When administrators set initial passwords, users must change them on first login (`users.must_change_password` column).
+- **NEW**: **Default administrator bootstrap** — On fresh installation, a default system administrator is created with employee ID `admin` (configurable via `WEKNORA_BOOTSTRAP_ADMIN_EMPLOYEE_ID`).
+- **NEW**: **Workspace management endpoints** — System administrators can list and create workspaces via `/system/admin/tenants`.
+
+### Removed Features
+
+- **REMOVED**: Self-service registration (`/auth/register`, `/auth/register-by-invite`)
+- **REMOVED**: Invitation link system (`/auth/invitations/*`, `/tenants/:id/invitations/*`)
+- **REMOVED**: OIDC authentication (`/auth/oidc/*`)
+- **REMOVED**: Self-service workspace creation for non-admin users
+- **REMOVED**: Multi-language i18n — only Simplified Chinese (`zh-CN`) is now supported
+- **REMOVED**: Language switcher from login page
+
+### Migrations
+
+- `000091_enterprise_login.up.sql`: Adds `users.employee_id`, `users.must_change_password`; backfills `employee_id` from `username`; creates partial unique index on `employee_id`.
+- `000092_flatten_tenant_roles.up.sql`: Updates all active `tenant_members.role` to `admin`.
+- SQLite equivalents: `000013_enterprise_login.up.sql`, `000014_flatten_tenant_roles.up.sql`.
+
+### Configuration Changes
+
+New environment variables:
+- `WEKNORA_BOOTSTRAP_ADMIN_EMPLOYEE_ID`: Default admin employee ID (default: `admin`)
+- `WEKNORA_BOOTSTRAP_ADMIN_PASSWORD`: Default admin password (auto-generated if unset, logged once)
+
+Removed environment variables:
+- `WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL` (replaced by employee ID variant)
+- `WEKNORA_OIDC_*` (OIDC removed entirely)
+- `WEKNORA_REGISTRATION_MODE` (registration removed)
+
 ## [0.7.2] - 2026-08-07
 
 ### New Features

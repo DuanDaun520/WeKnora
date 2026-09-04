@@ -36,14 +36,6 @@
                         <line x1="2.94" y1="12.5" x2="15.06" y2="12.5" stroke="currentColor" stroke-width="1.2"
                           stroke-linecap="round" />
                       </svg>
-                      <!-- WeKnora Cloud 使用自定义 W 图标 -->
-                      <svg v-else-if="item.key === 'weknoracloud'" width="17" height="17" viewBox="0 0 18 18"
-                        fill="none" xmlns="http://www.w3.org/2000/svg" class="nav-icon">
-                        <rect x="1.5" y="1.5" width="15" height="15" rx="3.5" stroke="currentColor" stroke-width="1.2"
-                          fill="none" />
-                        <path d="M4.5 5.5L6.5 12.5L9 7.5L11.5 12.5L13.5 5.5" stroke="currentColor" stroke-width="1.3"
-                          stroke-linecap="round" stroke-linejoin="round" fill="none" />
-                      </svg>
                       <!-- 沙箱：隔离运行窗口，避免和 Ollama / 系统设置共用 server -->
                       <svg v-else-if="item.key === 'sandbox'" width="17" height="17" viewBox="0 0 18 18" fill="none"
                         xmlns="http://www.w3.org/2000/svg" class="nav-icon">
@@ -96,21 +88,6 @@
                   <!-- 常规设置 -->
                   <div v-if="currentSection === 'general'" class="section">
                     <GeneralSettings />
-                  </div>
-
-                  <!-- Ollama 设置 -->
-                  <div v-if="currentSection === 'ollama'" class="section">
-                    <OllamaSettings />
-                  </div>
-
-                  <!-- WeKnora Cloud -->
-                  <div v-if="currentSection === 'weknoracloud'" class="section">
-                    <WeKnoraCloudSettings />
-                  </div>
-
-                  <!-- 模型配置 -->
-                  <div v-if="currentSection === 'models'" class="section">
-                    <ModelSettings />
                   </div>
 
                   <!-- 网络搜索配置 -->
@@ -234,8 +211,6 @@ import SystemInfo from './SystemInfo.vue'
 import TenantInfo from './TenantInfo.vue'
 import UserProfile from './UserProfile.vue'
 import GeneralSettings from './GeneralSettings.vue'
-import ModelSettings from './ModelSettings.vue'
-import OllamaSettings from './OllamaSettings.vue'
 import McpSettings from './McpSettings.vue'
 import WebSearchSettings from './WebSearchSettings.vue'
 import ChatHistorySettings from './ChatHistorySettings.vue'
@@ -247,7 +222,6 @@ import ParserEngineSettings from './ParserEngineSettings.vue'
 import StorageEngineSettings from './StorageBackendSettings.vue'
 import SandboxSettings from './SandboxSettings.vue'
 import SkillSettings from './SkillSettings.vue'
-import WeKnoraCloudSettings from './WeKnoraCloudSettings.vue'
 import TenantMembers from './TenantMembers.vue'
 import SystemSettings from '@/views/system/SystemSettings.vue'
 import RuntimeQueues from '@/views/system/RuntimeQueues.vue'
@@ -302,7 +276,7 @@ type NavGroup = {
 // 设置二级导航的最低可见角色来自 settingsAccess.ts，和
 // internal/router/router.go 的守卫矩阵对齐。
 // 以「页面里至少有 1 个有意义的写操作所要求的最低角色」为基准，把基础设
-// 施配置（models 写、ollama 下载、websearch 写、parser/storage/vector/mcp
+// 施配置（websearch 写、parser/storage/vector/mcp
 // CRUD、sandbox 连接、skills 安装、chat-history 配置）统一收到 admin；只读类（general / system info /
 // tenant-info / members 名册）保留 viewer 可见；最高敏感的 reset api
 // key 是 owner-only。改这张表前请在 router.go 里复核对应路由组。
@@ -311,13 +285,38 @@ type NavGroup = {
 // - chathistory 页面唯一的「启用消息索引」开关 PUT /tenants/kv/chat-history-config
 //   后端走 g.Admin()。给 viewer/contributor 看到入口、点开开关、保存时
 //   403，体验很差，所以入口本身归 admin。
-// - models 列表 viewer 可读，页面内的「+ 添加模型 / 编辑 / 删除」按钮在
-//   ModelSettings.vue 里另用 hasRole('admin') 自己 gate，所以入口保留
-//   viewer 是合理的（contributor 也能浏览模型列表）。
+// - models / ollama / weknoracloud 三页已随 000094 模型平台化迁入系统
+//   管理控制台，空间 Settings 不再出现（settingsAccess.ts 同步收表）。
 const SYSTEM_ADMIN_SECTIONS = SYSTEM_ADMIN_SETTINGS_SECTIONS
 
 const normalizeSettingsSection = (section: string) => {
   return normalizeSettingsSectionFromQuery(section, route.query.tab as string | undefined)
+}
+
+// 000094 模型平台化：models / ollama / weknoracloud 三页已迁入系统管理
+// 控制台。旧深链、openSettings 调用与 settings-nav 事件在这里统一改道：
+// 系统管理员直接跳控制台对应面板，其他角色提示权限变化后回到首个可见
+// 面板（weknoracloud 的模型侧归模型管理，解析引擎凭证仍在 parser 页内）。
+const LEGACY_CONSOLE_SECTIONS: Record<string, string> = {
+  models: 'models',
+  ollama: 'ollama',
+  weknoracloud: 'models',
+}
+
+const redirectLegacySection = (section: string): boolean => {
+  const target = LEGACY_CONSOLE_SECTIONS[section]
+  if (!target) return false
+  if (authStore.isSystemAdmin) {
+    if (uiStore.showSettingsModal) uiStore.closeSettings()
+    void router.push({ path: '/system/console', query: { section: target } })
+    return true
+  }
+  MessagePlugin.warning(t('settings.modelSettings.movedToConsole'))
+  const fallback = navItems.value[0]?.key || 'general'
+  currentSection.value = fallback
+  currentSubSection.value = ''
+  syncSettingsRoute(fallback)
+  return true
 }
 
 const syncSettingsRoute = (sectionKey: string) => {
@@ -368,9 +367,6 @@ const navItems = computed(() => {
   }))
   const all: NavItem[] = [
     { key: 'general', icon: 'setting', label: t('general.title') },
-    { key: 'ollama', icon: 'server', label: 'Ollama' },
-    { key: 'weknoracloud', icon: '', label: 'WeKnora Cloud' },
-    { key: 'models', icon: 'control-platform', label: t('settings.modelManagement') },
     { key: 'websearch', icon: 'search', label: t('settings.webSearchConfig') },
     { key: 'chathistory', icon: 'chat', label: t('chatHistorySettings.title') },
     { key: 'memory', icon: 'bulletpoint', label: t('memoryWorkspaceSettings.title') },
@@ -418,11 +414,6 @@ const navGroups = computed<NavGroup[]>(() => {
       key: 'workspace',
       label: t('settings.navGroups.workspace'),
       items: pickItems(['tenant', 'members', 'chathistory', 'memory']),
-    },
-    {
-      key: 'models_runtime',
-      label: t('settings.navGroups.modelsRuntime'),
-      items: pickItems(['models', 'ollama', 'weknoracloud']),
     },
     {
       key: 'integrations',
@@ -522,6 +513,7 @@ const handleClose = () => {
 // 监听初始导航设置
 watch(() => uiStore.settingsInitialSection, (section) => {
   if (section && visible.value) {
+    if (redirectLegacySection(section)) return
     const normalizedSection = normalizeSettingsSection(section)
     if (deploymentCapabilities.loaded && !isSectionSupported(normalizedSection)) {
       MessagePlugin.warning(t('settings.capabilityUnavailable'))
@@ -569,6 +561,7 @@ watch(
       syncSettingsRoute(currentSection.value || 'general')
       return
     }
+    if (redirectLegacySection(section)) return
     const normalizedSection = normalizeSettingsSectionFromQuery(
       section,
       typeof route.query.tab === 'string' ? route.query.tab : undefined,
@@ -612,6 +605,7 @@ const handleEscape = (e: KeyboardEvent) => {
 const handleSettingsNav = (e: CustomEvent) => {
   const { section, subsection } = e.detail
   if (section) {
+    if (redirectLegacySection(section)) return
     const normalizedSection = normalizeSettingsSection(section)
     if (deploymentCapabilities.loaded && !isSectionSupported(normalizedSection)) {
       MessagePlugin.warning(t('settings.capabilityUnavailable'))

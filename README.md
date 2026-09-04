@@ -356,12 +356,22 @@ make test
 
 ## 🔒 Security Notice
 
-**Important:** Starting from v0.1.3, WeKnora includes login authentication functionality to enhance system security. For production deployments, we strongly recommend:
+**Important:** WeKnora supports two deployment modes:
 
-- Deploy WeKnora services in internal/private network environments rather than public internet
-- Avoid exposing the service directly to public networks to prevent potential information leakage
-- Configure proper firewall rules and access controls for your deployment environment
-- Regularly update to the latest version for security patches and improvements
+**Internet/SaaS Mode (Default):** Self-service registration, email login, invitation links, OIDC integration. Suitable for public-facing deployments.
+
+**Enterprise Mode (Recommended for internal deployments):** No self-registration, system administrator provisioned accounts, employee ID login, administrator-controlled workspace assignments. To enable enterprise mode:
+- Set `WEKNORA_BOOTSTRAP_ADMIN_EMPLOYEE_ID` (default: `admin`) for the default administrator account
+- Set `WEKNORA_BOOTSTRAP_ADMIN_PASSWORD` or let the system generate and log a one-time password
+- Users login with employee ID (工号) instead of email
+- First login requires password change when set by administrator
+- Workspace creation restricted to system administrators
+
+For production deployments, we strongly recommend:
+- Deploy WeKnora services in internal/private network environments
+- Enable enterprise mode for internal corporate deployments
+- Configure proper firewall rules and access controls
+- Regularly update to the latest version for security patches
 
 ## 👥 Contributors
 

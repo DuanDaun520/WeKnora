@@ -32,6 +32,7 @@ export const useMenuStore = defineStore('menuStore', () => {
     { title: '', titleKey: 'menu.knowledgeBase', icon: 'zhishiku', path: 'knowledge-bases' },
     { title: '', titleKey: 'menu.agents', icon: 'agent', path: 'agents', requiredCapability: 'agents' },
     { title: '', titleKey: 'menu.organizations', icon: 'organization', path: 'organizations', requiredCapability: 'organizations' },
+    { title: '', titleKey: 'menu.systemConsole', icon: 'user', path: 'systemConsole' },
     { title: '', titleKey: 'menu.settings', icon: 'setting', path: 'settings' },
     { title: '', titleKey: 'menu.logout', icon: 'logout', path: 'logout' }
   ])
@@ -74,6 +75,12 @@ export const useMenuStore = defineStore('menuStore', () => {
         return false
       }
       if (item.path === 'organizations' && !authStore.hasRole('admin')) {
+        return false
+      }
+      // 系统管理控制台（企业版用户/空间管理）只对系统管理员可见。
+      // 与 organizations 同理：这里只是 UI 噪音控制，真正的权限由
+      // 路由守卫与后端 RequireSystemAdmin 中间件兜底。
+      if (item.path === 'systemConsole' && !authStore.isSystemAdmin) {
         return false
       }
       if (!deploymentCapabilities.isSupported(item.requiredCapability)) {

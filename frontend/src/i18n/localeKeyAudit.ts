@@ -16,19 +16,18 @@ import {
 import { AUDIT_ACTION_LOCALE_DEFAULTS, getAuditActionLocaleDefault } from './auditActionLocaleDefaults.ts'
 import { writeLocaleModule } from './localeSerialize.ts'
 
-import enUS from './locales/en-US.ts'
-import koKR from './locales/ko-KR.ts'
-import ruRU from './locales/ru-RU.ts'
 import zhCN from './locales/zh-CN.ts'
 
+// 单语言部署（企业版）：仅保留简体中文。历史上这里是四语言包，
+// en-US 充当基准；现在 zh-CN 既是唯一语言也是剪枝/对齐的基准。
 export const LOCALE_BUNDLES = {
-  'en-US': enUS,
   'zh-CN': zhCN,
-  'ko-KR': koKR,
-  'ru-RU': ruRU,
 } as const
 
 export type LocaleName = keyof typeof LOCALE_BUNDLES
+
+/** 剪枝与跨语言对齐的基准语言（现即唯一语言）。 */
+export const REFERENCE_LOCALE: LocaleName = 'zh-CN'
 
 const SOURCE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SOURCE_EXTENSIONS = /\.(vue|ts|js|mjs)$/
@@ -98,7 +97,6 @@ const EXTRA_PREFIXES = [
   'system.globalSettings.runtime.queueDescriptions.',
   'system.globalSettings.runtime.tasks.taskTypes.',
   'organization.role.',
-  'inviteRegister.',
   'modelSettings.builtinModels.',
 ] as const
 
@@ -112,7 +110,6 @@ export const CRITICAL_LOCALE_KEYS = [
   'modelSettings.builtinModels.descriptionAdmin',
   'model.editor.description.chat',
   'model.editor.description.asr',
-  'inviteRegister.emailPlaceholder',
   'knowledgeList.sections.tenantOthers',
   'agent.sections.tenantOthers',
 ] as const
@@ -123,7 +120,7 @@ function addPrefix(usage: I18nUsage, prefix: string): void {
 }
 
 function buildI18nLiteralPattern(): RegExp {
-  const namespaces = Object.keys(enUS as Record<string, unknown>)
+  const namespaces = Object.keys(LOCALE_BUNDLES[REFERENCE_LOCALE] as Record<string, unknown>)
     .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
     .join('|')
   // Only match object-literal values (e.g. labelKey: 'foo.bar'), not Vue bindings like :name="agent.name".
@@ -193,7 +190,9 @@ function isStaticTranslationKey(key: string): boolean {
   return /^[\w.-]+$/.test(key)
 }
 
-const KNOWN_LOCALE_NAMESPACES = new Set(Object.keys(enUS as Record<string, unknown>))
+const KNOWN_LOCALE_NAMESPACES = new Set(
+  Object.keys(LOCALE_BUNDLES[REFERENCE_LOCALE] as Record<string, unknown>),
+)
 const INDIRECT_TERNARY_IN_T_RE = /\$t\(\s*[\s\S]*?\? ['"]([^'"]+)['"]\s*:\s*['"]([^'"]+)['"]/g
 const INDIRECT_VAR_T_RE = /\$t\(([a-zA-Z_][\w]*)\)/g
 
@@ -468,7 +467,7 @@ export function collectLocaleMessages(root: unknown, path = ''): LocaleMessageEn
 /** Compile a locale message with the same vue-i18n rules used at runtime. */
 export function compileLocaleMessage(
   value: string,
-  context: { key: string; locale: string } = { key: 'audit', locale: 'en-US' },
+  context: { key: string; locale: string } = { key: 'audit', locale: REFERENCE_LOCALE },
 ): void {
   compile(value, {
     ...LOCALE_MESSAGE_COMPILE_OPTIONS,
@@ -512,7 +511,7 @@ export function findAllLocaleMessageCompileErrors(
 
 type LocaleTree = Record<string, unknown>
 
-const LOCALE_ORDER: LocaleName[] = ['en-US', 'zh-CN', 'ko-KR', 'ru-RU']
+const LOCALE_ORDER: LocaleName[] = ['zh-CN']
 const LOCALES_DIR = join(dirname(fileURLToPath(import.meta.url)), 'locales')
 
 function getLocaleValueAtPathParts(current: unknown, parts: string[]): unknown {
@@ -650,23 +649,23 @@ export function rebuildPrunedLocales(
   fullBundles: Record<LocaleName, LocaleTree>,
   usage = collectI18nUsageFromSources(),
 ): Record<LocaleName, LocaleTree> {
-  const requiredKeys = collectRequiredLocaleKeys(usage, fullBundles['en-US'])
-  const enFull = structuredClone(fullBundles['en-US'])
-  const enPruned = pruneLocaleTree(enFull, usage)
-  const enTree: LocaleTree =
-    enPruned && typeof enPruned === 'object' && !Array.isArray(enPruned)
-      ? (enPruned as LocaleTree)
+  const requiredKeys = collectRequiredLocaleKeys(usage, fullBundles[REFERENCE_LOCALE])
+  const referenceFull = structuredClone(fullBundles[REFERENCE_LOCALE])
+  const referencePruned = pruneLocaleTree(referenceFull, usage)
+  const referenceTree: LocaleTree =
+    referencePruned && typeof referencePruned === 'object' && !Array.isArray(referencePruned)
+      ? (referencePruned as LocaleTree)
       : {}
-  mergeLocaleKeysFromSource(enTree, fullBundles['en-US'], requiredKeys)
-  const referenceKeys = collectLocaleKeys(enTree)
+  mergeLocaleKeysFromSource(referenceTree, fullBundles[REFERENCE_LOCALE], requiredKeys)
+  const referenceKeys = collectLocaleKeys(referenceTree)
 
-  const rebuilt = { 'en-US': enTree } as Record<LocaleName, LocaleTree>
+  const rebuilt = { [REFERENCE_LOCALE]: referenceTree } as Record<LocaleName, LocaleTree>
   for (const localeName of LOCALE_ORDER) {
-    if (localeName === 'en-US') continue
+    if (localeName === REFERENCE_LOCALE) continue
     rebuilt[localeName] = alignLocaleBundleToReferenceKeys(
       referenceKeys,
       fullBundles[localeName],
-      fullBundles['en-US'],
+      fullBundles[REFERENCE_LOCALE],
     )
   }
 
@@ -725,11 +724,11 @@ export async function regeneratePrunedLocaleFiles(localesDir = LOCALES_DIR): Pro
 }> {
   const usage = collectI18nUsageFromSources()
   const sourceBundles = await loadLocaleBundlesFromDisk(localesDir)
-  const before = collectLocaleKeys(sourceBundles['en-US']).size
+  const before = collectLocaleKeys(sourceBundles[REFERENCE_LOCALE]).size
   const rebuilt = rebuildPrunedLocales(sourceBundles, usage)
   writePrunedLocaleFiles(rebuilt, localesDir)
   return {
     before,
-    after: collectLocaleKeys(rebuilt['en-US']).size,
+    after: collectLocaleKeys(rebuilt[REFERENCE_LOCALE]).size,
   }
 }

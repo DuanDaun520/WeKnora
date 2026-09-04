@@ -14,6 +14,11 @@ export type IntegrationTabRole = 'viewer' | 'contributor' | 'admin' | 'owner'
 
 export const INTEGRATION_TAB_MIN_ROLE: Partial<Record<IntegrationTab, IntegrationTabRole>> = {
   api: 'owner',
+  // 企业版两级角色：IM 集成 / 网页嵌入 / Claw Skill 仅空间管理员可见；
+  // Chrome 插件与所有用户相关，保持全员可见。
+  im: 'admin',
+  embed: 'admin',
+  claw: 'admin',
 }
 
 export const INTEGRATION_TAB_CAPABILITY: Partial<Record<IntegrationTab, DeploymentCapabilityKey>> = {

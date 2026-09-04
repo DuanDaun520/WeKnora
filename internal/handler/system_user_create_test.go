@@ -17,25 +17,21 @@ import (
 )
 
 // createUserService records the request handed to AdminCreateUser so
-// tests can pin byte-for-byte password pass-through and the resolved
-// tenant provisioning mode.
+// tests can pin byte-for-byte password pass-through.
 type createUserService struct {
 	interfaces.UserService
-	createdUser     *types.User
-	generated       string
-	err             error
-	gotReq          *types.AdminCreateUserRequest
-	gotProvisioning types.TenantProvisioningMode
+	createdUser *types.User
+	generated   string
+	err         error
+	gotReq      *types.AdminCreateUserRequest
 }
 
 func (s *createUserService) AdminCreateUser(
 	_ context.Context,
 	req *types.AdminCreateUserRequest,
-	provisioning types.TenantProvisioningMode,
 ) (*types.User, string, error) {
 	record := *req
 	s.gotReq = &record
-	s.gotProvisioning = provisioning
 	return s.createdUser, s.generated, s.err
 }
 
@@ -66,14 +62,14 @@ func performCreateSystemUser(t *testing.T, r *gin.Engine, body map[string]string
 
 func TestCreateSystemUserCreatesUserWithExplicitPassword(t *testing.T) {
 	users := &createUserService{createdUser: &types.User{
-		ID: "u1", Username: "alice", Email: "alice@example.com",
+		ID: "u1", EmployeeID: "10001", Username: "alice", Email: "alice@example.com",
 	}}
 	audits := &capturingAuditService{}
 	h := &SystemHandler{userSvc: users, auditSvc: audits}
 	r := createSystemUserRouter(h, "admin-user")
 
 	w := performCreateSystemUser(t, r, map[string]string{
-		"username": "alice", "email": "alice@example.com", "password": "PlainPass9",
+		"employee_id": "10001", "username": "alice", "email": "alice@example.com", "password": "PlainPass9",
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
@@ -82,7 +78,7 @@ func TestCreateSystemUserCreatesUserWithExplicitPassword(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if resp.User == nil || resp.User.Username != "alice" || resp.User.Email != "alice@example.com" {
+	if resp.User == nil || resp.User.Username != "alice" || resp.User.EmployeeID != "10001" {
 		t.Fatalf("unexpected user: %+v", resp.User)
 	}
 	if resp.GeneratedPassword != "" {
@@ -106,11 +102,14 @@ func TestCreateSystemUserCreatesUserWithExplicitPassword(t *testing.T) {
 	if !strings.Contains(string(audits.entries[0].Details), `"idempotent":false`) {
 		t.Fatalf("audit details must mark idempotent=false, got %s", audits.entries[0].Details)
 	}
+	if !strings.Contains(string(audits.entries[0].Details), `"target_employee_id":"10001"`) {
+		t.Fatalf("audit details must carry the employee ID, got %s", audits.entries[0].Details)
+	}
 }
 
 func TestCreateSystemUserAutoGeneratesPasswordWhenEmpty(t *testing.T) {
 	users := &createUserService{
-		createdUser: &types.User{ID: "u2", Username: "bob", Email: "bob@example.com"},
+		createdUser: &types.User{ID: "u2", EmployeeID: "10002", Username: "bob"},
 		generated:   "G3n3r4t3dP4ssw0rd",
 	}
 	audits := &capturingAuditService{}
@@ -118,7 +117,7 @@ func TestCreateSystemUserAutoGeneratesPasswordWhenEmpty(t *testing.T) {
 	r := createSystemUserRouter(h, "admin-user")
 
 	w := performCreateSystemUser(t, r, map[string]string{
-		"username": "bob", "email": "bob@example.com",
+		"employee_id": "10002", "username": "bob",
 	})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
@@ -135,6 +134,9 @@ func TestCreateSystemUserAutoGeneratesPasswordWhenEmpty(t *testing.T) {
 	}
 	if users.gotReq == nil || users.gotReq.Password != nil {
 		t.Fatalf("absent password must reach the service as nil, got %+v", users.gotReq)
+	}
+	if users.gotReq.Email != nil {
+		t.Fatalf("email is optional and must stay nil when omitted, got %+v", users.gotReq.Email)
 	}
 	if len(audits.entries) != 1 || audits.entries[0].Action != types.AuditActionSystemUserCreated {
 		t.Fatalf("expected one %s audit entry, got %+v", types.AuditActionSystemUserCreated, audits.entries)
@@ -155,13 +157,13 @@ func TestCreateSystemUserAutoGeneratesPasswordWhenEmpty(t *testing.T) {
 
 func TestCreateSystemUserDoesNotRewritePassword(t *testing.T) {
 	// Password bytes must reach the service unmodified for valid credentials.
-	users := &createUserService{createdUser: &types.User{ID: "u3", Username: "carol", Email: "carol@example.com"}}
+	users := &createUserService{createdUser: &types.User{ID: "u3", EmployeeID: "10003", Username: "carol"}}
 	h := &SystemHandler{userSvc: users}
 	r := createSystemUserRouter(h, "admin-user")
 
 	for _, pw := range []string{"  PlainPass9  ", "\tPlainPass9\n"} {
 		w := performCreateSystemUser(t, r, map[string]string{
-			"username": "carol", "email": "carol@example.com", "password": pw,
+			"employee_id": "10003", "username": "carol", "password": pw,
 		})
 		if w.Code != http.StatusCreated {
 			t.Fatalf("password=%q status=%d body=%s", pw, w.Code, w.Body.String())
@@ -178,43 +180,10 @@ func TestCreateSystemUserMapsEmptyPasswordTo400(t *testing.T) {
 	r := createSystemUserRouter(h, "admin-user")
 
 	w := performCreateSystemUser(t, r, map[string]string{
-		"username": "carol", "email": "carol@example.com", "password": "",
+		"employee_id": "10003", "username": "carol", "password": "",
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-	}
-}
-
-func TestCreateSystemUserMapsIdentityConflictTo409(t *testing.T) {
-	users := &createUserService{err: service.ErrUserIdentityConflict}
-	audits := &capturingAuditService{}
-	h := &SystemHandler{userSvc: users, auditSvc: audits}
-	r := createSystemUserRouter(h, "admin-user")
-
-	w := performCreateSystemUser(t, r, map[string]string{
-		"username": "alice", "email": "bob@example.com",
-	})
-	if w.Code != http.StatusConflict {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-	}
-	if len(audits.entries) != 0 {
-		t.Fatalf("conflict emitted audit entries: %+v", audits.entries)
-	}
-}
-
-func TestCreateSystemUserResolvesDefaultTenantMode(t *testing.T) {
-	users := &createUserService{createdUser: &types.User{ID: "u4", Username: "dave", Email: "dave@example.com"}}
-	h := &SystemHandler{userSvc: users}
-	r := createSystemUserRouter(h, "admin-user")
-
-	w := performCreateSystemUser(t, r, map[string]string{
-		"username": "dave", "email": "dave@example.com",
-	})
-	if w.Code != http.StatusCreated {
-		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
-	}
-	if users.gotProvisioning != types.TenantProvisioningCreatePersonal {
-		t.Fatalf("provisioning=%v, want create_personal default", users.gotProvisioning)
 	}
 }
 
@@ -224,28 +193,28 @@ func TestCreateSystemUserMapsPasswordPolicyTo400(t *testing.T) {
 	r := createSystemUserRouter(h, "admin-user")
 
 	w := performCreateSystemUser(t, r, map[string]string{
-		"username": "alice", "email": "alice@example.com", "password": "password",
+		"employee_id": "10001", "username": "alice", "password": "password",
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }
 
-func TestCreateSystemUserDuplicateIdentityReturnsExistingUser(t *testing.T) {
-	// Idempotent contract: when the identity already exists the service
-	// returns the existing user with ErrUserEmailExists/ErrUserUsernameExists,
-	// and the handler answers 200 with the existing UserInfo, an empty
+func TestCreateSystemUserDuplicateEmployeeIDReturnsExistingUser(t *testing.T) {
+	// Idempotent contract: when the employee ID already exists the service
+	// returns the existing user with ErrUserEmployeeIDExists, and the
+	// handler answers 200 with the existing UserInfo, an empty
 	// generated_password and an audit row marked idempotent.
 	users := &createUserService{
-		createdUser: &types.User{ID: "existing", Username: "alice", Email: "alice@example.com"},
-		err:         service.ErrUserUsernameExists,
+		createdUser: &types.User{ID: "existing", EmployeeID: "10001", Username: "alice"},
+		err:         service.ErrUserEmployeeIDExists,
 	}
 	audits := &capturingAuditService{}
 	h := &SystemHandler{userSvc: users, auditSvc: audits}
 	r := createSystemUserRouter(h, "admin-user")
 
 	w := performCreateSystemUser(t, r, map[string]string{
-		"username": "alice", "email": "alice@example.com",
+		"employee_id": "10001", "username": "alice",
 	})
 	if w.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
@@ -278,7 +247,7 @@ func TestCreateSystemUserMapsInternalErrorTo500(t *testing.T) {
 	r := createSystemUserRouter(h, "admin-user")
 
 	w := performCreateSystemUser(t, r, map[string]string{
-		"username": "alice", "email": "alice@example.com",
+		"employee_id": "10001", "username": "alice",
 	})
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
@@ -293,14 +262,14 @@ func TestCreateSystemUserRejectsMissingFields(t *testing.T) {
 	r := createSystemUserRouter(h, "admin-user")
 
 	cases := []map[string]string{
-		{"email": "alice@example.com"},
 		{"username": "alice"},
-		{"username": "", "email": "alice@example.com"},
-		{"username": "alice", "email": ""},
-		{"username": "   ", "email": "alice@example.com"},
+		{"employee_id": "10001"},
+		{"employee_id": "", "username": "alice"},
+		{"employee_id": "10001", "username": ""},
+		{"employee_id": "   ", "username": "alice"},
 		// Binding's min=2 ran on the raw JSON; the trimmed value "a" (1
 		// rune) must be rejected by the post-trim re-check.
-		{"username": "  a  ", "email": "alice@example.com"},
+		{"employee_id": "10001", "username": "  a  "},
 	}
 	for _, body := range cases {
 		w := performCreateSystemUser(t, r, body)
@@ -315,7 +284,7 @@ func TestCreateSystemUserRejectsInvalidEmail(t *testing.T) {
 	r := createSystemUserRouter(h, "admin-user")
 
 	w := performCreateSystemUser(t, r, map[string]string{
-		"username": "alice", "email": "not-an-email",
+		"employee_id": "10001", "username": "alice", "email": "not-an-email",
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())

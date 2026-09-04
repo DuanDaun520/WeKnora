@@ -185,12 +185,13 @@ func NewTenantInactiveError() *AppError {
 	}
 }
 
-// NewTenantCreationDisabledError reports a deployment-policy denial for
-// ordinary self-service tenant creation.
+// NewTenantCreationDisabledError reports the enterprise-mode denial for
+// tenant creation by non-administrators: workspaces are provisioned by
+// the system admin exclusively (POST /system/admin/tenants).
 func NewTenantCreationDisabledError() *AppError {
 	return &AppError{
 		Code:     ErrTenantCreationDisabled,
-		Message:  "self-service workspace creation is disabled; join a workspace by invitation",
+		Message:  "workspace creation is restricted to system administrators",
 		HTTPCode: http.StatusForbidden,
 	}
 }

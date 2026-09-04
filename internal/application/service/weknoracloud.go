@@ -46,7 +46,12 @@ func (s *weKnoraCloudService) SaveCredentials(ctx context.Context, appID, appSec
 		return fmt.Errorf("credential verification failed: %w", err)
 	}
 
-	tenantID := types.MustTenantIDFromContext(ctx)
+	// Credentials live on the tenant row; a caller without a workspace
+	// context (tenantless system admin) has nowhere to persist them.
+	tenantID, ok := types.TenantIDFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("no workspace context for WeKnoraCloud credentials")
+	}
 	return s.updateTenantCredentials(ctx, tenantID, appID, appSecret)
 }
 
@@ -93,7 +98,12 @@ func (s *weKnoraCloudService) verifyCredentials(ctx context.Context, appID, appS
 
 // CheckStatus 检查 WeKnoraCloud 凭证是否可正常解密
 func (s *weKnoraCloudService) CheckStatus(ctx context.Context) (*types.WeKnoraCloudStatusResult, error) {
-	tenantID := types.MustTenantIDFromContext(ctx)
+	// Tenantless callers (system admin probing outside any workspace) have
+	// no tenant credentials to inspect — same shape as an unknown tenant.
+	tenantID, ok := types.TenantIDFromContext(ctx)
+	if !ok {
+		return &types.WeKnoraCloudStatusResult{HasModels: false, NeedsReinit: false}, nil
+	}
 
 	tenant, err := s.tenantRepo.GetTenantByID(ctx, tenantID)
 	if err != nil || tenant == nil {

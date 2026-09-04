@@ -71,8 +71,13 @@ func NewModelResponse(ctx context.Context, m *types.Model) *ModelResponse {
 		MaxConcurrency:      m.Parameters.MaxConcurrency,
 		AppID:               m.Parameters.AppID,
 	}
-	canManageBuiltin := m.IsBuiltin && types.IsSystemAdminFromContext(ctx)
-	if !CanViewIntegrationSecrets(ctx) && !canManageBuiltin {
+	// System admins manage the whole platform catalog since 000094 — and a
+	// tenantless sysadmin has neither a tenant role nor an API-key scope, so
+	// gating on CanViewIntegrationSecrets alone would strip BaseURL from the
+	// very models they configure in the console.
+	isSystemAdmin := types.IsSystemAdminFromContext(ctx)
+	canManageBuiltin := m.IsBuiltin && isSystemAdmin
+	if !CanViewIntegrationSecrets(ctx) && !isSystemAdmin {
 		params.ExtraConfig = nil
 		params.CustomHeaders = nil
 		params.BaseURL = ""

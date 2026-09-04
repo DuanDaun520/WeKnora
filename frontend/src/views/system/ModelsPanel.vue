@@ -1,13 +1,12 @@
 <template>
-  <div class="model-settings">
-    <div class="section-header">
-      <div class="section-header__top">
-        <div>
-          <h2>{{ $t('modelSettings.title') }}</h2>
-          <p class="section-description">{{ $t('modelSettings.description') }}</p>
-        </div>
+  <div class="panel-root model-settings">
+    <div class="panel-header">
+      <div>
+        <h2>{{ $t('systemConsole.models.title') }}</h2>
+        <p class="panel-header-desc">{{ $t('systemConsole.models.description') }}</p>
+      </div>
+      <div class="panel-header-actions">
         <t-button
-          v-if="authStore.hasRole('admin')"
           type="button"
           theme="primary"
           variant="text"
@@ -19,20 +18,18 @@
           {{ $t('modelSettings.actions.debugModel') }}
         </t-button>
       </div>
+    </div>
 
-      <div class="builtin-models-hint" role="note">
-        <p class="builtin-hint-label">{{ $t('modelSettings.builtinModels.title') }}</p>
-        <p class="builtin-hint-text">
-          {{ $t(authStore.isSystemAdmin
-            ? 'modelSettings.builtinModels.descriptionAdmin'
-            : 'modelSettings.builtinModels.description') }}
-        </p>
-        <a class="doc-link" href="https://github.com/Tencent/WeKnora/blob/main/docs/BUILTIN_MODELS.md" target="_blank"
-          rel="noopener noreferrer">
-          {{ $t('modelSettings.builtinModels.viewGuide') }}
-          <t-icon name="link" class="link-icon" />
-        </a>
-      </div>
+    <div class="builtin-models-hint" role="note">
+      <p class="builtin-hint-label">{{ $t('modelSettings.builtinModels.title') }}</p>
+      <p class="builtin-hint-text">
+        {{ $t('modelSettings.builtinModels.descriptionAdmin') }}
+      </p>
+      <a class="doc-link" href="https://github.com/Tencent/WeKnora/blob/main/docs/BUILTIN_MODELS.md" target="_blank"
+        rel="noopener noreferrer">
+        {{ $t('modelSettings.builtinModels.viewGuide') }}
+        <t-icon name="link" class="link-icon" />
+      </a>
     </div>
 
     <t-tabs v-model="activeTypeFilter" class="model-type-tabs" data-guide="settings-models">
@@ -46,8 +43,14 @@
     </t-tabs>
 
     <t-loading :loading="loading" size="small" class="model-list-loading">
-      <div v-if="!loading && filteredModels.length === 0 && !authStore.hasRole('admin')" class="empty-state">
+      <div v-if="!loading && filteredModels.length === 0" class="empty-state">
         <t-empty :description="emptyHint" />
+        <!-- 空目录是新装环境的第一个状态：必须在这里也给出口，
+             否则平台目录永远建不起第一个模型。 -->
+        <t-button theme="primary" class="empty-state__add" @click="openAddDialog">
+          <template #icon><add-icon /></template>
+          {{ $t('modelSettings.actions.addModel') }}
+        </t-button>
       </div>
       <div v-else-if="!loading" class="model-grid">
         <div v-for="model in filteredModels" :key="`${model._modelType}-${model.id}`" class="model-card" :class="[
@@ -68,7 +71,7 @@
               <h3 class="model-card__title">{{ modelDisplayName(model) }}</h3>
               <span v-if="model.isBuiltin" class="model-card__lock" :title="$t('modelSettings.builtinTag')"
                 :aria-label="$t('modelSettings.builtinTag')">
-                <t-icon :name="authStore.isSystemAdmin ? 'edit-1' : 'lock-on'" />
+                <t-icon name="edit-1" />
               </span>
               <div v-if="canManageModel(model)" class="model-card__actions" @click.stop>
                 <t-dropdown :options="getModelOptions(model._modelType, model)" placement="bottom-right" attach="body"
@@ -118,7 +121,6 @@
           </div>
         </div>
         <button
-          v-if="authStore.hasRole('admin')"
           type="button"
           class="model-card model-card--add"
           data-guide="settings-add-model"
@@ -141,19 +143,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+// 模型管理面板：由空间 Settings 的 ModelSettings.vue 迁入系统管理控制台
+//（000094 模型平台化）。本面板只在控制台（SystemAdmin）内渲染，角色门控
+// 相应简化为"内置模型不可删、可改配置"；读写走 /system/admin 平台路由。
+import { ref, computed, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { AddIcon, PlayCircleIcon } from 'tdesign-icons-vue-next'
 import { useI18n } from 'vue-i18n'
 import ModelEditorDialog from '@/components/ModelEditorDialog.vue'
 import ModelDebugDrawer from '@/components/ModelDebugDrawer.vue'
-import { listModels, createModel, updateModel as updateModelAPI, deleteModel as deleteModelAPI, type ModelConfig } from '@/api/model'
-import { useAuthStore } from '@/stores/auth'
-import { useUIStore } from '@/stores/ui'
+import { listSystemModels, createModel, updateModel as updateModelAPI, deleteModel as deleteModelAPI, type ModelConfig } from '@/api/model'
 
 const { t, te } = useI18n()
-const authStore = useAuthStore()
-const uiStore = useUIStore()
 type ModelType = 'chat' | 'embedding' | 'rerank' | 'vllm' | 'asr'
 type FilterType = 'all' | ModelType
 
@@ -163,17 +164,6 @@ const currentModelType = ref<ModelType>('chat')
 const editingModel = ref<any>(null)
 const loading = ref(true)
 const activeTypeFilter = ref<FilterType>('all')
-
-const MODEL_TAB_TYPES: FilterType[] = ['chat', 'embedding', 'rerank', 'vllm', 'asr']
-watch(
-  () => uiStore.settingsInitialSubSection,
-  (sub) => {
-    if (sub && MODEL_TAB_TYPES.includes(sub as FilterType)) {
-      activeTypeFilter.value = sub as FilterType
-    }
-  },
-  { immediate: true },
-)
 
 // 模型列表数据
 const allModels = ref<ModelConfig[]>([])
@@ -201,6 +191,7 @@ function convertToLegacyFormat(model: ModelConfig) {
     modelName: model.name,
     baseUrl: model.parameters.base_url || '',
     apiKey: '',
+    appId: model.parameters.app_id || '',
     provider: model.parameters.provider || '',
     dimension: model.parameters.embedding_parameters?.dimension,
     supportsDimensionOverride: model.parameters.embedding_parameters?.supports_dimension_override || false,
@@ -307,11 +298,11 @@ const emptyHint = computed(() => {
   return map[activeTypeFilter.value as ModelType]
 })
 
-// 加载模型列表
+// 加载平台模型目录（含内置模型）
 const loadModels = async () => {
   loading.value = true
   try {
-    const models = await listModels()
+    const models = await listSystemModels()
     allModels.value = models
   } catch (error: any) {
     console.error('加载模型列表失败:', error)
@@ -328,19 +319,17 @@ const openAddDialog = () => {
   showDialog.value = true
 }
 
-// Tenant Admin+ manages tenant models; only SystemAdmin manages shared
-// built-in models. The backend repeats this distinction authoritatively.
-const canEditModel = (model: any) =>
-  model.isBuiltin ? authStore.isSystemAdmin : authStore.hasRole('admin')
+// 控制台内即 SystemAdmin：平台目录中的模型（含内置）均可编辑配置，
+// 后端同样按 SystemAdmin 校验。
+const canEditModel = (_model: any) => true
 
-const isModelCardClickable = (model: any) => canEditModel(model)
+const isModelCardClickable = (_model: any) => true
 
-const canManageModel = (model: any) => canEditModel(model)
+const canManageModel = (_model: any) => true
 
-// Built-in lifecycle remains deployment-managed (YAML / SQL). The UI only
-// exposes configuration and credential editing to SystemAdmin.
-const canDeleteModel = (model: any) =>
-  authStore.hasRole('admin') && !model.isBuiltin
+// Built-in lifecycle remains deployment-managed (YAML / SQL) — 内置模型
+// 不提供删除入口，仅允许配置 / 凭证覆盖。
+const canDeleteModel = (model: any) => !model.isBuiltin
 
 const onModelCardClick = (event: Event, type: ModelType, model: any) => {
   if (!isModelCardClickable(model)) return
@@ -356,13 +345,6 @@ const onModelCardClick = (event: Event, type: ModelType, model: any) => {
 
 // 编辑模型
 const editModel = (type: ModelType, model: any) => {
-  if (model.isBuiltin && !authStore.isSystemAdmin) {
-    MessagePlugin.warning(t('modelSettings.toasts.builtinCannotEdit'))
-    return
-  }
-  if (!model.isBuiltin && !authStore.hasRole('admin')) {
-    return
-  }
   currentModelType.value = type
   editingModel.value = { ...model }
   showDialog.value = true
@@ -430,6 +412,10 @@ const handleModelSave = async (modelData: any) => {
     const trimmedAppSecret = (modelData.appSecret ?? '').trim()
     const appSecretFields: { app_secret?: string } =
       !editingModel.value && trimmedAppSecret ? { app_secret: trimmedAppSecret } : {}
+    // WeKnoraCloud：APPID 非机密，随主表单提交（编辑时留空 = 保留原值）
+    const trimmedAppId = (modelData.appId ?? '').trim()
+    const appIdFields: { app_id?: string } =
+      modelData.provider === 'weknoracloud' && trimmedAppId ? { app_id: trimmedAppId } : {}
     const extraConfig: Record<string, string> = {}
     if (modelData.provider === 'lkeap' && saveType === 'rerank') {
       extraConfig.region = (modelData.lkeapRegion || 'ap-guangzhou').trim()
@@ -455,6 +441,7 @@ const handleModelSave = async (modelData: any) => {
         base_url: modelData.baseUrl?.trim() || '',
         ...apiKeyFields,
         ...appSecretFields,
+        ...appIdFields,
         provider: modelData.provider || '',
         ...extraConfigFields,
         ...(Object.keys(customHeadersMap).length > 0 ? { custom_headers: customHeadersMap } : {}),
@@ -494,7 +481,8 @@ const handleModelSave = async (modelData: any) => {
   }
 }
 
-// 删除模型
+// 删除模型（平台级）。被任何空间引用时后端返回 400 + 用量明细，
+// 直接展示给管理员定位引用方。
 const deleteModel = async (_type: ModelType, modelId: string) => {
   const model = allModels.value.find(m => m.id === modelId)
   if (model?.is_builtin) {
@@ -517,20 +505,10 @@ const getModelOptions = (type: ModelType, model: any) => {
   const options: any[] = []
 
   if (model.isBuiltin) {
-    if (authStore.isSystemAdmin) {
-      options.push({
-        content: t('common.edit'),
-        value: `edit-${type}-${model.id}`
-      })
-    }
-    return options
-  }
-
-  // Models are tenant-wide infrastructure (LLM credentials); the
-  // backend gates every mutation behind Admin+ (see RegisterModelRoutes).
-  // Non-Admins get an empty action menu — viewing is fine, but editing,
-  // copying (also goes through createModel), and deleting are not.
-  if (!authStore.hasRole('admin')) {
+    options.push({
+      content: t('common.edit'),
+      value: `edit-${type}-${model.id}`
+    })
     return options
   }
 
@@ -619,33 +597,10 @@ onMounted(() => {
 </script>
 
 <style lang="less" scoped>
+@import './consolePanel.less';
+
 .model-settings {
   width: 100%;
-}
-
-.section-header {
-  margin-bottom: 28px;
-
-  h2 {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--td-text-color-primary);
-    margin: 0 0 8px 0;
-  }
-
-  .section-description {
-    font-size: 14px;
-    color: var(--td-text-color-secondary);
-    margin: 0;
-    line-height: 1.6;
-  }
-}
-
-.section-header__top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
 }
 
 .model-test-trigger {
@@ -669,7 +624,7 @@ onMounted(() => {
 }
 
 .builtin-models-hint {
-  margin-top: 12px;
+  margin: 10px 0 18px;
   padding: 10px 12px;
   background: var(--td-bg-color-secondarycontainer);
   border: 1px solid var(--td-component-stroke);
@@ -985,5 +940,9 @@ onMounted(() => {
     color: var(--td-text-color-placeholder);
     margin-bottom: 16px;
   }
+}
+
+.empty-state__add {
+  margin-top: 4px;
 }
 </style>

@@ -3313,6 +3313,31 @@ func (s *installModelService) ClearModelCredential(context.Context, string, stri
 	return nil
 }
 
+// ---- 平台目录 / 分配面（000094）：技能安装用例不触及，返回零值即可。 ----
+func (s *installModelService) ListAllModels(context.Context, types.ModelType, string) ([]*types.Model, error) {
+	return nil, nil
+}
+
+func (s *installModelService) GetPlatformModel(context.Context, string) (*types.Model, error) {
+	return nil, nil
+}
+
+func (s *installModelService) CreatePlatformModel(context.Context, *types.Model) error { return nil }
+func (s *installModelService) UpdatePlatformModel(context.Context, *types.Model) error { return nil }
+func (s *installModelService) UpdatePlatformModelCredentials(context.Context, string, *string, *string) (*types.Model, error) {
+	return nil, nil
+}
+func (s *installModelService) ClearPlatformModelCredential(context.Context, string, string) error {
+	return nil
+}
+func (s *installModelService) DeletePlatformModel(context.Context, string) error { return nil }
+func (s *installModelService) ListTenantAssignedModels(context.Context, uint64) ([]*types.Model, error) {
+	return nil, nil
+}
+func (s *installModelService) SetTenantModelAssignments(context.Context, uint64, []string, string) error {
+	return nil
+}
+
 func (s *installModelService) GetEmbeddingModel(context.Context, string) (embedding.Embedder, error) {
 	return nil, nil
 }

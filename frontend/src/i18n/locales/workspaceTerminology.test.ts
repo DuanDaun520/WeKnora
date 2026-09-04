@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import enUS from './en-US.ts'
-import koKR from './ko-KR.ts'
-import ruRU from './ru-RU.ts'
 import zhCN from './zh-CN.ts'
 
 type LocaleValue = string | Record<string, unknown> | unknown[]
@@ -32,10 +29,8 @@ function withoutTechnicalTenantTokens(value: string): string {
 }
 
 const localeChecks = [
+  // 单语言部署（企业版）：仅保留简体中文。
   { name: 'zh-CN', locale: zhCN, forbidden: /租户/ },
-  { name: 'en-US', locale: enUS, forbidden: /\btenants?\b/i },
-  { name: 'ko-KR', locale: koKR, forbidden: /테넌트/ },
-  { name: 'ru-RU', locale: ruRU, forbidden: /(?:тенант|арендатор)/i },
 ]
 
 test('user-facing locale values use workspace terminology', () => {

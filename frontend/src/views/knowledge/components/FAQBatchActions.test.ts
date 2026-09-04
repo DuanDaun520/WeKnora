@@ -4,11 +4,9 @@ import { readFileSync } from 'node:fs'
 
 const manager = readFileSync(new URL('./FAQEntryManager.vue', import.meta.url), 'utf8')
 const batchBar = readFileSync(new URL('./FAQBatchBar.vue', import.meta.url), 'utf8')
+// 单语言部署（企业版）：仅校验简体中文语言包。
 const locales = [
   readFileSync(new URL('../../../i18n/locales/zh-CN.ts', import.meta.url), 'utf8'),
-  readFileSync(new URL('../../../i18n/locales/en-US.ts', import.meta.url), 'utf8'),
-  readFileSync(new URL('../../../i18n/locales/ko-KR.ts', import.meta.url), 'utf8'),
-  readFileSync(new URL('../../../i18n/locales/ru-RU.ts', import.meta.url), 'utf8'),
 ]
 
 test('FAQ 批量操作通过组件事件直接连接，不再依赖全局事件', () => {

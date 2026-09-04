@@ -27,9 +27,10 @@
         </div>
       </t-option>
       
-      <!-- 添加模型选项（在底部） -->
+      <!-- 添加模型选项（在底部）：模型配置已收归系统管理员（000094），
+           非系统管理员看不到入口，走空间管理员向平台申请的流程。 -->
       <t-option
-        v-if="!disabled"
+        v-if="!disabled && authStore.isSystemAdmin"
         value="__add_model__"
         class="add-model-option"
       >
@@ -47,6 +48,7 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { listModels, type ModelConfig } from '@/api/model'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
+import { useAuthStore } from '@/stores/auth'
 import { filterModelsByType } from './modelSelectorFilter'
 
 interface Props {
@@ -75,6 +77,7 @@ const emit = defineEmits<{
 const models = ref<ModelConfig[]>([])
 const loading = ref(false)
 const { t } = useI18n()
+const authStore = useAuthStore()
 
 const placeholderText = computed(() => {
   return props.placeholder || t('model.selectModelPlaceholder')

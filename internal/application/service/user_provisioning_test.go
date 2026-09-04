@@ -56,28 +56,6 @@ func (s *provisioningMemberService) ListByUser(context.Context, string) ([]*type
 	return s.members, nil
 }
 
-func TestUserServiceRegisterTenantlessSkipsTenantCreation(t *testing.T) {
-	repo := &provisioningUserRepo{}
-	tenantSvc := &provisioningTenantService{}
-	svc := &userService{userRepo: repo, tenantService: tenantSvc}
-
-	user, err := svc.Register(context.Background(), &types.RegisterRequest{
-		Username:           "alice",
-		Email:              "alice@example.com",
-		Password:           "supersecret",
-		TenantProvisioning: types.TenantProvisioningTenantless,
-	})
-	if err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-	if tenantSvc.createCalls != 0 {
-		t.Fatalf("tenant create calls = %d, want 0", tenantSvc.createCalls)
-	}
-	if user.TenantID != 0 || repo.created == nil || repo.created.TenantID != 0 {
-		t.Fatalf("tenantless user persisted with tenant: user=%d created=%v", user.TenantID, repo.created)
-	}
-}
-
 func TestResolveLoginTenantIDRepairsTenantlessUserWithMembership(t *testing.T) {
 	repo := &provisioningUserRepo{}
 	tenantSvc := &provisioningTenantService{}

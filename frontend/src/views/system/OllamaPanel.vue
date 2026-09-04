@@ -1,8 +1,10 @@
 <template>
-  <div class="ollama-settings">
-    <div class="section-header">
-      <h2>{{ $t('ollamaSettings.title') }}</h2>
-      <p class="section-description">{{ $t('ollamaSettings.description') }}</p>
+  <div class="panel-root ollama-settings">
+    <div class="panel-header">
+      <div>
+        <h2>{{ $t('systemConsole.ollama.title') }}</h2>
+        <p class="panel-header-desc">{{ $t('systemConsole.ollama.description') }}</p>
+      </div>
     </div>
 
     <div class="settings-group">
@@ -176,6 +178,9 @@
 </template>
 
 <script setup lang="ts">
+// Ollama 运行时面板：由空间 Settings 的 OllamaSettings.vue 迁入系统
+// 管理控制台（000094 模型平台化）。Ollama 是进程级单例，探测 / 下载
+// 走 /system/admin 镜像路由；baseUrl 仅作展示（接口返回优先）。
 import { ref, onMounted } from 'vue'
 import { useSettingsStore } from '@/stores/settings'
 import { MessagePlugin } from 'tdesign-vue-next'
@@ -367,26 +372,10 @@ onMounted(async () => {
 </script>
 
 <style lang="less" scoped>
+@import './consolePanel.less';
+
 .ollama-settings {
   width: 100%;
-}
-
-.section-header {
-  margin-bottom: 32px;
-
-  h2 {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--td-text-color-primary);
-    margin: 0 0 8px 0;
-  }
-
-  .section-description {
-    font-size: 14px;
-    color: var(--td-text-color-secondary);
-    margin: 0;
-    line-height: 1.5;
-  }
 }
 
 .settings-group {

@@ -6,27 +6,6 @@
     </div>
 
     <div class="settings-group">
-      <!-- 语言选择 -->
-      <div class="setting-row">
-        <div class="setting-info">
-          <label>{{ $t('language.language') }}</label>
-          <p class="desc">{{ $t('language.languageDescription') }}</p>
-        </div>
-        <div class="setting-control">
-          <t-select
-            v-model="localLanguage"
-            :placeholder="$t('language.selectLanguage')"
-            @change="handleLanguageChange"
-            style="width: 280px;"
-          >
-            <t-option value="zh-CN" :label="$t('language.zhCN')">{{ $t('language.zhCN') }}</t-option>
-            <t-option value="en-US" :label="$t('language.enUS')">{{ $t('language.enUS') }}</t-option>
-            <t-option value="ru-RU" :label="$t('language.ruRU')">{{ $t('language.ruRU') }}</t-option>
-            <t-option value="ko-KR" :label="$t('language.koKR')">{{ $t('language.koKR') }}</t-option>
-          </t-select>
-        </div>
-      </div>
-
       <!-- 主题设置 -->
       <div class="setting-row">
         <div class="setting-info">
@@ -155,7 +134,7 @@ import {
   type FontSizeKey,
 } from '@/composables/useFont'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const settingsStore = useSettingsStore()
 const authStore = useAuthStore()
 const { currentTheme, setTheme } = useTheme()
@@ -168,8 +147,7 @@ const {
   setFontSize,
 } = useFont()
 
-// 本地状态
-const localLanguage = ref('zh-CN')
+// 本地状态（语言选择已随单语言部署移除，界面固定简体中文）
 const localTheme = ref<ThemeMode>(currentTheme.value)
 const localSansFont = ref<FontKey>(currentSans.value)
 const localMonoFont = ref<MonoFontKey>(currentMono.value)
@@ -220,22 +198,10 @@ const isAutoCheckUpdateEnabled = computed({
 
 // 初始化加载
 onMounted(() => {
-  // 从 localStorage 加载语言设置
-  const savedLocale = localStorage.getItem('locale')
-  if (savedLocale) {
-    localLanguage.value = savedLocale
-    locale.value = savedLocale
-  } else {
-    localLanguage.value = locale.value
-  }
+  // 单语言部署：忽略历史 localStorage 语言偏好，强制简体中文，
+  // 避免旧账号残留 en-US 等值导致界面语言漂移。
+  localStorage.setItem('locale', 'zh-CN')
 })
-
-// 处理语言变化
-const handleLanguageChange = () => {
-  locale.value = localLanguage.value
-  localStorage.setItem('locale', localLanguage.value)
-  MessagePlugin.success(t('language.languageSaved'))
-    }
 
 // 处理主题变化
 const handleThemeChange = (val: ThemeMode) => {

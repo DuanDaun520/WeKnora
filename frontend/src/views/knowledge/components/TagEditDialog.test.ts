@@ -3,10 +3,8 @@ import test from 'node:test'
 import { readFileSync } from 'node:fs'
 
 const component = readFileSync(new URL('./TagEditDialog.vue', import.meta.url), 'utf8')
+// 单语言部署（企业版）：仅校验简体中文语言包。
 const zhCN = readFileSync(new URL('../../../i18n/locales/zh-CN.ts', import.meta.url), 'utf8')
-const enUS = readFileSync(new URL('../../../i18n/locales/en-US.ts', import.meta.url), 'utf8')
-const koKR = readFileSync(new URL('../../../i18n/locales/ko-KR.ts', import.meta.url), 'utf8')
-const ruRU = readFileSync(new URL('../../../i18n/locales/ru-RU.ts', import.meta.url), 'utf8')
 
 test('uses a compact flat dialog with selected and available sections', () => {
   assert.match(component, /dialog-class-name="tag-edit-dialog"/)
@@ -33,7 +31,7 @@ test('uses a compact flat dialog with selected and available sections', () => {
 })
 
 test('defines the short dialog heading in every supported locale', () => {
-  for (const locale of [zhCN, enUS, koKR, ruRU]) {
+  for (const locale of [zhCN]) {
     assert.match(locale, /tagEditDialogHeading:/)
     assert.match(locale, /tagEditSelectedSection:/)
     assert.match(locale, /tagEditAvailableSection:/)

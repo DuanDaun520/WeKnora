@@ -85,7 +85,7 @@
                         <div class="menu_item-box">
                             <div class="menu_icon">
                                 <img class="icon"
-                                    :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'agent' ? agentIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : prefixIcon)"
+                                    :src="getImgSrc(item.icon == 'zhishiku' ? knowledgeIcon : item.icon == 'agent' ? agentIcon : item.icon == 'organization' ? organizationIcon : item.icon == 'logout' ? logoutIcon : item.icon == 'setting' ? settingIcon : item.icon == 'user' ? consoleIcon : prefixIcon)"
                                     alt="">
                             </div>
                             <template v-if="!uiStore.sidebarCollapsed">
@@ -1034,6 +1034,7 @@ let logoutIcon = ref('logout.svg');
 let settingIcon = ref('setting.svg');
 let agentIcon = ref('agent.svg');
 let organizationIcon = ref('organization.svg');
+let consoleIcon = ref('user.svg');
 let pathPrefix = ref(route.name)
 const getIcon = (path: string) => {
     // 根据当前路由状态更新所有图标
@@ -1042,6 +1043,7 @@ const getIcon = (path: string) => {
     const settingsActiveState = getIconActiveState('settings');
     const agentsActiveState = route.name === 'agentList';
     const organizationsActiveState = route.name === 'organizationList';
+    const consoleActiveState = route.name === 'systemConsole';
 
     // 知识库图标：只在知识库页面显示绿色
     knowledgeIcon.value = kbActiveState.isKbActive ? 'zhishiku-green.svg' : 'zhishiku.svg';
@@ -1057,6 +1059,9 @@ const getIcon = (path: string) => {
 
     // 设置图标：只在设置页面显示绿色
     settingIcon.value = settingsActiveState.isSettingsActive ? 'setting-green.svg' : 'setting.svg';
+
+    // 系统管理控制台图标：仅在控制台页面显示绿色
+    consoleIcon.value = consoleActiveState ? 'user-green.svg' : 'user.svg';
 
     // 退出图标：始终显示默认
     logoutIcon.value = 'logout.svg';
@@ -1080,6 +1085,9 @@ const handleMenuClick = async (path: string) => {
         // 设置菜单项：打开设置弹窗并跳转路由
         uiStore.openSettings()
         router.push('/platform/settings')
+    } else if (path === 'systemConsole') {
+        // 系统管理控制台：独立于 /platform 外壳的顶层路由（企业版用户/空间管理）
+        router.push('/system/console')
     } else {
         gotopage(path)
     }
