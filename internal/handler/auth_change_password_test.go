@@ -146,7 +146,7 @@ func TestChangePassword_MapsPasswordPolicyDetail(t *testing.T) {
 				return &types.User{ID: "user-1", Email: "alice@example.com"}, nil
 			},
 			changePassword: func(_ context.Context, _, _, _ string) error {
-				return service.ErrComplexPasswordPolicy
+				return service.ErrPasswordPolicy
 			},
 		},
 	}

@@ -21,7 +21,6 @@ type Config struct {
 	Server          *ServerConfig          `yaml:"server"           json:"server"`
 	KnowledgeBase   *KnowledgeBaseConfig   `yaml:"knowledge_base"   json:"knowledge_base"`
 	Tenant          *TenantConfig          `yaml:"tenant"           json:"tenant"`
-	Auth            *AuthConfig            `yaml:"auth"             json:"auth"`
 	Audit           *AuditConfig           `yaml:"audit"            json:"audit"`
 	Models          []ModelConfig          `yaml:"models"           json:"models"`
 	VectorDatabase  *VectorDatabaseConfig  `yaml:"vector_database"  json:"vector_database"`
@@ -204,7 +203,7 @@ type TenantConfig struct {
 	// EnableRBAC turns on tenant-level role enforcement (issue #1303).
 	// Pointer so we can distinguish "unset" from "explicit false":
 	//   nil           — fall back to the built-in default (true) applied
-	//                   by applyAuthAndTenantDefaults.
+	//                   by applyTenantDefaults.
 	//   pointer false — operators opted into the logging-only rollout
 	//                   window (set via config.yaml `enable_rbac: false`
 	//                   or env `WEKNORA_TENANT_ENABLE_RBAC=false`).
@@ -223,13 +222,13 @@ type TenantConfig struct {
 	// Env override: WEKNORA_TENANT_MAX_OWNED_PER_USER (integer). When set
 	// and parseable it always wins over config.yaml so operators can
 	// loosen / tighten the quota without a redeploy. See
-	// applyAuthAndTenantDefaults for the semantics of <0 / 0 / >0.
+	// applyTenantDefaults for the semantics of <0 / 0 / >0.
 	MaxOwnedPerUser int `yaml:"max_owned_per_user" json:"max_owned_per_user" mapstructure:"max_owned_per_user"`
 }
 
 // IsRBACEnforced reports whether tenant-level role enforcement is
 // active. Nil receiver or nil EnableRBAC pointer means "operator did
-// not opt out", which after applyAuthAndTenantDefaults is the new
+// not opt out", which after applyTenantDefaults is the new
 // default (true). Callers that need to treat a nil *Config as
 // fail-open (legacy behaviour) should keep their own `cfg != nil`
 // short-circuit before invoking this helper.
@@ -252,15 +251,6 @@ type AuditConfig struct {
 	//   < 0 — invalid; ValidateConfig rejects it.
 	// Default: 90 (set by applyAuditDefaults when the section is omitted).
 	RetentionDays int `yaml:"retention_days" json:"retention_days"`
-}
-
-// AuthConfig governs the user authentication entry points.
-//
-// Enterprise rework: registration_mode / default_tenant_mode retired with
-// self-service registration; the only knob left is the password-complexity
-// switch.
-type AuthConfig struct {
-	ComplexPasswordEnabled bool `yaml:"complex_password_enabled" json:"complex_password_enabled"`
 }
 
 // PromptTemplateI18n holds localized name and description for a prompt template.
@@ -522,7 +512,7 @@ func LoadConfig() (*Config, error) {
 	// Validate configuration values
 	applyAgentEnvOverrides(&cfg)
 	applyKnowledgeBaseEnvOverrides(&cfg)
-	applyAuthAndTenantDefaults(&cfg)
+	applyTenantDefaults(&cfg)
 	applyAuditDefaults(&cfg)
 
 	if err := ValidateConfig(&cfg); err != nil {
@@ -644,31 +634,22 @@ func applyAgentEnvOverrides(cfg *Config) {
 	}
 }
 
-// applyAuthAndTenantDefaults fills in defaults for the Auth and Tenant
-// config sections and applies env-var overrides that operators commonly use
-// to enable RBAC or the complex-password switch without editing config.yaml.
+// applyTenantDefaults fills in defaults for the Tenant config section and
+// applies env-var overrides that operators commonly use to enable RBAC
+// without editing config.yaml.
 //
 // Enterprise user-system rework: the registration-mode / default-tenant-mode
 // / self-service-creation knobs retired together with self-service
 // registration (workspaces are created by the system admin only); the
-// remaining switches are:
-//   - auth.complex_password_enabled (WEKNORA_AUTH_COMPLEX_PASSWORD_ENABLED)
+// auth.complex_password_enabled switch retired with the length-only
+// password policy. The remaining switches are:
 //   - tenant.enable_rbac (WEKNORA_TENANT_ENABLE_RBAC)
 //   - tenant.enable_cross_tenant_access (WEKNORA_TENANT_ENABLE_CROSS_TENANT_ACCESS)
 //   - tenant.max_owned_per_user (WEKNORA_TENANT_MAX_OWNED_PER_USER; kept for
 //     platform-side tooling, self-service creation no longer consumes it)
-func applyAuthAndTenantDefaults(cfg *Config) {
-	if cfg.Auth == nil {
-		cfg.Auth = &AuthConfig{}
-	}
+func applyTenantDefaults(cfg *Config) {
 	if cfg.Tenant == nil {
 		cfg.Tenant = &TenantConfig{}
-	}
-
-	if value := strings.TrimSpace(os.Getenv("WEKNORA_AUTH_COMPLEX_PASSWORD_ENABLED")); value != "" {
-		if parsed, err := strconv.ParseBool(value); err == nil {
-			cfg.Auth.ComplexPasswordEnabled = parsed
-		}
 	}
 
 	if value := strings.TrimSpace(os.Getenv("WEKNORA_TENANT_ENABLE_RBAC")); value != "" {

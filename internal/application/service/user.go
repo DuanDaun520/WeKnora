@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"math/big"
 	"os"
 	"strings"
 	"sync"
@@ -47,16 +46,10 @@ var (
 	ErrUserEmployeeIDExists = errors.New("user with this employee ID already exists")
 
 	// ErrPasswordPolicy is returned when a newly chosen password does not
-	// meet the product's public 8-32 character, letter-and-number contract.
+	// meet the product's public minimum-length contract (≥6 characters).
 	// It is exported so HTTP handlers can translate the failure to a 400
 	// without exposing bcrypt or persistence errors.
-	ErrPasswordPolicy = errors.New(
-		"password must be 8-32 characters and contain at least one letter and one number")
-	// ErrComplexPasswordPolicy is returned when the runtime complex-password
-	// switch is on and the new password is missing a required character class.
-	ErrComplexPasswordPolicy = errors.New(
-		"password must be 8-32 characters and must contain uppercase and lowercase " +
-			"letters, numbers, and special characters")
+	ErrPasswordPolicy = errors.New("password must be at least 6 characters")
 
 	// ErrInvalidOldPassword is returned by ChangePassword when the supplied
 	// current password does not match the stored hash. Handlers map this to
@@ -123,10 +116,6 @@ func NewUserService(
 	}
 }
 
-func (s *userService) complexPasswordEnabled(ctx context.Context) bool {
-	return ResolveComplexPasswordEnabled(ctx, s.config, s.systemSettingSvc)
-}
-
 // Login authenticates a user and returns tokens
 func (s *userService) Login(ctx context.Context, req *types.LoginRequest) (*types.LoginResponse, error) {
 	logger.Info(ctx, "Start user login")
@@ -169,6 +158,13 @@ func (s *userService) Login(ctx context.Context, req *types.LoginRequest) (*type
 		}, nil
 	}
 	logger.Info(ctx, "Password verification successful")
+
+	// Stamp last_login_at (000101) best-effort: the member-management UI
+	// renders 最后登录时间 from it. A write failure must never fail the
+	// login itself — the next successful login retries.
+	if err := s.userRepo.UpdateLastLoginAt(ctx, user.ID, time.Now()); err != nil {
+		logger.Warnf(ctx, "Failed to update last_login_at for user %s: %v", user.ID, err)
+	}
 
 	// Generate tokens. Resolve the target tenant once so the JWT claim
 	// and the tenant we return below agree — otherwise an honoured
@@ -465,7 +461,7 @@ func (s *userService) ChangePassword(ctx context.Context, userID, oldPassword, n
 		return ErrSamePassword
 	}
 
-	if err := ValidatePasswordPolicy(newPassword, s.complexPasswordEnabled(ctx)); err != nil {
+	if err := ValidatePasswordPolicy(newPassword); err != nil {
 		return err
 	}
 
@@ -497,7 +493,7 @@ func (s *userService) ChangePassword(ctx context.Context, userID, oldPassword, n
 // The admin-set password is one the user has not chosen, so the target is
 // armed with MustChangePassword and must rotate on next login.
 func (s *userService) AdminResetPassword(ctx context.Context, userID, newPassword string) error {
-	if err := ValidatePasswordPolicy(newPassword, s.complexPasswordEnabled(ctx)); err != nil {
+	if err := ValidatePasswordPolicy(newPassword); err != nil {
 		return err
 	}
 
@@ -546,10 +542,9 @@ func (s *userService) AdminCreateUser(
 
 	password := ""
 	generated := false
-	complexPasswordEnabled := s.complexPasswordEnabled(ctx)
 
 	if req.Password == nil {
-		randomPassword, err := generatePolicyCompliantPassword(complexPasswordEnabled)
+		randomPassword, err := generatePolicyCompliantPassword()
 		if err != nil {
 			return nil, "", fmt.Errorf("failed to generate password: %w", err)
 		}
@@ -561,7 +556,7 @@ func (s *userService) AdminCreateUser(
 	// Generation triggers only on an absent password. Any provided
 	// value, empty or whitespace-only, is hashed byte-for-byte and must
 	// satisfy the password policy.
-	if err := ValidatePasswordPolicy(password, complexPasswordEnabled); err != nil {
+	if err := ValidatePasswordPolicy(password); err != nil {
 		return nil, "", err
 	}
 
@@ -647,14 +642,14 @@ func (s *userService) EnsureBootstrapAdmin(ctx context.Context, employeeID, pass
 
 	generated := false
 	if password == "" {
-		randomPassword, err := generatePolicyCompliantPassword(s.complexPasswordEnabled(ctx))
+		randomPassword, err := generatePolicyCompliantPassword()
 		if err != nil {
 			return false, "", fmt.Errorf("failed to generate bootstrap password: %w", err)
 		}
 		password = randomPassword
 		generated = true
 	}
-	if err := ValidatePasswordPolicy(password, s.complexPasswordEnabled(ctx)); err != nil {
+	if err := ValidatePasswordPolicy(password); err != nil {
 		return false, "", err
 	}
 
@@ -1274,89 +1269,9 @@ func generateRandomString(length int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buffer), nil
 }
 
-func getRandomChar(charset string) (byte, error) {
-	n, err := rand.Int(rand.Reader, big.NewInt(int64(len(charset))))
-	if err != nil {
-		return 0, err
-	}
-	return charset[n.Int64()], nil
-}
-
-func generateComplexPassword(length int) (string, error) {
-	if length < 4 {
-		return "", fmt.Errorf("password length must be at least 4")
-	}
-
-	password := make([]byte, 0, length)
-
-	c, err := getRandomChar(upperChars)
-	if err != nil {
-		return "", err
-	}
-	password = append(password, c)
-
-	c, err = getRandomChar(lowerChars)
-	if err != nil {
-		return "", err
-	}
-	password = append(password, c)
-
-	c, err = getRandomChar(digitChars)
-	if err != nil {
-		return "", err
-	}
-	password = append(password, c)
-
-	c, err = getRandomChar(passwordSpecialChars)
-	if err != nil {
-		return "", err
-	}
-	password = append(password, c)
-
-	for len(password) < length {
-		c, err = getRandomChar(allChars)
-		if err != nil {
-			return "", err
-		}
-		password = append(password, c)
-	}
-
-	// Fisher-Yates shuffle
-	for i := len(password) - 1; i > 0; i-- {
-		n, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
-		if err != nil {
-			return "", err
-		}
-
-		j := int(n.Int64())
-		password[i], password[j] = password[j], password[i]
-	}
-
-	return string(password), nil
-}
-
 // generatePolicyCompliantPassword returns a cryptographically random
-// password that satisfies ValidatePasswordPolicy.
-//
-// Simple policies may require regeneration (a single 32-char base64url
-// draw misses digits ~0.4% of the time). Complex policies are satisfied
-// in a single pass.
-func generatePolicyCompliantPassword(complexPasswordEnabled bool) (string, error) {
-	var password string
-	var err error
-	for {
-		if complexPasswordEnabled {
-			password, err = generateComplexPassword(16)
-		} else {
-			password, err = generateRandomString(24)
-		}
-
-		if err != nil {
-			return "", err
-		}
-
-		if ValidatePasswordPolicy(password, complexPasswordEnabled) == nil {
-			return password, nil
-		}
-	}
+// password: 24 random bytes base64url-encoded to 32 characters, always
+// within the length-only policy.
+func generatePolicyCompliantPassword() (string, error) {
+	return generateRandomString(24)
 }

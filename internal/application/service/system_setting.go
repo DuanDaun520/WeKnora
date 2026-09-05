@@ -135,14 +135,6 @@ var registry = map[string]settingSpec{
 		Description: "是否允许 Docker 沙箱后端。本机 docker.sock 等同宿主机 root，默认关闭。" +
 			"仅系统管理员可打开；打开后立即生效，无需重启。私有化单机且已挂载 daemon socket，或配置了带 TLS 的远程 tcp:// 时再启用。",
 	},
-	"auth.complex_password_enabled": {
-		Type:     "bool",
-		EnvName:  "WEKNORA_AUTH_COMPLEX_PASSWORD_ENABLED",
-		Default:  false,
-		Category: "auth",
-		Description: "是否启用复杂密码。开启后密码必须包含大小写字母、数字和特殊字符。" +
-			"修改后立即生效，只影响新注册用户或新密码修改/重置操作。特殊字符包含：!@#$%^&*()_+-=[]{}|;:,.<>?",
-	},
 	// tenant.default_storage_quota_gb is the default storage quota (in GB)
 	// applied to a newly-created tenant when the caller doesn't specify
 	// one explicitly. Read at create time only — changing the value does

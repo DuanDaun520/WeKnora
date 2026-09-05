@@ -32,12 +32,11 @@ var (
 	errInvalidExternalUserToken = errors.New("invalid external user token")
 )
 
-// 无需认证的API列表。企业化改造后公网入口只剩登录/配置/令牌自举：
-// 注册、邀请链接与 OIDC 均已删除。
+// 无需认证的API列表。企业化改造后公网入口只剩登录/令牌自举：
+// 注册、邀请链接与 OIDC 均已删除，/auth/config 随复杂密码开关退役。
 var noAuthAPI = map[string][]string{
-	"/health":             {"GET"},
-	"/api/v1/auth/login":  {"POST"},
-	"/api/v1/auth/config": {"GET"},
+	"/health":            {"GET"},
+	"/api/v1/auth/login": {"POST"},
 	// MCP OAuth provider redirect: the third-party authorization server
 	// redirects the browser here without a WeKnora bearer token. The request
 	// is authenticated by the opaque, single-use `state` parameter instead.

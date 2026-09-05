@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	stderrors "errors"
 	"net/http"
 	"strings"
@@ -28,38 +27,25 @@ import (
 // /system/admin/users); the only public mutation left on this surface is
 // employee_id + password login.
 type AuthHandler struct {
-	userService      interfaces.UserService
-	tenantService    interfaces.TenantService
-	configInfo       *config.Config
-	systemSettingSvc interfaces.SystemSettingService
+	userService   interfaces.UserService
+	tenantService interfaces.TenantService
+	configInfo    *config.Config
 }
 
 // NewAuthHandler creates a new auth handler instance with the provided services
 // Parameters:
 //   - userService: An implementation of the UserService interface for business logic
 //   - tenantService: An implementation of the TenantService interface for tenant management
-//   - systemSettingSvc: 3-tier resolver for runtime-tunable settings such as
-//     the password-complexity switch. DB rows override cfg's startup value.
 //
 // Returns a pointer to the newly created AuthHandler
 func NewAuthHandler(configInfo *config.Config,
 	userService interfaces.UserService, tenantService interfaces.TenantService,
-	systemSettingSvc interfaces.SystemSettingService,
 ) *AuthHandler {
 	return &AuthHandler{
-		configInfo:       configInfo,
-		userService:      userService,
-		tenantService:    tenantService,
-		systemSettingSvc: systemSettingSvc,
+		configInfo:    configInfo,
+		userService:   userService,
+		tenantService: tenantService,
 	}
-}
-
-func (h *AuthHandler) complexPasswordEnabled(ctx context.Context) bool {
-	return service.ResolveComplexPasswordEnabled(ctx, h.configInfo, h.systemSettingSvc)
-}
-
-func (h *SystemHandler) complexPasswordEnabled(ctx context.Context) bool {
-	return service.ResolveComplexPasswordEnabled(ctx, h.cfg, h.systemSettingSvc)
 }
 
 // Login godoc
@@ -341,7 +327,7 @@ func (h *AuthHandler) UpdateMyPreferences(c *gin.Context) {
 
 // ChangePassword godoc
 // @Summary      修改密码
-// @Description  修改当前用户的登录密码。新密码须满足 8–32 位且同时包含字母与数字；开启复杂密码后还需包含大小写与特殊字符。成功后所有会话被撤销，需重新登录。
+// @Description  修改当前用户的登录密码。新密码须至少 6 位（无字符类别要求）。成功后所有会话被撤销，需重新登录。
 // @Tags         认证
 // @Accept       json
 // @Produce      json
@@ -409,31 +395,6 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Password changed successfully",
-	})
-}
-
-// GetAuthConfig godoc
-// @Summary      获取认证配置
-// @Description  返回当前部署的密码复杂度开关，供前端决定密码校验规则
-// @Tags         认证
-// @Accept       json
-// @Produce      json
-// @Success      200  {object}  map[string]interface{}  "认证配置"
-// @Router       /auth/config [get]
-//
-// GetAuthConfig is intentionally a no-auth endpoint: the frontend reads
-// it on app load to decide which password complexity rules to apply.
-// We expose only what the UI strictly needs; other config stays internal.
-// (The registration_mode field retired with self-service registration.)
-func (h *AuthHandler) GetAuthConfig(c *gin.Context) {
-	complexPasswordEnabled := service.ResolveComplexPasswordEnabled(
-		c.Request.Context(),
-		h.configInfo,
-		h.systemSettingSvc,
-	)
-	c.JSON(http.StatusOK, gin.H{
-		"success":                  true,
-		"complex_password_enabled": complexPasswordEnabled,
 	})
 }
 

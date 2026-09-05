@@ -568,7 +568,7 @@ func (h *SystemHandler) ResetEnterpriseUserPassword(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid password reset request"})
 		return
 	}
-	if err := service.ValidatePasswordPolicy(req.NewPassword, h.complexPasswordEnabled(ctx)); err != nil {
+	if err := service.ValidatePasswordPolicy(req.NewPassword); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

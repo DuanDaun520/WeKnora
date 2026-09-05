@@ -520,10 +520,9 @@ import {
   resetUserPassword,
   type SystemSettingItem,
 } from '@/api/system'
-import { getAuthConfig } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
 import { useDeploymentCapabilitiesStore } from '@/stores/deploymentCapabilities'
-import { newPasswordRules, PASSWORD_SPECIAL_CHARS } from '@/utils/passwordPolicy'
+import { newPasswordRules } from '@/utils/passwordPolicy'
 import { isSettingValueDirty, resolveCurrentSetting } from './systemSettingsEdit'
 
 const authStore = useAuthStore()
@@ -546,9 +545,6 @@ function keyLabel(k: string): string {
 function settingDescription(item: { key: string; description?: string }): string {
   const path = `system.globalSettings.keyDescriptions.${item.key}`
   if (te(path)) {
-    if (path === 'system.globalSettings.keyDescriptions.auth.complex_password_enabled') {
-      return t(path, { specialChars: PASSWORD_SPECIAL_CHARS }) as string
-    }
     return t(path) as string
   }
   return item.description ?? ''
@@ -657,7 +653,6 @@ type SettingsSection = 'access' | 'tenant' | 'runtime' | 'security' | 'other'
 const SETTINGS_SECTION_KEYS: Record<Exclude<SettingsSection, 'other'>, readonly string[]> = {
   access: [
     'auth.registration_mode',
-    'auth.complex_password_enabled',
     'auth.default_tenant_mode',
     'tenant.self_service_creation_enabled',
     'tenant.max_owned_per_user',
@@ -751,7 +746,7 @@ const passwordResetRules = computed(() => ({
     { required: true, message: t('auth.emailRequired'), type: 'error' },
     { email: true, message: t('auth.emailInvalid'), type: 'error' }
   ],
-  newPassword: newPasswordRules(t, complexPasswordEnabled.value),
+  newPassword: newPasswordRules(t),
   confirmPassword: [
     { required: true, message: t('auth.confirmPasswordRequired'), trigger: 'blur' },
     {
@@ -762,19 +757,6 @@ const passwordResetRules = computed(() => ({
   ],
 }))
 
-const complexPasswordEnabled = ref(false)
-
-const loadAuthConfig = async () => {
-  try {
-    const resp = await getAuthConfig()
-    complexPasswordEnabled.value = !!resp.complex_password_enabled
-  } catch (err: any) {
-    const msg = err?.message || t('system.globalSettings.messages.loadFailed')
-    MessagePlugin.error(msg)
-    complexPasswordEnabled.value = false
-  }
-}
-
 function resetPasswordResetForm() {
   passwordResetForm.email = ''
   passwordResetForm.newPassword = ''
@@ -783,7 +765,6 @@ function resetPasswordResetForm() {
 }
 
 async function openPasswordResetDialog() {
-  await loadAuthConfig()
   resetPasswordResetForm()
   passwordResetVisible.value = true
   await nextTick()

@@ -107,7 +107,8 @@ func TestResetUserPasswordRejectsWeakPasswordBeforeUserLookup(t *testing.T) {
 	h := &SystemHandler{userSvc: users}
 
 	w := performPasswordReset(t, passwordResetRouter(h, "admin-user"), map[string]string{
-		"employee_id": "10001", "new_password": "password",
+		// 新策略只要求 ≥6 位，"12345" 不足 6 位应被拒绝。
+		"employee_id": "10001", "new_password": "12345",
 	})
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())

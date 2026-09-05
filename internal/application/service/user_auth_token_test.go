@@ -76,6 +76,7 @@ func (s *stubUserRepoForAuth) UpdateUser(context.Context, *types.User) error {
 	s.updateCalls++
 	return nil
 }
+func (s *stubUserRepoForAuth) UpdateLastLoginAt(context.Context, string, time.Time) error { return nil }
 func (s *stubUserRepoForAuth) DeleteUser(context.Context, string) error { return nil }
 func (s *stubUserRepoForAuth) ListUsers(context.Context, int, int) ([]*types.User, error) {
 	return nil, nil
@@ -213,11 +214,12 @@ func TestAdminResetPasswordHashesPasswordAndRevokesSessions(t *testing.T) {
 }
 
 func TestAdminResetPasswordRejectsWeakPasswordBeforeWrite(t *testing.T) {
+	// 新策略只要求 ≥6 位，"12345" 不足 6 位应被拒绝。
 	tokenRepo := &stubAuthTokenRepo{tokens: map[string]*types.AuthToken{}}
 	svc := newAuthTestUserService(tokenRepo)
 	repo := svc.userRepo.(*stubUserRepoForAuth)
 
-	err := svc.AdminResetPassword(context.Background(), "user-1", "password")
+	err := svc.AdminResetPassword(context.Background(), "user-1", "12345")
 	if !errors.Is(err, ErrPasswordPolicy) {
 		t.Fatalf("AdminResetPassword() err = %v, want ErrPasswordPolicy", err)
 	}
@@ -282,11 +284,10 @@ func TestChangePasswordRejectsSamePassword(t *testing.T) {
 	}
 }
 
-func TestChangePasswordHonoursRuntimeComplexPolicy(t *testing.T) {
+func TestChangePasswordEnforcesMinimumLength(t *testing.T) {
 	ctx := context.Background()
 	tokenRepo := &stubAuthTokenRepo{tokens: map[string]*types.AuthToken{}}
 	svc := newAuthTestUserService(tokenRepo)
-	svc.systemSettingSvc = &stubComplexPasswordSettings{enabled: true}
 	repo := svc.userRepo.(*stubUserRepoForAuth)
 
 	hashed, err := bcrypt.GenerateFromPassword([]byte("OldSecure9"), bcrypt.DefaultCost)
@@ -295,18 +296,20 @@ func TestChangePasswordHonoursRuntimeComplexPolicy(t *testing.T) {
 	}
 	repo.users["user-1"].PasswordHash = string(hashed)
 
+	// A wrong current credential wins over the length check, so users
+	// get a clear "wrong old password" failure instead of a policy error.
 	if err := svc.ChangePassword(ctx, "user-1", "wrong-pass", "weak"); !errors.Is(err, ErrInvalidOldPassword) {
-		t.Fatalf("ChangePassword(wrong old, weak new) err = %v, want ErrInvalidOldPassword", err)
+		t.Fatalf("ChangePassword(wrong old, short new) err = %v, want ErrInvalidOldPassword", err)
 	}
-	if err := svc.ChangePassword(ctx, "user-1", "OldSecure9", "NewSecure9"); !errors.Is(err, ErrComplexPasswordPolicy) {
-		t.Fatalf("ChangePassword(simple new) err = %v, want ErrComplexPasswordPolicy", err)
+	if err := svc.ChangePassword(ctx, "user-1", "OldSecure9", "12345"); !errors.Is(err, ErrPasswordPolicy) {
+		t.Fatalf("ChangePassword(short new) err = %v, want ErrPasswordPolicy", err)
 	}
 	if repo.updateCalls != 0 || len(tokenRepo.revokedUserIDs) != 0 {
-		t.Fatalf("complex-policy reject caused side effects: updates=%d revocations=%v",
+		t.Fatalf("short-password reject caused side effects: updates=%d revocations=%v",
 			repo.updateCalls, tokenRepo.revokedUserIDs)
 	}
-	if err := svc.ChangePassword(ctx, "user-1", "OldSecure9", "NewSecure9!"); err != nil {
-		t.Fatalf("ChangePassword(complex new) err = %v", err)
+	if err := svc.ChangePassword(ctx, "user-1", "OldSecure9", "123456"); err != nil {
+		t.Fatalf("ChangePassword(6-char new) err = %v", err)
 	}
 }
 

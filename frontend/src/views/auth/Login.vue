@@ -199,7 +199,6 @@ const formRef = ref()
 
 // State management
 const loading = ref(false)
-const complexPasswordEnabled = ref(false)
 
 // 本系统专属的登录历史：只记录登录成功的工号（localStorage，最多 5 个），
 // 用 t-auto-complete 下拉展示，替代浏览器按域名共享的原生自动填充——
@@ -263,18 +262,17 @@ const formRules = computed(() => ({
   ],
   password: [
     { required: true, message: t('auth.passwordRequired'), type: 'error' },
-    { min: 8, message: t('auth.passwordMinLength'), type: 'error' },
-    { max: 32, message: t('auth.passwordMaxLength'), type: 'error' }
+    { min: 6, message: t('auth.passwordMinLength'), type: 'error' }
   ],
 }))
 
-// 强制改密表单校验：新密码复用注册处的密码策略（含复杂密码开关），
+// 强制改密表单校验：新密码复用统一的密码策略（仅 ≥6 位），
 // 文案沿用个人资料页改密弹层的 key，避免两套说法。
 const mustChangeRules = computed(() => ({
   oldPassword: [
     { required: true, message: t('userProfile.changePassword.currentRequired'), type: 'error' }
   ],
-  newPassword: newPasswordRules(t, complexPasswordEnabled.value),
+  newPassword: newPasswordRules(t),
   confirmPassword: [
     { required: true, message: t('auth.confirmPasswordRequired'), type: 'error' },
     {

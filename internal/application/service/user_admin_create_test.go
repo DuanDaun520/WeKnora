@@ -53,12 +53,7 @@ func TestAdminCreateUserGeneratesPolicyCompliantPasswordWhenEmpty(t *testing.T) 
 		t.Fatalf("user was not persisted: %v", repo.created)
 	}
 
-	complexPasswordEnabled := false
-	if svc.config != nil && svc.config.Auth != nil {
-		complexPasswordEnabled = svc.config.Auth.ComplexPasswordEnabled
-	}
-
-	if err := ValidatePasswordPolicy(generated, complexPasswordEnabled); err != nil {
+	if err := ValidatePasswordPolicy(generated); err != nil {
 		t.Fatalf("generated password violates the policy: %v", err)
 	}
 	if bcrypt.CompareHashAndPassword([]byte(repo.created.PasswordHash), []byte(generated)) != nil {
@@ -144,7 +139,8 @@ func TestAdminCreateUserRejectsPolicyViolatingPassword(t *testing.T) {
 	repo := &adminCreateUserRepo{}
 	svc := newAdminCreateUserService(repo)
 
-	for _, pw := range []string{"password", "", "   ", "\t\n", "    "} {
+	// 新策略只要求 ≥6 位；此处全部为不足 6 位的取值。
+	for _, pw := range []string{"12345", "", "   ", "\t\n", "    "} {
 		_, generated, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
 			EmployeeID: "10001", Username: "alice", Password: &pw,
 		})
@@ -161,27 +157,15 @@ func TestAdminCreateUserRejectsPolicyViolatingPassword(t *testing.T) {
 }
 
 func TestGeneratePolicyCompliantPasswordAlwaysComplies(t *testing.T) {
-	// ~0.4% of base64url draws have no digit. Regenerating until the
-	// policy passes makes compliance certain for every draw.
-	for i := range 2000 {
-		pw, err := generatePolicyCompliantPassword(false)
+	// A 24-byte base64url draw yields 32 characters, comfortably above
+	// the 6-character minimum; sample several draws to catch regressions.
+	for i := range 100 {
+		pw, err := generatePolicyCompliantPassword()
 		if err != nil {
-			t.Fatalf("iteration %d: failed to generate simple password: %v", i, err)
+			t.Fatalf("iteration %d: failed to generate password: %v", i, err)
 		}
-		if err := ValidatePasswordPolicy(pw, false); err != nil {
-			t.Fatalf("iteration %d: generated simple password %q violates the policy: %v", i, pw, err)
-		}
-	}
-
-	// Complex policies are constructed to comply in a single pass; still
-	// sample many draws so a shuffle regression cannot hide.
-	for i := range 200 {
-		pw, err := generatePolicyCompliantPassword(true)
-		if err != nil {
-			t.Fatalf("iteration %d: failed to generate complex password: %v", i, err)
-		}
-		if err := ValidatePasswordPolicy(pw, true); err != nil {
-			t.Fatalf("iteration %d: generated complex password %q violates the policy: %v", i, pw, err)
+		if err := ValidatePasswordPolicy(pw); err != nil {
+			t.Fatalf("iteration %d: generated password %q violates the policy: %v", i, pw, err)
 		}
 	}
 }
@@ -193,7 +177,7 @@ func TestAdminCreateUserRejectsWeakPasswordBeforePersisting(t *testing.T) {
 	repo := &adminCreateUserRepo{}
 	svc := newAdminCreateUserService(repo)
 
-	for _, pw := range []string{"password", ""} {
+	for _, pw := range []string{"12345", ""} {
 		_, _, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
 			EmployeeID: "10001", Username: "alice", Password: &pw,
 		})
@@ -203,35 +187,6 @@ func TestAdminCreateUserRejectsWeakPasswordBeforePersisting(t *testing.T) {
 		if repo.created != nil {
 			t.Fatalf("password=%q reached persistence", pw)
 		}
-	}
-}
-
-func TestAdminCreateUserHonoursRuntimeComplexPolicy(t *testing.T) {
-	repo := &adminCreateUserRepo{}
-	svc := &userService{
-		userRepo:         repo,
-		systemSettingSvc: &stubComplexPasswordSettings{enabled: true},
-	}
-
-	user, generated, err := svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		EmployeeID: "10001", Username: "alice",
-	})
-	if err != nil {
-		t.Fatalf("AdminCreateUser generate: %v", err)
-	}
-	if user == nil || generated == "" {
-		t.Fatal("expected a generated complex password")
-	}
-	if err := ValidatePasswordPolicy(generated, true); err != nil {
-		t.Fatalf("generated password %q violates complex policy: %v", generated, err)
-	}
-
-	simple := "PlainPass9"
-	_, _, err = svc.AdminCreateUser(context.Background(), &types.AdminCreateUserRequest{
-		EmployeeID: "10002", Username: "bob", Password: &simple,
-	})
-	if !errors.Is(err, ErrComplexPasswordPolicy) {
-		t.Fatalf("explicit simple password err=%v, want ErrComplexPasswordPolicy", err)
 	}
 }
 

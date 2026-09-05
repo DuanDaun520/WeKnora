@@ -1561,7 +1561,7 @@ func (h *SystemHandler) ResetUserPassword(c *gin.Context) {
 	}
 	req.EmployeeID = strings.TrimSpace(req.EmployeeID)
 
-	if err := service.ValidatePasswordPolicy(req.NewPassword, h.complexPasswordEnabled(ctx)); err != nil {
+	if err := service.ValidatePasswordPolicy(req.NewPassword); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
