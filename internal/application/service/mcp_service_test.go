@@ -16,6 +16,13 @@ import (
 // without depending on the database.
 type fakeMCPRepo struct {
 	store map[string]*types.MCPService
+
+	// Assignment-call recorders (000096 platform rework tests).
+	replacedServiceID string
+	replacedRows      []types.TenantMCPServiceAssignment
+	replacedBy        string
+	purgedIDs         []string
+	purgeErr          error
 }
 
 func newFakeMCPRepo() *fakeMCPRepo {
@@ -86,6 +93,33 @@ func (r *fakeMCPRepo) Update(_ context.Context, s *types.MCPService) error {
 func (r *fakeMCPRepo) Delete(_ context.Context, _ uint64, id string) error {
 	delete(r.store, id)
 	return nil
+}
+
+func (r *fakeMCPRepo) GetByIDAnyTenant(ctx context.Context, id string) (*types.MCPService, error) {
+	return r.GetByID(ctx, 0, id)
+}
+
+func (r *fakeMCPRepo) ListAll(ctx context.Context) ([]*types.MCPService, error) {
+	return r.List(ctx, 0)
+}
+
+func (r *fakeMCPRepo) ListAssignmentInfos(context.Context, string) ([]types.MCPServiceAssignmentInfo, error) {
+	return nil, nil
+}
+
+func (r *fakeMCPRepo) ReplaceServiceAssignments(
+	_ context.Context, serviceID string,
+	rows []types.TenantMCPServiceAssignment, assignedBy string,
+) error {
+	r.replacedServiceID = serviceID
+	r.replacedRows = rows
+	r.replacedBy = assignedBy
+	return nil
+}
+
+func (r *fakeMCPRepo) DeleteAssignmentsByServiceID(_ context.Context, serviceID string) error {
+	r.purgedIDs = append(r.purgedIDs, serviceID)
+	return r.purgeErr
 }
 
 func seedService(t *testing.T, repo *fakeMCPRepo, apiKey, token string) string {

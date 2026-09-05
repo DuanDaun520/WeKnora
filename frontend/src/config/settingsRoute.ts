@@ -30,9 +30,18 @@ function isBareIntegrationTab(section: string): section is IntegrationTab {
 }
 
 /**
+ * Section keys that no longer exist but still appear in old bookmarks and
+ * openSettings calls. `skills` is the pre-000095 workspace key, kept as an
+ * alias for the read-only skill catalog that moved back in 000099.
+ */
+const SETTINGS_SECTION_ALIASES: Record<string, string> = {
+  skills: 'skill-catalog',
+}
+
+/**
  * Map URL `section` (and a leftover `tab` from old bookmarks) onto the
  * settings nav key. Canonical form is `integration-<tab>`; `integrations`,
- * `api`, and bare tab names remain aliases.
+ * `api`, bare tab names, and `skills` remain aliases.
  */
 export function normalizeSettingsSection(section: string, tab?: string | null): string {
   if (section === 'integrations') {
@@ -41,12 +50,14 @@ export function normalizeSettingsSection(section: string, tab?: string | null): 
   if (isBareIntegrationTab(section)) {
     return integrationSectionKey(section)
   }
-  return section
+  return SETTINGS_SECTION_ALIASES[section] ?? section
 }
 
 /**
  * Settings left-nav → URL. Every page, including integrations, is
  * `?section=<navKey>` (e.g. `integration-claw`). `tab` is dropped.
+ * `sandbox` (skill-catalog preselect) only survives while staying on the
+ * skill catalog so it cannot leak back in later.
  */
 export function buildSettingsRouteQuery(
   sectionKey: string,
@@ -56,6 +67,9 @@ export function buildSettingsRouteQuery(
   delete query.tab
   if (!isIntegrationSection(sectionKey)) {
     delete query.agentId
+  }
+  if (sectionKey !== 'skill-catalog') {
+    delete query.sandbox
   }
   query.section = sectionKey
   return query

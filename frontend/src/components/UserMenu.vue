@@ -94,7 +94,7 @@
           <t-icon name="usergroup" class="menu-icon" />
           <span>{{ $t('tenantMember.title') }}</span>
         </div>
-        <div v-if="canManageSkills" class="menu-item" @click="handleQuickNav('skills')">
+        <div v-if="canManageSkills" class="menu-item" @click="handleQuickNav('skill-catalog')">
           <t-icon :name="SKILL_ICON" class="menu-icon" />
           <span>{{ $t('settings.skills.title') }}</span>
         </div>
@@ -226,17 +226,16 @@ const showTenantIdentityLine = computed(() => {
   return (authStore.memberships ?? []).length > 1
 })
 
-// 快捷入口使用“管理能力”而不是页面最低可见角色：成员名册和技能目录允许
-// viewer 浏览，但头像菜单里的“管理”入口只服务实际能执行管理操作的角色。
-// 模型管理已随 000094 迁入系统管理控制台，由下方“系统管理”入口承载。
+// 快捷入口使用“管理能力”而不是页面最低可见角色：成员名册允许 viewer
+// 浏览，但头像菜单里的“管理”入口只服务实际能执行管理操作的角色。
+// 模型管理已随 000094、技能目录已随 000095 迁入系统管理控制台，由下方
+// “系统管理”入口承载。canManageSkills 只认 isSystemAdmin：控制台路由
+// 守卫（requiresSystemAdmin）不认 canAccessAllTenants，纯跨空间超管同样
+// 进不去，入口亮着只会点进去被弹回。
 const canManageMembers = computed(() =>
   authStore.canAccessAllTenants || authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.members),
 )
-const canManageSkills = computed(() =>
-  authStore.canAccessAllTenants ||
-  authStore.isSystemAdmin ||
-  authStore.hasRole(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.skills),
-)
+const canManageSkills = computed(() => authStore.isSystemAdmin)
 
 const menuRef = ref<HTMLElement>()
 const tenantMenuItemRef = ref<HTMLElement>()

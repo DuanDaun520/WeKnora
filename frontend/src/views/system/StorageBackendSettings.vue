@@ -251,7 +251,7 @@ import { AddIcon } from 'tdesign-icons-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@/stores/auth'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
-import { providerLogo } from './providerLogos'
+import { providerLogo } from '@/views/settings/providerLogos'
 import {
   createStorageBackend, deleteStorageBackend, listStorageBackends, listStorageBackendTypes,
   setDefaultStorageBackend, testStorageBackend, testStorageBackendByID, updateStorageBackend,

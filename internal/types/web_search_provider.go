@@ -26,6 +26,7 @@ const (
 	WebSearchProviderTypeZhipu      WebSearchProviderType = "zhipu"
 	WebSearchProviderTypeExa        WebSearchProviderType = "exa"
 	WebSearchProviderTypeMetaso     WebSearchProviderType = "metaso"
+	WebSearchProviderTypeSerpbase   WebSearchProviderType = "serpbase"
 )
 
 // WebSearchProviderEntity represents a configured web search provider instance for a workspace.
@@ -323,6 +324,14 @@ func GetWebSearchProviderTypes() []WebSearchProviderTypeInfo {
 					},
 				},
 			},
+		},
+		{
+			ID:             "serpbase",
+			Name:           "SerpBase",
+			RequiresAPIKey: true,
+			SupportsProxy:  true,
+			Description:    "SerpBase Google Search API (requires API key; hl/gl locale can be set via extra config)",
+			DocsURL:        "https://serpbase.dev/zh-CN/docs",
 		},
 	}
 }

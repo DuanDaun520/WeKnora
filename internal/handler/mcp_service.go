@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	stderrors "errors"
 	"net/http"
@@ -200,10 +201,50 @@ func (h *MCPServiceHandler) UpdateMCPService(c *gin.Context) {
 		return
 	}
 
+	service, updateFields, err := parseMCPServiceUpdateBody(ctx, serviceID, updateData)
+	if err != nil {
+		c.Error(err)
+		return
+	}
+	service.TenantID = tenantID
+
+	if err := h.mcpServiceService.UpdateMCPService(ctx, service, updateFields); err != nil {
+		logger.ErrorWithFields(ctx, err, map[string]interface{}{"service_id": secutils.SanitizeForLog(serviceID)})
+		c.Error(errors.NewInternalServerError("Failed to update MCP service: " + err.Error()))
+		return
+	}
+
+	logger.Infof(ctx, "MCP service updated successfully: %s", secutils.SanitizeForLog(serviceID))
+
+	// Re-fetch to pick up server-side merges (CustomHeaders preserve, etc.)
+	// and respond with the full current state via the secret-free DTO.
+	stored, err := h.mcpServiceService.GetMCPServiceByID(ctx, tenantID, serviceID)
+	if err != nil {
+		c.Error(errors.NewInternalServerError("Failed to fetch updated MCP service: " + err.Error()))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"data":    dto.NewMCPServiceResponse(ctx, stored),
+	})
+}
+
+// parseMCPServiceUpdateBody converts a partial-update map (PUT body) into the
+// service struct plus a field-presence set. It is shared by the tenant-scoped
+// PUT /mcp-services/:id and the platform console's
+// PUT /system/admin/mcp-services/:id so both surfaces accept exactly the same
+// body contract (secrets excluded — those live behind /credentials).
+//
+// The caller stamps TenantID afterwards. The returned error is an
+// *errors.AppError ready for c.Error.
+func parseMCPServiceUpdateBody(
+	ctx context.Context,
+	serviceID string,
+	updateData map[string]interface{},
+) (*types.MCPService, map[string]bool, error) {
 	// Convert map to MCPService struct for validation and processing
 	var service types.MCPService
 	service.ID = serviceID
-	service.TenantID = tenantID
 
 	// Track which fields are being updated
 	updateFields := make(map[string]bool)
@@ -218,11 +259,7 @@ func (h *MCPServiceHandler) UpdateMCPService(c *gin.Context) {
 		updateFields["description"] = true
 	}
 	if enabled, ok := updateData["enabled"].(bool); ok {
-		if enabled {
-			service.Enabled = true
-		} else {
-			service.Enabled = false
-		}
+		service.Enabled = enabled
 		updateFields["enabled"] = true
 	}
 	if transportType, ok := updateData["transport_type"].(string); ok {
@@ -239,8 +276,7 @@ func (h *MCPServiceHandler) UpdateMCPService(c *gin.Context) {
 	if service.URL != nil && *service.URL != "" {
 		if err := secutils.ValidateURLForSSRF(*service.URL); err != nil {
 			logger.Warnf(ctx, "SSRF validation failed for MCP service URL: %v", err)
-			c.Error(errors.NewBadRequestError(secutils.FormatSSRFError("MCP service URL", *service.URL, err)))
-			return
+			return nil, nil, errors.NewBadRequestError(secutils.FormatSSRFError("MCP service URL", *service.URL, err))
 		}
 	}
 
@@ -341,29 +377,9 @@ func (h *MCPServiceHandler) UpdateMCPService(c *gin.Context) {
 	}
 	if err := mcpsecurity.ValidateServiceOutboundURLs(&service); err != nil {
 		logger.Warnf(ctx, "SSRF validation failed for MCP service update: %v", err)
-		c.Error(errors.NewBadRequestError(err.Error()))
-		return
+		return nil, nil, errors.NewBadRequestError(err.Error())
 	}
-
-	if err := h.mcpServiceService.UpdateMCPService(ctx, &service, updateFields); err != nil {
-		logger.ErrorWithFields(ctx, err, map[string]interface{}{"service_id": secutils.SanitizeForLog(serviceID)})
-		c.Error(errors.NewInternalServerError("Failed to update MCP service: " + err.Error()))
-		return
-	}
-
-	logger.Infof(ctx, "MCP service updated successfully: %s", secutils.SanitizeForLog(serviceID))
-
-	// Re-fetch to pick up server-side merges (CustomHeaders preserve, etc.)
-	// and respond with the full current state via the secret-free DTO.
-	stored, err := h.mcpServiceService.GetMCPServiceByID(ctx, tenantID, serviceID)
-	if err != nil {
-		c.Error(errors.NewInternalServerError("Failed to fetch updated MCP service: " + err.Error()))
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"data":    dto.NewMCPServiceResponse(ctx, stored),
-	})
+	return &service, updateFields, nil
 }
 
 // DeleteMCPService godoc
@@ -520,14 +536,16 @@ func (h *MCPServiceHandler) GetMCPServiceResources(c *gin.Context) {
 }
 
 // ListMCPToolApprovals returns persisted require_approval flags for tools on an MCP service.
+//
+// Since the 000096 platform rework the handler is tenant-context-free in
+// spirit: a missing workspace context (tenantID == 0) means platform scope —
+// the admin console reads the platform default policy rows
+// (tenant_id = 0) through /system/admin/mcp-services/:id/tool-approvals, while
+// the tenant route keeps resolving the workspace's own rows.
 func (h *MCPServiceHandler) ListMCPToolApprovals(c *gin.Context) {
 	ctx := c.Request.Context()
 	serviceID := secutils.SanitizeForLog(c.Param("id"))
 	tenantID := c.GetUint64(types.TenantIDContextKey.String())
-	if tenantID == 0 {
-		c.Error(errors.NewBadRequestError("Workspace ID cannot be empty"))
-		return
-	}
 	if h.mcpToolApprovalService == nil {
 		c.Error(errors.NewInternalServerError("MCP tool approval is not configured"))
 		return
@@ -574,11 +592,11 @@ func (h *MCPServiceHandler) SetMCPToolApproval(c *gin.Context) {
 	// Gin already URL-decodes path params; do not call url.PathUnescape again
 	// or names containing literal "%" become corrupted.
 	toolName := c.Param("tool_name")
+	// tenantID == 0 (no workspace context) writes the platform default policy
+	// row — the admin console's system route. The tenant route keeps writing
+	// the workspace override; runtime resolution prefers the workspace row and
+	// falls back to the platform row (repository IsRequired).
 	tenantID := c.GetUint64(types.TenantIDContextKey.String())
-	if tenantID == 0 {
-		c.Error(errors.NewBadRequestError("Workspace ID cannot be empty"))
-		return
-	}
 	if h.mcpToolApprovalService == nil {
 		c.Error(errors.NewInternalServerError("MCP tool approval is not configured"))
 		return

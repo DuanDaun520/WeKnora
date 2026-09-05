@@ -54,6 +54,13 @@ func (s *stubTenantService) GetWeKnoraCloudCredentials(context.Context) *types.W
 }
 
 func newTenantHandlerTestEngine(t *testing.T, role types.TenantRole, tenant *types.Tenant) *gin.Engine {
+	return newTenantHandlerTestEngineOpt(t, role, tenant, false)
+}
+
+// newTenantHandlerTestEngineOpt mirrors the admin-console 按空间代管 setup:
+// a system admin operating a workspace through X-Tenant-ID carries the
+// system-admin context key but a plain (Viewer) tenant role.
+func newTenantHandlerTestEngineOpt(t *testing.T, role types.TenantRole, tenant *types.Tenant, systemAdmin bool) *gin.Engine {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	h := &TenantHandler{service: &stubTenantService{tenant: tenant}}
@@ -65,8 +72,14 @@ func newTenantHandlerTestEngine(t *testing.T, role types.TenantRole, tenant *typ
 		ctx = context.WithValue(ctx, types.TenantIDContextKey, tenant.ID)
 		ctx = context.WithValue(ctx, types.TenantRoleContextKey, role)
 		ctx = context.WithValue(ctx, types.TenantInfoContextKey, tenant)
+		if systemAdmin {
+			ctx = context.WithValue(ctx, types.SystemAdminContextKey, true)
+		}
 		c.Request = c.Request.WithContext(ctx)
 		c.Set(types.TenantIDContextKey.String(), tenant.ID)
+		if systemAdmin {
+			c.Set(types.SystemAdminContextKey.String(), true)
+		}
 		c.Next()
 	})
 	r.GET("/tenants", h.ListTenants)
@@ -162,9 +175,27 @@ func TestGetTenantKVViewerAllowedForNonSecretKey(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestPutTenantParserConfigAdminPreservesRedactedSecrets(t *testing.T) {
+// 控制台按空间代管收权后：工作空间管理员对集成 KV 键（解析引擎配置等）
+// 的写入被拒 —— 这些配置只归系统管理员（经 X-Tenant-ID 代管）与具备
+// 相应能力的 API key。
+func TestPutTenantParserConfigTenantAdminForbidden(t *testing.T) {
 	tenant := secretTenantFixture()
 	engine := newTenantHandlerTestEngine(t, types.TenantRoleAdmin, tenant)
+
+	body := `{"mineru_api_key":"***","mineru_endpoint":"https://example.com/mineru"}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/tenants/kv/parser-engine-config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	engine.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	require.NotNil(t, tenant.ParserEngineConfig)
+	assert.Equal(t, "parser-secret-123", tenant.ParserEngineConfig.MinerUAPIKey,
+		"rejected write must not touch stored secrets")
+}
+
+func TestPutTenantParserConfigSysAdminPreservesRedactedSecrets(t *testing.T) {
+	tenant := secretTenantFixture()
+	engine := newTenantHandlerTestEngineOpt(t, types.TenantRoleViewer, tenant, true)
 
 	body := `{"mineru_api_key":"***","mineru_endpoint":"https://example.com/mineru"}`
 	rec := httptest.NewRecorder()

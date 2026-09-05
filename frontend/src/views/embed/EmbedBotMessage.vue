@@ -47,6 +47,7 @@ import {
   createSafeImage,
   isValidImageURL,
   hydrateProtectedFileImages,
+  attachExternalImageErrorFallback,
 } from '@/utils/security'
 import type { ProtectedFileAccessContext } from '@/utils/protectedFileAccess'
 import {
@@ -177,6 +178,8 @@ const hydrateImages = async () => {
       ? { mode: 'embed', channelId: props.embedChannelId, token: props.embedToken }
       : undefined
   await hydrateProtectedFileImages(parentMd.value, embedAccess)
+  // 无 i18n 上下文：外链图片加载失败时直接移除，不留破图
+  attachExternalImageErrorFallback(parentMd.value)
 }
 
 const renderMermaidDiagrams = async () => {

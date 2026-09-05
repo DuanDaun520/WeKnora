@@ -1291,6 +1291,7 @@
                           class="sandbox-config-select"
                           filterable
                           :popup-props="{ overlayClassName: 'sandbox-config-select-popup' }"
+                          @change="onSandboxSelected"
                         >
                           <t-option value="" :label="$t('agent.editor.sandboxBackendDefault')" />
                           <t-option
@@ -1304,17 +1305,18 @@
                                 <span class="sandbox-option__name">{{ cfg.name }}</span>
                                 <span v-if="cfg.sandbox_type" class="sandbox-option__type">{{ backendLabel(cfg.sandbox_type) }}</span>
                               </div>
-                              <div v-if="sandboxTargetLine(cfg)" class="sandbox-option__target">{{ sandboxTargetLine(cfg) }}</div>
                             </div>
                           </t-option>
                         </t-select>
-                        <p v-if="selectedSandboxSummary" class="sandbox-selected-meta">{{ selectedSandboxSummary }}</p>
-                        <div class="sandbox-select-links">
+                        <!-- 000100：登记/安装收归系统管理员（000099）——「管理沙箱」
+                             「管理技能」入口仅系统管理员可见；普通成员只看到统一配置
+                             提示，也不展示 Docker · 镜像 · 描述 这类技术摘要。 -->
+                        <div v-if="canInstallSkills" class="sandbox-select-links">
                           <a href="javascript:void(0)" class="go-settings-link"
                             @click.prevent="uiStore.openSettings('sandbox')">
                             {{ $t('agent.editor.goSandboxSettings') }}
                           </a>
-                          <template v-if="hasSandboxSelected && canInstallSkills">
+                          <template v-if="hasSandboxSelected">
                             <span class="sandbox-select-links__sep" aria-hidden="true">·</span>
                             <a
                               href="javascript:void(0)"
@@ -1325,6 +1327,7 @@
                             </a>
                           </template>
                         </div>
+                        <p v-else class="desc">{{ $t('agent.editor.sandboxManagedHint') }}</p>
                         <p v-if="sandboxConfigOptions.length === 0" class="desc empty-hint">
                           {{ $t('agent.editor.sandboxNoConfigs') }}
                         </p>
@@ -2068,7 +2071,9 @@ const hasSandboxSelected = computed(() => !!formData.value.config.sandbox_config
 const canEnableSkills = computed(() =>
   hasSandboxSelected.value || namedSandboxConfigs().length === 1,
 );
-const canInstallSkills = computed(() => authStore.hasRole('admin'));
+// 技能登记/安装后端是 g.SystemAdmin()（000095 收权）：只有系统管理员能从
+// 编辑器里直装，空间管理员点了只会 403，入口直接收紧。
+const canInstallSkills = computed(() => authStore.isSystemAdmin);
 
 type CatalogSkillRow = SkillCatalogItem & {
   installed: boolean
@@ -2164,9 +2169,40 @@ function autoBindSoleSandbox() {
   }
 }
 
+// 000100：用户选定运行沙箱后，技能选择默认进「指定」并勾选该沙箱全部
+// 可用技能，免去逐个点选。只由下拉的 @change 触发——编辑态加载已保存
+// 的 sandbox_config_id / autoBindSoleSandbox 的程序化赋值不会改写用户
+// 已保存的「不使用」意图；目录数据异步到位时经 pending 标记补跑。
+let pendingDefaultSkillCheck = false
+
+function applyDefaultSkillSelection() {
+  if (!pendingDefaultSkillCheck || !hasSandboxSelected.value) return
+  if (!catalogReady.value || skillCatalog.value.length === 0) return
+  pendingDefaultSkillCheck = false
+  if (skillsSelectionMode.value === 'none') {
+    skillsSelectionMode.value = 'selected'
+  }
+  if (skillsSelectionMode.value !== 'selected') return
+  const names = catalogSkillRows.value
+    .filter((skill) => skill.selectable)
+    .map((skill) => skill.name)
+  const current = formData.value.config.selected_skills || []
+  formData.value.config.selected_skills = Array.from(new Set([...current, ...names]))
+}
+
+function onSandboxSelected() {
+  if (!hasSandboxSelected.value) return
+  pendingDefaultSkillCheck = true
+  // 先刷新该沙箱的安装状态，再按最新目录勾选；期间目录变化由下方
+  // watch(catalogSkillRows) 兜底（注册在 formData 之后，避免 TDZ）。
+  void syncInstalledSkills(true).finally(() => applyDefaultSkillSelection())
+}
+
 function openSkillSettings() {
   const configId = formData.value.config.sandbox_config_id || ''
-  uiStore.openSettings('skills', configId || undefined)
+  // 000099：技能目录回到空间 Settings，openSettings 直指新 section 并带
+  // 沙箱预选；旧 'skills' 键由 settingsRoute 别名兜底。
+  uiStore.openSettings('skill-catalog', configId || undefined)
 }
 
 const showSkillProgress = ref(false)
@@ -2275,29 +2311,6 @@ const sandboxConfigOptions = computed(() => {
 const backendLabel = (type: string) =>
   type ? t(`settings.sandbox.backends.${type}`) : t('common.error');
 
-function sandboxTargetLine(cfg: SandboxConfigRecord): string {
-  if (cfg.sandbox_type === 'docker') {
-    return cfg.config?.docker?.image?.trim() || ''
-  }
-  const remote = cfg.config?.e2b || cfg.config?.cube
-  const raw = remote?.api_url?.trim() || ''
-  if (!raw) return ''
-  try {
-    return new URL(raw).host
-  } catch {
-    return raw
-  }
-}
-
-const selectedSandboxSummary = computed(() => {
-  const id = formData.value.config.sandbox_config_id
-  const cfg = sandboxConfigOptions.value.find((item) => item.id === id)
-  if (!cfg?.sandbox_type) return ''
-  const parts = [backendLabel(cfg.sandbox_type), sandboxTargetLine(cfg)]
-  const desc = cfg.description?.trim()
-  if (desc) parts.push(desc)
-  return parts.filter(Boolean).join(' · ')
-})
 // 存储引擎可用状态（用于图片存储 provider 选择）
 const storageEngineStatus = ref<StorageEngineStatusItem[]>([]);
 const imageStorageOptions = computed(() => {
@@ -2673,7 +2686,8 @@ const navItems = computed(() => {
   return items;
 });
 
-// 左侧导航分组（参考「头像-设置」的分组方式）
+// 左侧导航分组：基础配置 → 能力扩展 → 高级配置 → 发布（仅编辑模式）。
+// retrieval（检索策略）挂在知识库上才出现，归入高级配置组。
 const navGroups = computed(() => {
   const itemMap = new Map(navItems.value.map((item) => [item.key, item]));
   const pickItems = (keys: string[]) =>
@@ -2682,17 +2696,17 @@ const navGroups = computed(() => {
     {
       key: 'basic',
       label: t('agentEditor.navGroups.basic'),
-      items: pickItems(['basic', 'prompts', 'model', 'conversation', 'suggestions']),
-    },
-    {
-      key: 'knowledge',
-      label: t('agentEditor.navGroups.knowledge'),
-      items: pickItems(['knowledge', 'retrieval', 'websearch']),
+      items: pickItems(['basic', 'prompts', 'model', 'suggestions']),
     },
     {
       key: 'capability',
       label: t('agentEditor.navGroups.capability'),
-      items: pickItems(['multimodal', 'tools', 'mcp', 'skills']),
+      items: pickItems(['knowledge', 'skills', 'mcp', 'websearch', 'multimodal']),
+    },
+    {
+      key: 'advanced',
+      label: t('agentEditor.navGroups.advanced'),
+      items: pickItems(['conversation', 'retrieval', 'tools']),
     },
     {
       key: 'integration',
@@ -2709,7 +2723,8 @@ const defaultFormData = {
   is_builtin: false,
   config: {
     // 基础设置
-    agent_mode: 'smart-reasoning' as 'quick-answer' | 'smart-reasoning',
+    // 000100：新建默认「快速问答」，名称留空由用户输入，不再按类型预填。
+    agent_mode: 'quick-answer' as 'quick-answer' | 'smart-reasoning',
     system_prompt: '',
     context_template: '',
     // 模型设置
@@ -3480,24 +3495,9 @@ watch(() => props.visible, async (val) => {
       mcpSelectionMode.value = 'none';
       skillsSelectionMode.value = 'none';
 
-      // 新建智能推理 agent 时，立即应用默认的 agent_type 预设
-      // （补齐 system_prompt / allowed_tools / kb_selection_mode 等），
-      // 否则用户在 modal 打开瞬间看到的"默认表单"和类型下拉显示的类型不一致。
-      if (newFormData.config.agent_mode === 'smart-reasoning') {
-        const defaultTypeId = newFormData.config.agent_type as AgentType;
-        const preset = agentTypePresets.value.find(p => p.id === defaultTypeId) || null;
-        if (defaultTypeId && defaultTypeId !== 'custom') {
-          applyAgentTypePreset(preset);
-        }
-        // 给新建表单补上"我的 XXX"默认名 + 预设描述，让用户可直接保存；
-        // 用户输入过的值不会被覆盖（此处是新建场景，字段必定为空）。
-        if (!formData.value.name) {
-          formData.value.name = getPresetDefaultName(preset);
-        }
-        if (!formData.value.description) {
-          formData.value.description = getPresetDefaultDescription(preset);
-        }
-      }
+      // 000100：默认「快速问答」+ 名称/描述留空，不再按 agent_type 预填
+      // （用户手动切到智能推理后调整类型时，onAgentTypeChange 仍会刷新
+      // 未编辑过的名称/描述）。
       applyDefaultModelsIfEmpty()
     }
 
@@ -3634,6 +3634,8 @@ function stopCatalogPoll() {
 watch(
   [() => props.visible, catalogSkillRows],
   () => {
+    // 000100：目录异步到位时补跑「选沙箱→勾全部」的默认勾选。
+    applyDefaultSkillSelection()
     const busy = catalogSkillRows.value.some((skill) =>
       skill.installStatus === 'installing' || skill.installStatus === 'removing',
     )
@@ -5451,24 +5453,6 @@ const handleSave = async () => {
   flex-shrink: 0;
   color: var(--td-text-color-placeholder);
   font-size: 12px;
-}
-
-.sandbox-option__target {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--td-text-color-placeholder);
-  font-size: 12px;
-  line-height: 1.35;
-}
-
-.sandbox-selected-meta {
-  margin: 6px 0 0;
-  max-width: 280px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--td-text-color-secondary);
-  word-break: break-word;
 }
 
 // 名称输入框带头像预览

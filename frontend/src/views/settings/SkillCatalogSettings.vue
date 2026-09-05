@@ -9,6 +9,8 @@
         </t-tooltip>
       </div>
       <p class="section-description">{{ $t('settings.skills.description') }}</p>
+      <!-- 000099 空间侧只读：目录由系统管理员维护，空间管理员只看不动 -->
+      <p v-if="!canManage" class="installer-model-hint">{{ $t('settings.skills.readonlyHint') }}</p>
     </div>
 
     <div v-if="loading" class="loading-container">
@@ -17,16 +19,16 @@
 
     <template v-else>
       <div v-if="catalog.length === 0" class="empty-state">
-        <t-empty :description="$t('settings.skills.emptyDesc')" />
-        <p v-if="skillConfigs.length === 0" class="empty-hint">
+        <t-empty :description="canManage ? $t('settings.skills.emptyDesc') : $t('settings.skills.emptyDescReadonly')" />
+        <p v-if="canManage && skillConfigs.length === 0" class="empty-hint">
           {{ $t('settings.skills.emptyNoSandboxHint') }}
         </p>
-        <div class="empty-actions">
+        <div v-if="canManage" class="empty-actions">
           <t-button theme="primary" @click="openAdd">
             {{ $t('settings.skills.addSkill') }}
           </t-button>
           <t-button v-if="skillConfigs.length === 0" theme="default" variant="outline"
-            @click="uiStore.openSettings('sandbox')">
+            @click="goSandboxSection">
             {{ $t('settings.skills.goSandboxSettings') }}
           </t-button>
         </div>
@@ -46,6 +48,10 @@
               <div class="skill-card__header">
                 <div class="skill-card__heading">
                   <h3 class="skill-card__title" :title="item.name">{{ item.name }}</h3>
+                  <!-- 000098 溯源：该目录行由平台「技能库」分配物化而来 -->
+                  <span v-if="item.source_platform_skill_id" class="skill-card__from-library">
+                    {{ $t('settings.skills.fromLibrary') }}
+                  </span>
                   <span v-if="item.version" class="skill-card__type">{{ item.version }}</span>
                 </div>
                 <div class="skill-card__actions">
@@ -53,7 +59,7 @@
                     :aria-label="$t('settings.sandbox.skillFiles')" @click="openCatalogFiles(item)">
                     <folder-icon size="14px" />
                   </button>
-                  <button v-if="canDelete(item)" type="button" class="skill-card__icon-btn skill-card__icon-btn--danger"
+                  <button v-if="canManage && canDelete(item)" type="button" class="skill-card__icon-btn skill-card__icon-btn--danger"
                     :disabled="deletingId === item.id" :title="$t('settings.skills.deleteCatalog')"
                     :aria-label="$t('settings.skills.deleteCatalog')" @click="askDelete(item)">
                     <delete-icon size="14px" />
@@ -64,8 +70,14 @@
                 {{ compactText(item.description) }}
               </p>
               <div v-for="view in [installsView(item)]" :key="'installs'" class="skill-card__installs">
-                <span v-if="view.installs.length === 0 && !view.canAdd" class="skill-card__installs-label">
+                <span v-if="view.installs.length === 0 && (!view.canAdd || !canManage)" class="skill-card__installs-label">
                   {{ $t('settings.skills.noInstalls') }}
+                </span>
+                <!-- 只读：渲染同款 chip 但不可点（无 chevron / 弹层 / 安装入口） -->
+                <span v-else-if="!canManage" class="skill-card__chip" :class="chipClass(item, view)"
+                  :title="installSummaryTooltip(item, view)" :aria-label="installSummary(item, view)">
+                  <span v-if="view.installs.some(isInstallBusy)" class="skill-card__entry-dot" aria-hidden="true" />
+                  <span class="skill-card__chip-text">{{ installSummary(item, view) }}</span>
                 </span>
                 <button v-else-if="!view.needsPanel" type="button" class="skill-card__chip"
                   :class="chipClass(item, view)"
@@ -120,7 +132,7 @@
             </div>
           </div>
         </article>
-        <button type="button" class="skill-card skill-card--add" @click="openAdd">
+        <button v-if="canManage" type="button" class="skill-card skill-card--add" @click="openAdd">
           <span class="skill-card--add__icon" aria-hidden="true">
             <add-icon />
           </span>
@@ -330,6 +342,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { AddIcon, DeleteIcon, FolderIcon } from 'tdesign-icons-vue-next'
 import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
 import SandboxSkillsPanel from '@/components/SandboxSkillsPanel.vue'
 import SkillFilesDrawer from '@/components/SkillFilesDrawer.vue'
 import SandboxBackendBadge from '@/components/settings/SandboxBackendBadge.vue'
@@ -338,7 +351,6 @@ import ModelSelector from '@/components/ModelSelector.vue'
 import { useConfirmDelete } from '@/components/settings/useConfirmDelete'
 import { useConfigSkillInstallProgress } from '@/composables/useConfigSkillInstallProgress'
 import { SKILL_ICON } from '@/types/mention'
-import { useUIStore } from '@/stores/ui'
 import { MAX_SKILL_BUNDLE_SIZE_BYTES, MAX_SKILL_BUNDLE_SIZE_MB } from '@/utils'
 import {
   deleteSkillCatalog,
@@ -360,14 +372,36 @@ import {
   listSandboxConfigs,
   type SandboxConfigRecord,
 } from '@/api/system'
-
-const props = defineProps<{
-  initialSandboxId?: string
-}>()
+import { useUIStore } from '@/stores/ui'
+import { useAuthStore } from '@/stores/auth'
 
 const { t } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const uiStore = useUIStore()
+const authStore = useAuthStore()
 const confirmDelete = useConfirmDelete()
+
+// 000099 空间侧技能目录：写动作（登记/安装/启停/删除）后端全部 SystemAdmin，
+// 这里同步只在 UI 上给系统管理员露出；空间管理员是只读访客。
+const canManage = computed(() => authStore.isSystemAdmin)
+
+// 沙箱预选两条来源：openSettings('skill-catalog', configId) 深链（uiStore）
+// 与控制台旧链改道后的 URL ?sandbox=。
+const initialSandboxId = computed(
+  () =>
+    uiStore.settingsInitialSubSection ||
+    (typeof route.query.sandbox === 'string' ? route.query.sandbox : ''),
+)
+
+// 空态「前往沙箱配置」：沙箱配置已并入控制台「沙箱连接」，从空间 Settings
+// 跨路由跳过去；保留 ?tenant=（无害：连接面板不读它）。
+function goSandboxSection() {
+  void router.push({
+    path: '/system/console',
+    query: { ...route.query, section: 'sandbox-connections' },
+  })
+}
 
 const loading = ref(false)
 const records = ref<SandboxConfigRecord[]>([])
@@ -811,7 +845,7 @@ function askDelete(item: SkillCatalogItem) {
 }
 
 function defaultAddTargets(): string[] {
-  const preferred = (props.initialSandboxId || '').trim()
+  const preferred = (initialSandboxId.value || '').trim()
   if (preferred && skillConfigs.value.some((cfg) => cfg.id === preferred)) return [preferred]
   if (skillConfigs.value.length === 1) return [skillConfigs.value[0].id]
   return []
@@ -838,6 +872,7 @@ function resetAddWizard() {
 }
 
 async function openAdd() {
+  if (!canManage.value) return
   resetAddWizard()
   await loadInstallerModel()
   showAdd.value = true
@@ -859,6 +894,7 @@ function addPreviousStep() {
 }
 
 function openInstall(item: SkillCatalogItem) {
+  if (!canManage.value) return
   installCatalog.value = item
   installSessionIds.value = []
   const remaining = targetsFor(item)
@@ -868,6 +904,7 @@ function openInstall(item: SkillCatalogItem) {
 }
 
 function openManage(item: SkillCatalogItem, inst: SkillCatalogInstall) {
+  if (!canManage.value) return
   const record = recordFor(inst.sandbox_config_id)
   if (!record) return
   manageRecord.value = record
@@ -1496,6 +1533,19 @@ onUnmounted(() => {
   font-weight: 500;
   line-height: 1.35;
   color: var(--td-text-color-placeholder);
+}
+
+// 溯源 pill：平台技能库分配物化的目录行（自建行不渲染）
+.skill-card__from-library {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border: 1px solid var(--td-brand-color-5, var(--td-brand-color));
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--td-brand-color);
+  background: var(--td-brand-color-light, transparent);
+  white-space: nowrap;
 }
 
 .skill-card__desc {

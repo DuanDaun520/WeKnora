@@ -2357,7 +2357,9 @@ async function createNewSession(value: string): Promise<void> {
             </div>
           </div>
           <p class="document-subtitle">{{ $t('knowledgeEditor.document.subtitle') }}</p>
-          <p v-if="unsupportedFileTypes.length" class="parser-hint" @click="goToParserSettings">
+          <!-- 仅 KB Owner/Admin 可见：点击行为是打开 KB 设置的解析引擎页签，
+               与右上角齿轮按钮同一权限门（canManage），普通用户点了也进不去。 -->
+          <p v-if="canManage && unsupportedFileTypes.length" class="parser-hint" @click="goToParserSettings">
             <t-icon name="info-circle" class="parser-hint-icon" />
             <span>{{$t('knowledgeBase.unsupportedTypesHint', {
               types: unsupportedFileTypes.map(t => '.' + t).join('、')

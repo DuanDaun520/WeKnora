@@ -673,6 +673,66 @@ func mustLookupAPIKeyPolicy(
 	return policy
 }
 
+// Platform sandbox connections (000097) are console-only: unlike MCP there is
+// no platform-API-key management surface for them, so every route must stay
+// ABSENT from the API-key policy table — absent means default-deny for keys.
+func TestSandboxConnectionAdminRoutesAreAPIKeyDenied(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	g := &rbacGuards{apiKeyAuthorizer: middleware.NewAPIKeyRouteAuthorizer()}
+	v1 := gin.New().Group("/api/v1")
+	RegisterSystemAdminSandboxConnectionRoutes(v1, &handler.SystemSandboxConnectionHandler{}, g)
+
+	routes := []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/system/admin/sandbox-connections"},
+		{http.MethodPost, "/api/v1/system/admin/sandbox-connections"},
+		{http.MethodGet, "/api/v1/system/admin/sandbox-connections/check"},
+		{http.MethodPost, "/api/v1/system/admin/sandbox-connections/check"},
+		{http.MethodPost, "/api/v1/system/admin/sandbox-connections/templates/query"},
+		{http.MethodGet, "/api/v1/system/admin/sandbox-connections/:id"},
+		{http.MethodPut, "/api/v1/system/admin/sandbox-connections/:id"},
+		{http.MethodDelete, "/api/v1/system/admin/sandbox-connections/:id"},
+		{http.MethodPost, "/api/v1/system/admin/sandbox-connections/:id/check"},
+		{http.MethodGet, "/api/v1/system/admin/sandbox-connections/:id/tenant-assignments"},
+		{http.MethodPut, "/api/v1/system/admin/sandbox-connections/:id/tenant-assignments"},
+		{http.MethodPost, "/api/v1/system/admin/sandbox-connections/:id/push"},
+	}
+	for _, tc := range routes {
+		if _, ok := g.apiKeyAuthorizer.Lookup(tc.method, tc.path); ok {
+			t.Fatalf("%s %s must not appear in the API-key policy table (default-deny)",
+				tc.method, tc.path)
+		}
+	}
+}
+
+// Platform skill library (000098) is console-only like sandbox connections:
+// there is no platform-API-key surface for it, so every route must stay
+// ABSENT from the API-key policy table — absent means default-deny for keys.
+func TestPlatformSkillAdminRoutesAreAPIKeyDenied(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	g := &rbacGuards{apiKeyAuthorizer: middleware.NewAPIKeyRouteAuthorizer()}
+	v1 := gin.New().Group("/api/v1")
+	RegisterSystemAdminSkillRoutes(v1, &handler.SystemSkillHandler{}, g)
+
+	routes := []struct{ method, path string }{
+		{http.MethodGet, "/api/v1/system/admin/skills"},
+		{http.MethodPost, "/api/v1/system/admin/skills"},
+		{http.MethodGet, "/api/v1/system/admin/skills/:id"},
+		{http.MethodPut, "/api/v1/system/admin/skills/:id"},
+		{http.MethodDelete, "/api/v1/system/admin/skills/:id"},
+		{http.MethodGet, "/api/v1/system/admin/skills/:id/files"},
+		{http.MethodGet, "/api/v1/system/admin/skills/:id/files/content"},
+		{http.MethodGet, "/api/v1/system/admin/skills/:id/tenant-assignments"},
+		{http.MethodPut, "/api/v1/system/admin/skills/:id/tenant-assignments"},
+		{http.MethodPost, "/api/v1/system/admin/skills/:id/push"},
+	}
+	for _, tc := range routes {
+		if _, ok := g.apiKeyAuthorizer.Lookup(tc.method, tc.path); ok {
+			t.Fatalf("%s %s must not appear in the API-key policy table (default-deny)",
+				tc.method, tc.path)
+		}
+	}
+}
+
 func policyHasCapability(policy middleware.APIKeyRoutePolicy, cap types.APIKeyCapability) bool {
 	for _, got := range policy.Capabilities {
 		if got == cap {

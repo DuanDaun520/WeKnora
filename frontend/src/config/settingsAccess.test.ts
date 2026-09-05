@@ -13,20 +13,30 @@ test('management shortcuts are stricter than read-only settings pages', () => {
   // 000092/000093 角色扁平化退出企业版）。
   assert.equal(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.members, 'admin')
   // 模型 / Ollama / WeKnoraCloud 设置已迁入系统管理控制台（000094
-  // 模型平台化），空间 Settings 不再持有这些 section。
+  // 模型平台化），websearch / vectorstore / parser / storage / sandbox /
+  // mcp 六项基础设施配置已随 000095 收权同样迁入，空间 Settings 不再持有
+  // 这些 section。skills 以只读「技能目录」回来（000099），阈值 admin。
   assert.equal(Object.prototype.hasOwnProperty.call(SETTINGS_SECTION_MIN_ROLE, 'models'), false)
   assert.equal(Object.prototype.hasOwnProperty.call(SETTINGS_SECTION_MIN_ROLE, 'ollama'), false)
   assert.equal(Object.prototype.hasOwnProperty.call(SETTINGS_SECTION_MIN_ROLE, 'weknoracloud'), false)
+  for (const key of ['websearch', 'vectorstore', 'parser', 'storage', 'sandbox', 'mcp']) {
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(SETTINGS_SECTION_MIN_ROLE, key),
+      false,
+      `section ${key} should live in the system console, not workspace Settings`,
+    )
+  }
+  assert.equal(SETTINGS_SECTION_MIN_ROLE['skill-catalog'], 'admin')
   assert.equal(
     Object.prototype.hasOwnProperty.call(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE, 'models'),
     false,
   )
-})
-
-test('the skill catalog is admin-only like the sandbox it installs into', () => {
-  assert.equal(SETTINGS_SECTION_MIN_ROLE.skills, 'admin')
-  assert.equal(SETTINGS_SECTION_MIN_ROLE.skills, SETTINGS_SECTION_MIN_ROLE.sandbox)
-  assert.equal(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.skills, 'admin')
+  // 技能目录已迁控制台：头像菜单快捷入口只认 isSystemAdmin（UserMenu.vue），
+  // 注册表不再持有 skills 阈值。
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE, 'skills'),
+    false,
+  )
 })
 
 test('personal skill environment variables are visible to every member', () => {

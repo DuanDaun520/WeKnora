@@ -25,6 +25,8 @@ export interface SkillCatalogItem {
   version?: string;
   description?: string;
   bundle_sha256?: string;
+  /** Present when the row was materialized from a platform skill (000098). */
+  source_platform_skill_id?: string;
   created_at: string;
   updated_at: string;
   installations: SkillCatalogInstall[];

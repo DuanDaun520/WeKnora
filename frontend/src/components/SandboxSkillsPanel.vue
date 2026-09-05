@@ -4,7 +4,7 @@
     'sandbox-skills-panel--focused': mode === 'list' && !!focusSkillId,
   }">
     <t-loading :loading="mode === 'list' && loading" size="small">
-      <section v-if="mode === 'install'" class="setting-drawer__section">
+      <section v-if="mode === 'install' && canWrite" class="setting-drawer__section">
         <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillInstallerModel') }}</h4>
         <p class="installer-model-hint">{{ $t('settings.sandbox.skillInstallerModelHint') }}</p>
         <ModelSelector
@@ -15,7 +15,7 @@
         />
       </section>
 
-      <section v-if="mode === 'install'" class="setting-drawer__section">
+      <section v-if="mode === 'install' && canWrite" class="setting-drawer__section">
         <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillSourceSection') }}</h4>
         <p class="installer-model-hint">{{ $t('settings.sandbox.skillSourceSectionHint', { size: MAX_SKILL_BUNDLE_SIZE_MB }) }}</p>
         <t-input-adornment class="skill-source-row">
@@ -38,7 +38,7 @@
         </t-input-adornment>
       </section>
 
-      <section v-if="mode === 'install'" class="setting-drawer__section">
+      <section v-if="mode === 'install' && canWrite" class="setting-drawer__section">
         <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillUploadSection') }}</h4>
         <p class="installer-model-hint">{{ $t('settings.sandbox.skillUploadSectionHint', { size: MAX_SKILL_BUNDLE_SIZE_MB }) }}</p>
         <input
@@ -76,7 +76,7 @@
       </section>
 
       <section v-if="mode === 'list' && focusSkillId" class="skill-manage">
-        <Teleport v-if="headerActionsTarget && showHeaderStop" :to="headerActionsTarget" defer>
+        <Teleport v-if="headerActionsTarget && showHeaderStop && canWrite" :to="headerActionsTarget" defer>
           <t-button
             class="skill-header-stop"
             theme="default"
@@ -89,7 +89,7 @@
             {{ $t('settings.sandbox.skillStop') }}
           </t-button>
         </Teleport>
-        <Teleport v-if="headerActionsTarget && showHeaderUninstall" :to="headerActionsTarget" defer>
+        <Teleport v-if="headerActionsTarget && showHeaderUninstall && canWrite" :to="headerActionsTarget" defer>
           <t-popconfirm
             theme="warning"
             attach="body"
@@ -142,12 +142,12 @@
             <div class="skill-manage__controls">
               <t-switch
                 :value="managedSkill.enabled"
-                :disabled="isBusy(managedSkill)"
+                :disabled="isBusy(managedSkill) || !canWrite"
                 :loading="togglingId === managedSkill.id"
                 @change="(v: any) => managedSkill && toggleEnabled(managedSkill, Boolean(v))"
               />
               <t-tooltip
-                v-if="managedSkill.status === 'failed'"
+                v-if="canWrite && managedSkill.status === 'failed'"
                 :content="$t('settings.sandbox.skillRetryHint')"
                 placement="top"
               >
@@ -198,7 +198,7 @@
                     type="password"
                     autocomplete="new-password"
                     :name="`wk-se-focus-${envIdx}`"
-                    :readonly="isBusy(managedSkill) || !isEnvInputUnlocked(managedSkill.id, env.name)"
+                    :readonly="!canWrite || isBusy(managedSkill) || !isEnvInputUnlocked(managedSkill.id, env.name)"
                     spellcheck="false"
                     :placeholder="
                       env.is_set
@@ -211,7 +211,7 @@
                     @blur="onEnvFieldBlur(managedSkill)"
                   />
                   <t-popconfirm
-                    v-if="canClearAdminSkillEnv(env)"
+                    v-if="canWrite && canClearAdminSkillEnv(env)"
                     theme="warning"
                     attach="body"
                     :content="$t('settings.sandbox.skillEnv.clearConfirm', { name: env.name })"
@@ -311,7 +311,7 @@
                     <t-switch
                       size="small"
                       :value="skill.enabled"
-                      :disabled="isBusy(skill)"
+                      :disabled="isBusy(skill) || !canWrite"
                       :loading="togglingId === skill.id"
                       @change="(v: any) => toggleEnabled(skill, Boolean(v))"
                     />
@@ -385,7 +385,7 @@
                                     type="password"
                                     autocomplete="new-password"
                                     :name="`wk-se-${envIdx}`"
-                                    :readonly="!isEnvInputUnlocked(skill.id, env.name)"
+                                    :readonly="!canWrite || !isEnvInputUnlocked(skill.id, env.name)"
                                     spellcheck="false"
                                     data-lpignore="true"
                                     data-1p-ignore="true"
@@ -400,7 +400,7 @@
                                     @update:value="(v: string) => setEnvDraft(skill.id, env.name, v)"
                                   />
                                   <t-popconfirm
-                                    v-if="canClearAdminSkillEnv(env)"
+                                    v-if="canWrite && canClearAdminSkillEnv(env)"
                                     theme="warning"
                                     attach="body"
                                     :z-index="3300"
@@ -424,7 +424,7 @@
                               </div>
                             </div>
                           </div>
-                          <div class="skill-env-popup__footer">
+                          <div v-if="canWrite" class="skill-env-popup__footer">
                             <t-button
                               theme="primary"
                               size="small"
@@ -515,7 +515,7 @@
                     </button>
                   </t-tooltip>
                   <t-tooltip
-                    v-if="skill.status === 'installing'"
+                    v-if="canWrite && skill.status === 'installing'"
                     :content="$t('settings.sandbox.skillStopHint')"
                     placement="top"
                   >
@@ -530,7 +530,7 @@
                     </button>
                   </t-tooltip>
                   <t-tooltip
-                    v-if="skill.status === 'failed'"
+                    v-if="canWrite && skill.status === 'failed'"
                     :content="$t('settings.sandbox.skillRetryHint')"
                     placement="top"
                   >
@@ -545,7 +545,7 @@
                     </button>
                   </t-tooltip>
                   <t-popconfirm
-                    v-if="!isBusy(skill)"
+                    v-if="canWrite && !isBusy(skill)"
                     theme="warning"
                     attach="body"
                     :content="deleteHint"
@@ -582,7 +582,7 @@
             </div>
           </div>
           <button
-            v-if="mode === 'list' && !hideAdd"
+            v-if="mode === 'list' && !hideAdd && canWrite"
             type="button"
             class="skill-card skill-card--add"
             @click="emit('install')"
@@ -608,6 +608,7 @@ import ModelSelector from '@/components/ModelSelector.vue'
 import SkillInstallTimeline from '@/components/SkillInstallTimeline.vue'
 import { SETTING_DRAWER_HEADER_ACTIONS_ID } from '@/components/settings/SettingDrawer.vue'
 import { SKILL_ICON } from '@/types/mention'
+import { useAuthStore } from '@/stores/auth'
 import {
   getAgentById,
   updateAgent,
@@ -628,6 +629,7 @@ import {
   type SandboxConfigRecord,
 } from '@/api/system'
 import { getApiBaseUrl } from '@/utils/api-base'
+import { resolveRequestTenantId } from '@/stores/managedWorkspace'
 import { generateRandomString, MAX_SKILL_BUNDLE_SIZE_BYTES, MAX_SKILL_BUNDLE_SIZE_MB } from '@/utils/index'
 import i18n from '@/i18n'
 import {
@@ -665,6 +667,14 @@ const emit = defineEmits<{
   install: []
   installed: [skillId: string]
 }>()
+
+// 000095 基础设施收权：技能的装卸 / 启停 / 重试 / 密钥写入只归系统管理员。
+// 本面板同时被 SkillCatalogSettings（空间 Settings 技能目录，000099）和
+// AgentEditorModal（工作台）复用，空间侧保留只读视图——状态、进度、
+// 安装时间线、密钥名与是否已配置。后端对应路由已改 g.SystemAdmin()，
+// 这里的 UI 门只是提前对齐 403，避免点开才报错。
+const authStore = useAuthStore()
+const canWrite = computed(() => authStore.isSystemAdmin)
 
 const { t } = useI18n()
 const headerActionsTarget = inject(SETTING_DRAWER_HEADER_ACTIONS_ID, '')
@@ -1132,7 +1142,8 @@ function followProgress(skillId: string) {
   abortBySkill.set(skillId, controller)
 
   const token = localStorage.getItem('weknora_token')
-  const tenantId = localStorage.getItem('weknora_selected_tenant_id')
+  // 控制台代管空间优先（与 axios 拦截器同一解析函数）
+  const tenantId = resolveRequestTenantId()
   const url = `${getApiBaseUrl()}${configSkillInstallEventsUrl(configId, skillId)}`
 
   void fetchEventSource(url, {

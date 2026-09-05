@@ -37,13 +37,36 @@ func (r *sharedAgentWebSearchRepo) List(context.Context, uint64) ([]*types.WebSe
 	return nil, nil
 }
 
+func (r *sharedAgentWebSearchRepo) GetByIDAnyTenant(_ context.Context, id string) (*types.WebSearchProviderEntity, error) {
+	if r.explicit != nil && r.explicit.ID == id {
+		return r.explicit, nil
+	}
+	return nil, nil
+}
+
+func (r *sharedAgentWebSearchRepo) ListAll(context.Context) ([]*types.WebSearchProviderEntity, error) {
+	return nil, nil
+}
+
 func (r *sharedAgentWebSearchRepo) Update(context.Context, *types.WebSearchProviderEntity) error {
 	return nil
 }
 
-func (r *sharedAgentWebSearchRepo) Delete(context.Context, uint64, string) error { return nil }
+func (r *sharedAgentWebSearchRepo) Delete(context.Context, string) error { return nil }
 
-func (r *sharedAgentWebSearchRepo) ClearDefault(context.Context, uint64, string) error { return nil }
+func (r *sharedAgentWebSearchRepo) ListAssignmentInfos(context.Context, string) ([]types.WebSearchProviderAssignmentInfo, error) {
+	return nil, nil
+}
+
+func (r *sharedAgentWebSearchRepo) ReplaceProviderAssignments(
+	context.Context, string, []types.TenantWebSearchProviderAssignment, string,
+) error {
+	return nil
+}
+
+func (r *sharedAgentWebSearchRepo) DeleteAssignmentsByProviderID(context.Context, string) error {
+	return nil
+}
 
 func TestSharedAgentWebSearchReadyUsesSourceWorkspace(t *testing.T) {
 	repo := &sharedAgentWebSearchRepo{

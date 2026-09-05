@@ -3,10 +3,10 @@ package handler
 import (
 	"net/http"
 
+	"github.com/Tencent/WeKnora/internal/application/service"
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/handler/dto"
 	"github.com/Tencent/WeKnora/internal/logger"
-	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 	"github.com/gin-gonic/gin"
@@ -17,6 +17,11 @@ import (
 // recognized field is "api_key" — every provider that needs credentials uses
 // just one key (Bing / Google / Tavily / Ollama / Baidu), and DuckDuckGo /
 // SearXNG don't need credentials at all.
+//
+// Since the 000095 platform rework providers are platform rows, so these
+// handlers are tenant-context-free: they are registered both on the
+// legacy /web-search-providers group (platform-API-key surface) and on
+// /system/admin/web-search-providers (admin console).
 type WebSearchProviderCredentialsHandler struct {
 	repo interfaces.WebSearchProviderRepository
 	svc  interfaces.WebSearchProviderService
@@ -29,21 +34,12 @@ func NewWebSearchProviderCredentialsHandler(
 	return &WebSearchProviderCredentialsHandler{repo: repo, svc: svc}
 }
 
-func (h *WebSearchProviderCredentialsHandler) tenantID(c *gin.Context) uint64 {
-	return c.GetUint64(types.TenantIDContextKey.String())
-}
-
 type webSearchCredentialsPutRequest struct {
 	APIKey *string `json:"api_key,omitempty"`
 }
 
 func (h *WebSearchProviderCredentialsHandler) Put(c *gin.Context) {
 	ctx := c.Request.Context()
-	tenantID := h.tenantID(c)
-	if tenantID == 0 {
-		c.Error(errors.NewBadRequestError("Workspace ID cannot be empty"))
-		return
-	}
 	id := c.Param("id")
 	var req webSearchCredentialsPutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -51,7 +47,7 @@ func (h *WebSearchProviderCredentialsHandler) Put(c *gin.Context) {
 		return
 	}
 	if req.APIKey == nil {
-		provider, err := h.repo.GetByID(ctx, tenantID, id)
+		provider, err := h.repo.GetByIDAnyTenant(ctx, id)
 		if err != nil || provider == nil {
 			c.Error(errors.NewNotFoundError("web search provider not found"))
 			return
@@ -63,8 +59,12 @@ func (h *WebSearchProviderCredentialsHandler) Put(c *gin.Context) {
 		}})
 		return
 	}
-	updated, err := h.svc.UpdateProviderCredentials(ctx, tenantID, id, req.APIKey)
+	updated, err := h.svc.UpdateProviderCredentials(ctx, id, req.APIKey)
 	if err != nil {
+		if err == service.ErrWebSearchProviderNotFound {
+			c.Error(errors.NewNotFoundError("web search provider not found"))
+			return
+		}
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"provider_id": secutils.SanitizeForLog(id),
 		})
@@ -81,18 +81,17 @@ func (h *WebSearchProviderCredentialsHandler) Put(c *gin.Context) {
 
 func (h *WebSearchProviderCredentialsHandler) DeleteField(c *gin.Context) {
 	ctx := c.Request.Context()
-	tenantID := h.tenantID(c)
-	if tenantID == 0 {
-		c.Error(errors.NewBadRequestError("Workspace ID cannot be empty"))
-		return
-	}
 	id := c.Param("id")
 	field := c.Param("field")
 	if field != "api_key" {
 		c.Error(errors.NewBadRequestError("unknown credential field: " + secutils.SanitizeForLog(field)))
 		return
 	}
-	if err := h.svc.ClearProviderCredential(ctx, tenantID, id, field); err != nil {
+	if err := h.svc.ClearProviderCredential(ctx, id, field); err != nil {
+		if err == service.ErrWebSearchProviderNotFound {
+			c.Error(errors.NewNotFoundError("web search provider not found"))
+			return
+		}
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"provider_id": secutils.SanitizeForLog(id),
 			"field":       field,

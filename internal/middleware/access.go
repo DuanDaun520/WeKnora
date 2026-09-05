@@ -67,8 +67,11 @@ func IsCrossTenantSuperuser(ctx context.Context, cfg *config.Config) bool {
 // `targetTenantID`. The decision order is:
 //
 //  1. Home tenant (user.TenantID == targetTenantID): always.
-//  2. Cross-tenant superuser: governed by IsCrossTenantSuperuser.
-//  3. Multi-tenant member: an active tenant_members row in the target
+//  2. System administrator: always (按空间代管 — the admin console manages
+//     every workspace's configuration through X-Tenant-ID; the per-tenant
+//     role may still resolve to Viewer, route guards decide authority).
+//  3. Cross-tenant superuser: governed by IsCrossTenantSuperuser.
+//  4. Multi-tenant member: an active tenant_members row in the target
 //     tenant grants access (this is what makes cross-tenant browsing
 //     work for non-superusers added via PR 3's member management).
 //
@@ -85,6 +88,9 @@ func IsTenantAccessible(
 		return false
 	}
 	if user.TenantID == targetTenantID {
+		return true
+	}
+	if user.IsSystemAdmin {
 		return true
 	}
 	if cfg != nil && cfg.Tenant != nil && cfg.Tenant.EnableCrossTenantAccess && user.CanAccessAllTenants {

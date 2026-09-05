@@ -136,6 +136,49 @@ func NewMCPServiceResponses(ctx context.Context, svcs []*types.MCPService) []*MC
 	return out
 }
 
+// MCPServiceAssignmentDTO is one workspace-assignment row of the platform MCP
+// catalog (000096 rework), joined with the workspace name.
+type MCPServiceAssignmentDTO struct {
+	TenantID   uint64    `json:"tenant_id"`
+	TenantName string    `json:"tenant_name"`
+	ServiceID  string    `json:"service_id"`
+	AssignedAt time.Time `json:"assigned_at"`
+}
+
+// SystemMCPServiceResponse is the platform-catalog shape served by
+// /system/admin/mcp-services: the base service plus its workspace
+// assignments. Builtin services carry no assignments — they are visible to
+// every workspace by design.
+type SystemMCPServiceResponse struct {
+	MCPServiceResponse
+	Assignments []MCPServiceAssignmentDTO `json:"assignments"`
+}
+
+// NewSystemMCPServiceResponse converts a platform entity plus its assignment
+// rows into the admin-console response shape.
+func NewSystemMCPServiceResponse(
+	ctx context.Context,
+	svc *types.MCPService,
+	assignments []types.MCPServiceAssignmentInfo,
+) *SystemMCPServiceResponse {
+	if svc == nil {
+		return nil
+	}
+	dtos := make([]MCPServiceAssignmentDTO, 0, len(assignments))
+	for _, a := range assignments {
+		dtos = append(dtos, MCPServiceAssignmentDTO{
+			TenantID:   a.TenantID,
+			TenantName: a.TenantName,
+			ServiceID:  a.ServiceID,
+			AssignedAt: a.AssignedAt,
+		})
+	}
+	return &SystemMCPServiceResponse{
+		MCPServiceResponse: *NewMCPServiceResponse(ctx, svc),
+		Assignments:        dtos,
+	}
+}
+
 // CredentialsResponse is the shared shape returned by PUT
 // /{resource}/{id}/credentials. Keyed by field name (e.g. "api_key",
 // "token"). The frontend uses this to update its in-memory metadata after a

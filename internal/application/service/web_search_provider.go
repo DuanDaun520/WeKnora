@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	infra_web_search "github.com/Tencent/WeKnora/internal/infrastructure/web_search"
@@ -9,6 +10,10 @@ import (
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
+
+// ErrWebSearchProviderNotFound is returned when a platform provider ID does
+// not resolve; handlers map it to 404.
+var ErrWebSearchProviderNotFound = errors.New("web search provider not found")
 
 // webSearchProviderService implements interfaces.WebSearchProviderService
 type webSearchProviderService struct {
@@ -20,12 +25,10 @@ func NewWebSearchProviderService(repo interfaces.WebSearchProviderRepository) in
 	return &webSearchProviderService{repo: repo}
 }
 
-// CreateProvider creates a new web search provider configuration.
+// CreateProvider creates a new platform web search provider (000095 rework:
+// rows are platform-owned, tenant_id = 0; workspaces receive the service
+// through assignments).
 func (s *webSearchProviderService) CreateProvider(ctx context.Context, provider *types.WebSearchProviderEntity) error {
-	if provider.TenantID == 0 {
-		return fmt.Errorf("tenant ID is required")
-	}
-
 	if !isValidProviderType(provider.Provider) {
 		return fmt.Errorf("invalid provider type: %s", provider.Provider)
 	}
@@ -34,31 +37,18 @@ func (s *webSearchProviderService) CreateProvider(ctx context.Context, provider 
 		return err
 	}
 
-	if provider.IsDefault {
-		if err := s.repo.ClearDefault(ctx, provider.TenantID, ""); err != nil {
-			logger.Warnf(ctx, "Failed to clear default providers: %v", err)
-		}
-	}
+	provider.TenantID = 0
+	provider.IsDefault = false
 
-	logger.Infof(ctx, "Creating web search provider: tenant=%d, name=%s, type=%s", provider.TenantID, provider.Name, provider.Provider)
+	logger.Infof(ctx, "Creating platform web search provider: name=%s, type=%s", provider.Name, provider.Provider)
 	return s.repo.Create(ctx, provider)
 }
 
-// UpdateProvider updates an existing provider.
+// UpdateProvider updates an existing platform provider.
 func (s *webSearchProviderService) UpdateProvider(ctx context.Context, provider *types.WebSearchProviderEntity) error {
-	if provider.TenantID == 0 {
-		return fmt.Errorf("tenant ID is required")
-	}
-
 	// Validate provider type if set
 	if provider.Provider != "" && !isValidProviderType(provider.Provider) {
 		return fmt.Errorf("invalid provider type: %s", provider.Provider)
-	}
-
-	if provider.IsDefault {
-		if err := s.repo.ClearDefault(ctx, provider.TenantID, provider.ID); err != nil {
-			logger.Warnf(ctx, "Failed to clear default providers: %v", err)
-		}
 	}
 
 	if provider.Provider != "" {
@@ -67,7 +57,12 @@ func (s *webSearchProviderService) UpdateProvider(ctx context.Context, provider 
 		}
 	}
 
-	logger.Infof(ctx, "Updating web search provider: tenant=%d, id=%s", provider.TenantID, provider.ID)
+	// The row-level is_default column is dead since the platform rework —
+	// defaults live on assignments. Never resurrect a stale value.
+	provider.TenantID = 0
+	provider.IsDefault = false
+
+	logger.Infof(ctx, "Updating platform web search provider: id=%s", provider.ID)
 	return s.repo.Update(ctx, provider)
 }
 
@@ -75,14 +70,14 @@ func (s *webSearchProviderService) UpdateProvider(ctx context.Context, provider 
 // providers are stateless from our side — every search call rebuilds a
 // transport from current Parameters — so no cache invalidation is required.
 func (s *webSearchProviderService) UpdateProviderCredentials(
-	ctx context.Context, tenantID uint64, id string, apiKey *string,
+	ctx context.Context, id string, apiKey *string,
 ) (*types.WebSearchProviderEntity, error) {
-	existing, err := s.repo.GetByID(ctx, tenantID, id)
+	existing, err := s.repo.GetByIDAnyTenant(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	if existing == nil {
-		return nil, fmt.Errorf("web search provider not found")
+		return nil, ErrWebSearchProviderNotFound
 	}
 
 	if apiKey != nil && *apiKey != "" && *apiKey != existing.Parameters.APIKey {
@@ -90,24 +85,24 @@ func (s *webSearchProviderService) UpdateProviderCredentials(
 		if err := s.repo.Update(ctx, existing); err != nil {
 			return nil, err
 		}
-		logger.Infof(ctx, "WebSearch provider credentials updated: tenant=%d id=%s", tenantID, id)
+		logger.Infof(ctx, "Platform web search provider credentials updated: id=%s", id)
 	}
 	return existing, nil
 }
 
 // ClearProviderCredential clears the api_key credential. Idempotent.
 func (s *webSearchProviderService) ClearProviderCredential(
-	ctx context.Context, tenantID uint64, id, field string,
+	ctx context.Context, id, field string,
 ) error {
 	if field != "api_key" {
 		return fmt.Errorf("unknown credential field: %s", field)
 	}
-	existing, err := s.repo.GetByID(ctx, tenantID, id)
+	existing, err := s.repo.GetByIDAnyTenant(ctx, id)
 	if err != nil {
 		return err
 	}
 	if existing == nil {
-		return fmt.Errorf("web search provider not found")
+		return ErrWebSearchProviderNotFound
 	}
 	if existing.Parameters.APIKey == "" {
 		return nil
@@ -116,14 +111,68 @@ func (s *webSearchProviderService) ClearProviderCredential(
 	if err := s.repo.Update(ctx, existing); err != nil {
 		return err
 	}
-	logger.Infof(ctx, "WebSearch provider credential cleared by user: tenant=%d id=%s field=%s", tenantID, id, field)
+	logger.Infof(ctx, "Platform web search provider credential cleared: id=%s field=%s", id, field)
 	return nil
 }
 
-// DeleteProvider deletes a provider by tenant + id.
-func (s *webSearchProviderService) DeleteProvider(ctx context.Context, tenantID uint64, id string) error {
-	logger.Infof(ctx, "Deleting web search provider: tenant=%d, id=%s", tenantID, id)
-	return s.repo.Delete(ctx, tenantID, id)
+// DeleteProvider soft-deletes a platform provider and purges its workspace
+// assignments — agents pinning the deleted service fall back to their
+// workspace default at runtime (WebSearchService.resolveProvider).
+func (s *webSearchProviderService) DeleteProvider(ctx context.Context, id string) error {
+	existing, err := s.repo.GetByIDAnyTenant(ctx, id)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrWebSearchProviderNotFound
+	}
+	logger.Infof(ctx, "Deleting platform web search provider: id=%s", id)
+	if err := s.repo.Delete(ctx, id); err != nil {
+		return err
+	}
+	if err := s.repo.DeleteAssignmentsByProviderID(ctx, id); err != nil {
+		// The row is gone; dangling assignments would just hide, so a purge
+		// failure is logged, not surfaced as a failed delete.
+		logger.Warnf(ctx, "Failed to purge assignments of deleted provider %s: %v", id, err)
+	}
+	return nil
+}
+
+// ListProviderAssignments returns a provider's assignments with workspace names.
+func (s *webSearchProviderService) ListProviderAssignments(
+	ctx context.Context, providerID string,
+) ([]types.WebSearchProviderAssignmentInfo, error) {
+	return s.repo.ListAssignmentInfos(ctx, providerID)
+}
+
+// SetProviderAssignments replaces the full assignment list of a provider.
+// Tenant existence is validated by the handler (tenantSvc); the repository
+// enforces at most one default per workspace across the whole catalog.
+func (s *webSearchProviderService) SetProviderAssignments(
+	ctx context.Context, providerID string,
+	rows []types.TenantWebSearchProviderAssignment, assignedBy string,
+) error {
+	existing, err := s.repo.GetByIDAnyTenant(ctx, providerID)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrWebSearchProviderNotFound
+	}
+
+	seen := make(map[uint64]bool, len(rows))
+	deduped := make([]types.TenantWebSearchProviderAssignment, 0, len(rows))
+	for _, row := range rows {
+		if row.TenantID == 0 || seen[row.TenantID] {
+			continue
+		}
+		seen[row.TenantID] = true
+		row.ProviderID = providerID
+		deduped = append(deduped, row)
+	}
+
+	logger.Infof(ctx, "Setting web search provider assignments: provider=%s, workspaces=%d", providerID, len(deduped))
+	return s.repo.ReplaceProviderAssignments(ctx, providerID, deduped, assignedBy)
 }
 
 // isValidProviderType checks if the given provider type is supported
@@ -139,7 +188,8 @@ func isValidProviderType(provider types.WebSearchProviderType) bool {
 		types.WebSearchProviderTypeKeenable,
 		types.WebSearchProviderTypeMetaso,
 		types.WebSearchProviderTypeZhipu,
-		types.WebSearchProviderTypeExa:
+		types.WebSearchProviderTypeExa,
+		types.WebSearchProviderTypeSerpbase:
 		return true
 	default:
 		return false
@@ -182,6 +232,10 @@ func validateProviderParameters(provider types.WebSearchProviderType, params typ
 		}
 	case types.WebSearchProviderTypeMetaso:
 		if err := infra_web_search.ValidateMetasoParameters(params); err != nil {
+			return err
+		}
+	case types.WebSearchProviderTypeSerpbase:
+		if err := infra_web_search.ValidateSerpbaseParameters(params); err != nil {
 			return err
 		}
 	case types.WebSearchProviderTypeDuckDuckGo:

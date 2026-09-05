@@ -116,7 +116,7 @@ test('skills and sandbox share one editor section', () => {
   assert.match(navItems, /icon: SKILL_ICON/)
   assert.doesNotMatch(navItems, /key: 'sandbox'/)
 
-  const capabilityGroup = source.match(/pickItems\(\['multimodal', 'tools', 'mcp', 'skills'\]\)/)
+  const capabilityGroup = source.match(/pickItems\(\['knowledge', 'skills', 'mcp', 'websearch', 'multimodal'\]\)/)
   assert.ok(capabilityGroup, 'expected the capability group to list skills without a separate sandbox tab')
 
   assert.match(source, /v-show="currentSection === 'skills' && isAgentMode"/)
@@ -126,6 +126,69 @@ test('skills and sandbox share one editor section', () => {
   assert.match(source, /:disabled="!canEnableSkills"/)
   assert.match(source, /sandbox-option/)
   assert.doesNotMatch(source, /skill-info-box/)
+})
+
+test('nav groups follow the basic / capability / advanced taxonomy', () => {
+  // 左侧菜单三类：基础配置（含问题推荐）、能力扩展（知识库/Skills/MCP/
+  // 搜索/附件）、高级配置（多轮对话/检索策略/工具）。检索策略挂在知识库
+  // 上才出现，归高级配置组；发布保持独立末组。
+  const groups = source.match(/const navGroups = computed\(\(\) => \{([\s\S]*?)^\}\);/m)?.[1]
+  assert.ok(groups, 'expected to find the nav groups computed')
+  assert.match(groups, /pickItems\(\['basic', 'prompts', 'model', 'suggestions'\]\)/)
+  assert.match(groups, /pickItems\(\['knowledge', 'skills', 'mcp', 'websearch', 'multimodal'\]\)/)
+  assert.match(groups, /pickItems\(\['conversation', 'retrieval', 'tools'\]\)/)
+  assert.match(groups, /pickItems\(\['share'\]\)/)
+  assert.doesNotMatch(groups, /navGroups\.knowledge/)
+  assert.match(groups, /navGroups\.advanced/)
+})
+
+test('skill install actions follow the backend system-admin gate', () => {
+  // 000099：登记/安装后端是 g.SystemAdmin()，编辑器内直装按钮与「管理技能」
+  // 深链同步收紧——canInstallSkills 只认 isSystemAdmin，openSkillSettings
+  // 直指空间 Settings 的 skill-catalog 并带沙箱预选。
+  assert.match(source, /canInstallSkills = computed\(\(\) => authStore\.isSystemAdmin\)/)
+  assert.match(source, /openSettings\('skill-catalog'/)
+})
+
+test('sandbox management links are system-admin only', () => {
+  // 000100：「管理沙箱」「管理技能」整组链接仅系统管理员可见；普通成员
+  // 看到 sandboxManagedHint（由系统管理员统一配置）。
+  assert.match(source, /<div v-if="canInstallSkills" class="sandbox-select-links">/)
+  assert.match(source, /v-else class="desc">\{\{ \$t\('agent\.editor\.sandboxManagedHint'\) \}\}/)
+  const linksBlock = source.match(
+    /<div v-if="canInstallSkills" class="sandbox-select-links">([\s\S]*?)<\/div>/,
+  )
+  assert.ok(linksBlock, 'expected the admin-only sandbox links block')
+  assert.match(linksBlock[1], /uiStore\.openSettings\('sandbox'\)/)
+  assert.match(linksBlock[1], /goSkillSettings/)
+})
+
+test('creating an agent defaults to quick-answer with an empty name', () => {
+  // 000100：新建默认「快速问答」，名称/描述不再按 agent_type 预填——
+  // 创建分支里不应再有 getPresetDefaultName 的自动填充。
+  assert.match(source, /agent_mode: 'quick-answer' as 'quick-answer' \| 'smart-reasoning'/)
+  assert.doesNotMatch(source, /if \(!formData\.value\.name\) \{\s*formData\.value\.name = getPresetDefaultName\(preset\);/)
+  assert.doesNotMatch(source, /if \(!formData\.value\.description\) \{\s*formData\.value\.description = getPresetDefaultDescription\(preset\);/)
+})
+
+test('picking a sandbox defaults skills to selected with every ready skill checked', () => {
+  // 000100：下拉 @change 触发默认勾选：模式进「指定」并把该沙箱全部
+  // selectable 技能并入 selected_skills；仅用户显式选择触发，编辑态
+  // 加载已保存配置不改写「禁用」意图。
+  assert.match(source, /@change="onSandboxSelected"/)
+  assert.match(source, /let pendingDefaultSkillCheck = false/)
+  assert.match(source, /function applyDefaultSkillSelection\(\)/)
+  assert.match(source, /skillsSelectionMode\.value = 'selected'/)
+  assert.match(source, /Array\.from\(new Set\(\[\.\.\.current, \.\.\.names\]\)\)/)
+  // 目录兜底挂在既有的 [visible, catalogSkillRows] watch 里——注册点必须在
+  // formData（L2835）之后：单独的 watch(catalogSkillRows) 若写在 setup 前段，
+  // 注册时立即求值 computed 会触发 formData 的 TDZ ReferenceError，导致整个
+  // AgentList 页面加载即坏、所有弹窗打不开（000100 回归）。
+  assert.match(
+    source,
+    /\[\(\) => props\.visible, catalogSkillRows\],\s*\(\) => \{\s*(?:\/\/[^\n]*\n\s*)?applyDefaultSkillSelection\(\)/,
+  )
+  assert.doesNotMatch(source, /watch\(catalogSkillRows, \(\) => \{/)
 })
 
 test('agent skill picker uses the catalog and only enables ready installs', () => {
@@ -150,7 +213,10 @@ test('agent skill picker uses the catalog and only enables ready installs', () =
   assert.match(source, /SandboxSkillsPanel/)
   assert.match(source, /focus-skill-id/)
   assert.match(source, /skillsGroupUnavailable/)
-  assert.match(source, /selectedSandboxSummary/)
+  // 000100：技术摘要行（Docker · 镜像 · 描述）与下拉里的 target 行不再渲染。
+  assert.doesNotMatch(source, /selectedSandboxSummary/)
+  assert.doesNotMatch(source, /sandboxTargetLine/)
+  assert.doesNotMatch(source, /sandbox-option__target/)
   assert.match(source, /line-clamp: 2/)
   assert.doesNotMatch(source, /skillsSelectionMode === 'selected' && catalogSkillRows/)
   assert.doesNotMatch(source, /skill-list-summary/)

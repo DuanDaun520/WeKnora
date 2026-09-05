@@ -27,6 +27,16 @@ type TenantSandboxConfigRepository interface {
 	SoftDelete(ctx context.Context, tenantID uint64, id string) error
 	SetCordon(ctx context.Context, tenantID uint64, id string, at time.Time) error
 	ClearCordon(ctx context.Context, tenantID uint64, id string) error
+	// ListBySourceConnection returns the live configs materialized from a
+	// platform sandbox connection, across all workspaces. Platform-surface
+	// scan (assignment list, push, drift) — never call it on a workspace
+	// request path.
+	ListBySourceConnection(ctx context.Context, connectionID string) ([]*types.TenantSandboxConfigEntity, error)
+	// MarkSourcePushed stamps the platform link columns after a successful
+	// materialization or push. It is deliberately separate from Update so no
+	// workspace write path can touch platform bookkeeping (Update's explicit
+	// Select never includes these columns).
+	MarkSourcePushed(ctx context.Context, tenantID uint64, id, connectionID string, at time.Time) error
 }
 
 type tenantSandboxConfigRepository struct {
@@ -149,4 +159,30 @@ func (r *tenantSandboxConfigRepository) ClearCordon(
 		Model(&types.TenantSandboxConfigEntity{}).
 		Where("tenant_id = ? AND id = ?", tenantID, id).
 		Update("cordoned_at", nil).Error
+}
+
+func (r *tenantSandboxConfigRepository) ListBySourceConnection(
+	ctx context.Context, connectionID string,
+) ([]*types.TenantSandboxConfigEntity, error) {
+	var list []*types.TenantSandboxConfigEntity
+	err := r.db.WithContext(ctx).
+		Where("source_connection_id = ?", connectionID).
+		Order("tenant_id ASC, created_at ASC").
+		Find(&list).Error
+	if err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func (r *tenantSandboxConfigRepository) MarkSourcePushed(
+	ctx context.Context, tenantID uint64, id, connectionID string, at time.Time,
+) error {
+	return r.db.WithContext(ctx).
+		Model(&types.TenantSandboxConfigEntity{}).
+		Where("tenant_id = ? AND id = ?", tenantID, id).
+		Updates(map[string]any{
+			"source_connection_id": connectionID,
+			"source_pushed_at":     at,
+		}).Error
 }

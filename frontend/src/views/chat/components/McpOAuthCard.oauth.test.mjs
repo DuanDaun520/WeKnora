@@ -6,7 +6,8 @@ import test from 'node:test'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const cardSource = readFileSync(join(here, 'McpOAuthCard.vue'), 'utf8')
-const settingsSource = readFileSync(join(here, '../../settings/components/McpServiceDialog.vue'), 'utf8')
+// McpServiceDialog 已随 000095 基础设施收权从 settings/components 迁至 system/。
+const settingsSource = readFileSync(join(here, '../../system/McpServiceDialog.vue'), 'utf8')
 const apiSource = readFileSync(join(here, '../../../api/mcp-service.ts'), 'utf8')
 
 test('in-chat OAuth polling is bound to the newly opened authorization attempt', () => {

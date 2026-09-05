@@ -7,6 +7,7 @@ import {
 import i18n from '@/i18n'
 import { generateRandomString } from '@/utils'
 import { getApiBaseUrl } from '@/utils/api-base'
+import { resolveRequestTenantId } from '@/stores/managedWorkspace'
 import {
   liveInstallPercent,
   progressKey,
@@ -64,7 +65,8 @@ export function useConfigSkillInstallProgress(options?: {
     abortByKey.set(key, controller)
 
     const token = localStorage.getItem('weknora_token')
-    const tenantId = localStorage.getItem('weknora_selected_tenant_id')
+    // 控制台代管空间优先（与 axios 拦截器同一解析函数）
+    const tenantId = resolveRequestTenantId()
     const url = `${getApiBaseUrl()}${configSkillInstallEventsUrl(configId, skillId)}`
 
     void fetchEventSource(url, {

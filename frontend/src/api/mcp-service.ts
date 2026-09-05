@@ -87,6 +87,73 @@ export async function listMCPServices(): Promise<MCPService[]> {
   return response.data || []
 }
 
+// ----------------------------------------------------------------------------
+// 管理面（000096 平台化）：MCP 服务由系统管理员在平台目录配置一次，再按
+// 空间分配。全部走 /system/admin 镜像路由，仅系统管理员可用。
+//
+// 空间读路径（聊天/智能体解析已分配 + builtin 服务）保持上面的
+// /api/v1/mcp-services 端点不动。
+// ----------------------------------------------------------------------------
+
+// Workspace assignment of a platform MCP service (000096 platform rework).
+// Unlike web search there is no default flag — MCP has no per-workspace
+// default semantics.
+export interface MCPServiceTenantAssignment {
+  tenant_id: number
+  tenant_name: string
+  service_id?: string
+  assigned_at?: string
+}
+
+// Platform catalog row as returned by the /system/admin endpoints — the
+// tenant-scoped entity shape plus the service's workspace assignments.
+// Builtin services carry no assignments: they are visible to every workspace.
+export interface SystemMCPService extends MCPService {
+  assignments?: MCPServiceTenantAssignment[]
+}
+
+// List the whole platform MCP catalog (admin console)
+export async function listSystemMCPServices(): Promise<SystemMCPService[]> {
+  const response: any = await get('/api/v1/system/admin/mcp-services')
+  if (response && Array.isArray(response.data)) {
+    return response.data
+  }
+  return []
+}
+
+// Get a single platform MCP service by ID (with assignments)
+export async function getSystemMCPService(id: string): Promise<SystemMCPService> {
+  const response: any = await get(`/api/v1/system/admin/mcp-services/${id}`)
+  return response.data
+}
+
+// Create a new platform MCP service (starts unassigned)
+export async function createSystemMCPService(data: Partial<MCPService>): Promise<SystemMCPService> {
+  const response: any = await post('/api/v1/system/admin/mcp-services', data)
+  return response.data
+}
+
+// Update an existing platform MCP service
+export async function updateSystemMCPService(id: string, data: Partial<MCPService>): Promise<SystemMCPService> {
+  const response: any = await put(`/api/v1/system/admin/mcp-services/${id}`, data)
+  return response.data
+}
+
+// Delete a platform MCP service (its assignments are purged server-side)
+export async function deleteSystemMCPService(id: string): Promise<void> {
+  await del(`/api/v1/system/admin/mcp-services/${id}`)
+}
+
+// Test a saved platform MCP service connection (OAuth services will surface an
+// "authorization required" result — per-user OAuth needs a workspace context)
+export async function testSystemMCPService(id: string): Promise<MCPTestResult> {
+  const response: any = await post(`/api/v1/system/admin/mcp-services/${id}/test`, {})
+  if (response && response.data) {
+    return response.data
+  }
+  return response
+}
+
 // Get a single MCP service by ID
 export async function getMCPService(id: string): Promise<MCPService> {
   const response: any = await get(`/api/v1/mcp-services/${id}`)
@@ -179,6 +246,63 @@ export async function deleteMCPCredentialField(
   field: McpCredentialField
 ): Promise<void> {
   await del(`/api/v1/mcp-services/${serviceId}/credentials/${field}`)
+}
+
+// ---- Credential subresource, platform-catalog copy (admin console). Same
+// contract; the handler treats the missing workspace context as platform
+// scope. ----
+
+export async function putSystemMCPCredentials(
+  serviceId: string,
+  body: Partial<Record<McpCredentialField, string>>
+): Promise<McpCredentialsResponse> {
+  const response: any = await put(`/api/v1/system/admin/mcp-services/${serviceId}/credentials`, body)
+  return (response.data ?? response) as McpCredentialsResponse
+}
+
+export async function deleteSystemMCPCredentialField(
+  serviceId: string,
+  field: McpCredentialField
+): Promise<void> {
+  await del(`/api/v1/system/admin/mcp-services/${serviceId}/credentials/${field}`)
+}
+
+// ---- Platform-default tool-approval policy (admin console). Writes the
+// tenant_id=0 rows; runtime resolution prefers a workspace override and falls
+// back to these. ----
+
+export async function getSystemMCPToolApprovals(serviceId: string): Promise<MCPToolApprovalRow[]> {
+  const response: any = await get(`/api/v1/system/admin/mcp-services/${serviceId}/tool-approvals`)
+  return response.data || []
+}
+
+export async function setSystemMCPToolApproval(serviceId: string, toolName: string, requireApproval: boolean): Promise<void> {
+  await put(`/api/v1/system/admin/mcp-services/${serviceId}/tool-approvals/${encodeURIComponent(toolName)}`, {
+    require_approval: requireApproval
+  })
+}
+
+// ----------------------------------------------------------------------------
+// Workspace assignments of a platform MCP service (admin console drawer).
+// ----------------------------------------------------------------------------
+
+export function listMCPTenantAssignments(id: string): Promise<MCPServiceTenantAssignment[]> {
+  return get(`/api/v1/system/admin/mcp-services/${id}/tenant-assignments`).then((res: any) => {
+    if (res.success && Array.isArray(res.data)) {
+      return res.data
+    }
+    return []
+  })
+}
+
+// Replace the full assignment list of a service. rows carries the target
+// state; a workspace missing from the list is unassigned. Builtin services
+// reject assignment management (visible to every workspace by design).
+export function updateMCPTenantAssignments(
+  id: string,
+  rows: Array<{ tenant_id: number }>,
+) {
+  return put(`/api/v1/system/admin/mcp-services/${id}/tenant-assignments`, { assignments: rows })
 }
 
 // ----------------------------------------------------------------------------

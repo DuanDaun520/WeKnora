@@ -114,7 +114,7 @@ import picturePreview from '@/components/picture-preview.vue';
 import ChatArtifactsDrawer from './ChatArtifactsDrawer.vue';
 import { isCollectingSkillArtifacts } from '@/utils/skillArtifacts';
 import { useArtifactArriveMotion } from '@/composables/useArtifactArriveMotion';
-import { sanitizeMarkdownHTML, safeMarkdownToHTML, createSafeImage, isValidImageURL, hydrateProtectedFileImages } from '@/utils/security';
+import { sanitizeMarkdownHTML, safeMarkdownToHTML, createSafeImage, isValidImageURL, hydrateProtectedFileImages, attachExternalImageErrorFallback } from '@/utils/security';
 import {
     artifactIndexFromEventTarget,
     hydrateArtifactImages,
@@ -410,6 +410,8 @@ onUpdated(() => {
     nextTick(async () => {
         await hydrateProtectedFileImages(parentMd.value);
         await hydrateArtifactImages(parentMd.value, artifactRefContext.value);
+        // 外链图片加载失败兜底（模型幻觉 URL / 失效外链）——与受保护图片的水合同一时机挂载
+        attachExternalImageErrorFallback(parentMd.value, t('error.imageUnavailable'));
         refreshMarkdownEnhancements(parentMd.value);
         if (props.session?.is_completed) {
             await renderMermaidInContainer(parentMd.value);
@@ -426,6 +428,7 @@ onMounted(async () => {
         rebindCitations();
         await hydrateProtectedFileImages(parentMd.value);
         await hydrateArtifactImages(parentMd.value, artifactRefContext.value);
+        attachExternalImageErrorFallback(parentMd.value, t('error.imageUnavailable'));
         await enhanceMarkdownContainer(parentMd.value);
     });
 });

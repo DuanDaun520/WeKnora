@@ -365,7 +365,7 @@ import {
   type VectorStoreTypeInfo,
 } from '@/api/vector-store'
 import { useAuthStore } from '@/stores/auth'
-import { providerLogo } from './providerLogos'
+import { providerLogo } from '@/views/settings/providerLogos'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 
 const { t } = useI18n()

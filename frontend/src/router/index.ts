@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteLocationNormalized } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useManagedWorkspaceStore } from '@/stores/managedWorkspace'
 import { useDeploymentCapabilitiesStore } from '@/stores/deploymentCapabilities'
 import { autoSetup, getCurrentUser, userInfoFromApi } from '@/api/auth'
 import type { DeploymentCapabilityKey } from '@/config/deploymentCapabilities'
@@ -311,6 +312,13 @@ let liteDeepLinkRestoreDone = false
 // 路由守卫：检查认证状态和系统初始化状态
 router.beforeEach(async (to, from, next) => {
   const authStore = useAuthStore()
+
+  // 离开系统管理后台即清除「按空间代管」的目标空间：代管期间所有请求
+  // 的 X-Tenant-ID 都指向该空间，不清理会泄漏到系统管理员自己的空间
+  // 流量里（SystemConsole 卸载时还有 onUnmounted 兜底）。
+  if (from.path === '/system/console' && to.path !== '/system/console') {
+    useManagedWorkspaceStore().clearManaged()
+  }
 
   // Lite：硬刷新后若落在默认首页，恢复本次会话中最后访问的 /platform 子路径
   if (!liteDeepLinkRestoreDone) {

@@ -4,6 +4,7 @@ import { generateRandomString, MAX_FILE_SIZE_MB, MAX_SKILL_BUNDLE_SIZE_MB } from
 import i18n from '@/i18n'
 import { getApiBaseUrl } from './api-base';
 import { isSkillBundleUploadUrl } from './uploadLimit';
+import { resolveRequestTenantId } from '@/stores/managedWorkspace';
 
 const t = (key: string) => i18n.global.t(key)
 
@@ -54,7 +55,9 @@ instance.interceptors.request.use(
     // 后端 IsTenantAccessible 已经允许 header 指向 home 空间（自家），
     // 所以无脑附不会引入新风险。
     if (!isEmbedAuth && !isEmbedPath) {
-      const selectedTenantId = localStorage.getItem('weknora_selected_tenant_id');
+      // 控制台「按空间代管」选中空间时优先于用户自身空间
+      // （resolveRequestTenantId 内部处理两级优先级）。
+      const selectedTenantId = resolveRequestTenantId();
       if (selectedTenantId) {
         config.headers["X-Tenant-ID"] = selectedTenantId;
       }
@@ -280,6 +283,26 @@ export function postUpload(
   config: any = {},
 ): Promise<any> {
   return instance.post(url, data, {
+    ...config,
+    headers: {
+      "Content-Type": "multipart/form-data",
+      "X-Request-ID": `${generateRandomString(12)}`,
+      ...(config.headers || {}),
+    },
+    onUploadProgress: onUploadProgress || config.onUploadProgress,
+  }) as unknown as Promise<any>;
+}
+
+// PUT twin of postUpload: the skill library re-registers a bundle by
+// overwriting its definition (PUT /system/admin/skills/:id), so the same
+// multipart upload needs the PUT verb.
+export function putUpload(
+  url: string,
+  data = {},
+  onUploadProgress?: (progressEvent: any) => void,
+  config: any = {},
+): Promise<any> {
+  return instance.put(url, data, {
     ...config,
     headers: {
       "Content-Type": "multipart/form-data",

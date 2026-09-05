@@ -3,7 +3,8 @@
         <!-- 展开时：Logo + 搜索/折叠按钮同行 -->
         <div class="logo_row" v-if="!uiStore.sidebarCollapsed">
             <div class="logo_box" @click="router.push('/platform/knowledge-bases')" style="cursor: pointer;">
-                <img class="logo" src="@/assets/img/weknora.png" alt="">
+                <img class="logo-img" :src="logoUrl" alt="">
+                <span class="logo logo-text">{{ t('platform.brandName') }}</span>
                 <sup v-if="isLiteEdition" class="lite-badge">Lite</sup>
             </div>
             <div class="logo_actions">
@@ -198,6 +199,7 @@
 
 <script setup lang="ts">
 import { storeToRefs } from 'pinia';
+import logoUrl from '@/assets/img/logo.png';
 import { onMounted, onUnmounted, watch, computed, ref, h, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { getSessionsList, batchDelSessions, deleteAllSessions, getSession } from "@/api/chat/index";
@@ -1285,6 +1287,26 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
             height: auto;
         }
 
+        .logo-img {
+            width: 28px;
+            height: 28px;
+            display: block;
+            margin-right: 8px;
+            flex-shrink: 0;
+        }
+
+        .logo-text {
+            display: inline-block;
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: 2px;
+            line-height: 28px;
+            color: var(--td-text-color-primary);
+            font-family: var(--app-font-family);
+            user-select: none;
+            white-space: nowrap;
+        }
+
         .lite-badge {
             margin-left: 2px;
             align-self: flex-start;
@@ -1897,11 +1919,6 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
 }
 </style>
 <style lang="less">
-// Dark mode: invert dark logo to light
-html[theme-mode="dark"] .aside_box .logo_box .logo {
-    filter: invert(1) hue-rotate(180deg);
-}
-
 // Dark mode: 滚动条在深色背景下需要更亮的颜色才看得见
 html[theme-mode="dark"] .aside_box .menu_top:hover {
     scrollbar-color: rgba(255, 255, 255, 0.22) transparent;

@@ -292,6 +292,31 @@ func (f *fakeConfigRepo) ClearCordon(ctx context.Context, _ uint64, _ string) er
 	return nil
 }
 
+func (f *fakeConfigRepo) ListBySourceConnection(
+	_ context.Context, connectionID string,
+) ([]*types.TenantSandboxConfigEntity, error) {
+	var out []*types.TenantSandboxConfigEntity
+	if f.entity != nil && f.entity.SourceConnectionID == connectionID {
+		out = append(out, f.entity)
+	}
+	for _, row := range f.others {
+		if row != nil && row.SourceConnectionID == connectionID {
+			out = append(out, row)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeConfigRepo) MarkSourcePushed(
+	_ context.Context, _ uint64, id, connectionID string, at time.Time,
+) error {
+	if f.entity != nil && f.entity.ID == id {
+		f.entity.SourceConnectionID = connectionID
+		f.entity.SourcePushedAt = &at
+	}
+	return nil
+}
+
 type stubAgentRepo struct {
 	names []string
 	err   error
@@ -315,6 +340,9 @@ type stubProviderClient struct {
 	replaceCalls atomic.Int32
 
 	listCalls        int
+	// listErr makes List fail so tests can exercise unverifiable-inventory
+	// refusals (used by the platform sandbox-connection unassign guard).
+	listErr error
 	deleted          []string
 	deletedTemplates []string
 	deleteCtxErr     error
@@ -362,6 +390,9 @@ func (s *stubProviderClient) List(
 	ctx context.Context, _ sandbox.RemoteListFilter,
 ) ([]sandbox.RemoteSandboxSummary, error) {
 	s.listCalls++
+	if s.listErr != nil {
+		return nil, s.listErr
+	}
 	if len(s.inventories) == 0 {
 		return nil, nil
 	}

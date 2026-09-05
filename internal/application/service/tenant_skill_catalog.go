@@ -34,9 +34,13 @@ type SkillCatalogView struct {
 	Version       string                    `json:"version,omitempty"`
 	Description   string                    `json:"description,omitempty"`
 	BundleSHA256  string                    `json:"bundle_sha256,omitempty"`
-	CreatedAt     time.Time                 `json:"created_at"`
-	UpdatedAt     time.Time                 `json:"updated_at"`
-	Installations []SkillCatalogInstallView `json:"installations"`
+	// SourcePlatformSkillID is set when the definition was materialized from
+	// the platform skill library (000098); empty = workspace self-built. The
+	// synthetic projection of install rows never carries it.
+	SourcePlatformSkillID string                    `json:"source_platform_skill_id,omitempty"`
+	CreatedAt             time.Time                 `json:"created_at"`
+	UpdatedAt             time.Time                 `json:"updated_at"`
+	Installations         []SkillCatalogInstallView `json:"installations"`
 }
 
 // ListCatalog returns every workspace skill definition and which sandbox
@@ -129,14 +133,15 @@ func catalogView(
 	configByID map[string]*types.TenantSandboxConfigEntity,
 ) SkillCatalogView {
 	view := SkillCatalogView{
-		ID:            cat.ID,
-		Name:          cat.Name,
-		Version:       cat.Version,
-		Description:   cat.Description,
-		BundleSHA256:  cat.BundleSHA256,
-		CreatedAt:     cat.CreatedAt,
-		UpdatedAt:     cat.UpdatedAt,
-		Installations: make([]SkillCatalogInstallView, 0, len(installs)),
+		ID:                    cat.ID,
+		Name:                  cat.Name,
+		Version:               cat.Version,
+		Description:           cat.Description,
+		BundleSHA256:          cat.BundleSHA256,
+		SourcePlatformSkillID: cat.SourcePlatformSkillID,
+		CreatedAt:             cat.CreatedAt,
+		UpdatedAt:             cat.UpdatedAt,
+		Installations:         make([]SkillCatalogInstallView, 0, len(installs)),
 	}
 	for _, row := range installs {
 		view.Installations = append(view.Installations, installView(row, configByID))

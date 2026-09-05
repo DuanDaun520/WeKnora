@@ -217,7 +217,12 @@
             <label class="form-label">{{ t('mcpServiceDialog.oauthScopes', 'Scopes（可选，空格分隔）') }}</label>
             <t-input v-model="oauthScopesText" :placeholder="t('mcpServiceDialog.optional')" />
           </div>
-          <div class="form-item">
+          <!--
+            授权状态/去授权/撤销：按用户、按空间存储 token，平台目录抽屉没有
+            空间 + 用户上下文，隐藏该区块；授权在服务分配到空间后由成员在
+            会话内完成（McpOAuthCard）。平台侧仅保留非密钥 OAuth 配置编辑。
+          -->
+          <div v-if="!systemMode" class="form-item">
             <label class="form-label">{{ t('mcpServiceDialog.oauthAuthorization', '授权状态') }}</label>
             <div class="oauth-status">
               <t-tag v-if="oauthTokenState === 'authorized'" theme="success" variant="light">
@@ -251,6 +256,9 @@
               {{ t('mcpServiceDialog.oauthAuthorizeHint', '点击「去授权」会先自动保存当前配置，再发起授权（每个用户独立授权）。') }}
             </p>
           </div>
+          <p v-else class="form-desc">
+            {{ t('mcpServiceDialog.oauthSystemModeHint', 'OAuth 授权按「空间 + 用户」存储：服务分配到空间后，由成员在对话中完成首次授权；此处仅维护 OAuth 配置。') }}
+          </p>
         </template>
 
         <!--
@@ -344,7 +352,32 @@
         </div>
       </section>
 
-      <!-- Section 5 — 测试结果（内联，避免在抽屉上再叠一个居中弹窗） -->
+      <!-- Section 5 — 空间分配（000096 平台化）：服务在平台目录配置一次，按空间
+           分配使用；builtin 服务对所有空间可见，无需（也不可）分配。MCP 无
+           "默认服务"语义，这里只有分配开关。保存时两个请求：先存实体，再
+           replace-all 分配；分配失败保留抽屉供单独重试。 -->
+      <section v-if="systemMode && !props.service?.is_builtin" class="setting-drawer__section">
+        <h4 class="setting-drawer__section-title">{{ t('mcpServiceDialog.assignmentsSection', '空间分配') }}</h4>
+        <p class="form-desc">{{ t('mcpServiceDialog.assignmentsSectionDesc', '勾选可使用该服务的空间；未勾选的空间及其成员不可见。') }}</p>
+        <div v-if="assignmentRows.length === 0" class="form-desc">
+          {{ t('webSearchSettings.noPlatformTenants') }}
+        </div>
+        <div v-else class="assignment-list">
+          <div v-for="row in assignmentRows" :key="row.tenantId" class="assignment-row">
+            <span class="assignment-row__name" :title="row.tenantName">{{ row.tenantName }}</span>
+            <t-switch
+              v-model="row.assigned"
+              size="small"
+              :aria-label="t('webSearchSettings.assignSwitchLabel')"
+            />
+          </div>
+        </div>
+      </section>
+      <p v-else-if="systemMode" class="form-desc assignments-builtin-hint">
+        {{ t('mcpServiceDialog.assignmentsBuiltinHint', '内置服务对所有空间可见，无需分配。') }}
+      </p>
+
+      <!-- Section 6 — 测试结果（内联，避免在抽屉上再叠一个居中弹窗） -->
       <section v-if="testResult" ref="testResultSection" class="setting-drawer__section">
         <div class="test-result-header">
           <h4 class="setting-drawer__section-title">{{ t('mcpServiceDialog.testResultTitle', '测试结果') }}</h4>
@@ -359,7 +392,7 @@
             <template #icon><t-icon name="close" /></template>
           </t-button>
         </div>
-        <McpTestResultBody :result="testResult" :service-id="props.service?.id" />
+        <McpTestResultBody :result="testResult" :service-id="props.service?.id" :system-mode="systemMode" />
       </section>
     </t-form>
   </SettingDrawer>
@@ -376,16 +409,24 @@ import {
   putMCPCredentials,
   deleteMCPCredentialField,
   testMCPService,
+  createSystemMCPService,
+  updateSystemMCPService,
+  putSystemMCPCredentials,
+  deleteSystemMCPCredentialField,
+  testSystemMCPService,
+  updateMCPTenantAssignments,
   getMCPOAuthAuthorizeURL,
   getMCPOAuthAuthorizationStatus,
   getMCPOAuthStatus,
   revokeMCPOAuthToken,
   MCP_OAUTH_CALLBACK_PATH,
   type MCPService,
+  type SystemMCPService,
   type McpCredentialField,
   type MCPTestResult,
   type MCPOAuthTokenState,
 } from '@/api/mcp-service'
+import { listPlatformTenants, type PlatformTenant } from '@/api/system'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import McpTestResultBody from './McpTestResultBody.vue'
 import CredentialResource, {
@@ -397,6 +438,9 @@ interface Props {
   visible: boolean
   service: MCPService | null
   mode: 'add' | 'edit'
+  /** 平台目录模式（000096）：读写 /system/admin 镜像端点，并显示空间分配
+   *  区块；OAuth 授权区块隐藏（按用户+按空间存储，平台侧无上下文）。 */
+  systemMode?: boolean
 }
 
 interface Emits {
@@ -407,8 +451,58 @@ interface Emits {
   (e: 'created', service: MCPService): void
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), { systemMode: false })
 const emit = defineEmits<Emits>()
+
+const systemMode = computed(() => props.systemMode)
+
+// ---- 空间分配（systemMode only）----
+// 全部工作空间目录（打开抽屉时懒加载一次），一行一个开关表达完整
+// replace-all 载荷；初始状态来自服务当前的 assignments。
+const platformTenants = ref<PlatformTenant[]>([])
+const assignmentRows = ref<Array<{ tenantId: number; tenantName: string; assigned: boolean }>>([])
+const tenantsLoaded = ref(false)
+
+async function loadPlatformTenants() {
+  if (tenantsLoaded.value) return
+  try {
+    const response = await listPlatformTenants()
+    platformTenants.value = response.tenants || []
+    tenantsLoaded.value = true
+  } catch (e) {
+    console.error('Failed to load platform tenants:', e)
+  }
+}
+
+function seedAssignmentRows(service: MCPService | null) {
+  const assignedByTenant = new Set(
+    ((service as SystemMCPService | null)?.assignments || []).map(a => a.tenant_id),
+  )
+  assignmentRows.value = platformTenants.value.map(tenant => ({
+    tenantId: tenant.id,
+    tenantName: tenant.name,
+    assigned: assignedByTenant.has(tenant.id),
+  }))
+}
+
+// 分配 replace-all 载荷：勾选的空间列表。
+function assignmentPayload() {
+  return assignmentRows.value
+    .filter(row => row.assigned)
+    .map(row => ({ tenant_id: row.tenantId }))
+}
+
+// 保存实体后应用分配；失败仅报错不抛出（调用方决定是否保留抽屉）。
+async function applyAssignments(serviceId: string) {
+  try {
+    await updateMCPTenantAssignments(serviceId, assignmentPayload())
+    return true
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || (t('mcpServiceDialog.toasts.assignmentsSaveFailed') as string))
+    console.error('Failed to save MCP service assignments:', e)
+    return false
+  }
+}
 
 const formRef = ref<FormInstanceFunctions>()
 const submitting = ref(false)
@@ -617,6 +711,7 @@ const oauthChecking = ref(false)
 const oauthAuthorizing = ref(false)
 
 async function refreshOAuthStatus() {
+  if (systemMode.value) return // 授权区块在平台目录抽屉隐藏，状态无需查询
   if (props.mode !== 'edit' || !props.service?.id || !isOAuth.value) return
   oauthChecking.value = true
   try {
@@ -746,15 +841,20 @@ const credentialFields = computed<CredentialFieldDef<McpCredentialField>[]>(() =
 
 // Adapter that binds the generic CredentialResource component to the MCP
 // credential endpoints. Recomputed if the user opens a different service.
+// systemMode routes through the /system/admin mirror (platform scope).
 const credentialApi = computed<CredentialResourceApi<McpCredentialField>>(() => {
   const id = props.service?.id ?? ''
   return {
     save: async (patch) => {
-      const meta = await putMCPCredentials(id, patch)
+      const meta = await (systemMode.value
+        ? putSystemMCPCredentials(id, patch)
+        : putMCPCredentials(id, patch))
       return meta.fields
     },
     remove: async (field) => {
-      await deleteMCPCredentialField(id, field)
+      await (systemMode.value
+        ? deleteSystemMCPCredentialField(id, field)
+        : deleteMCPCredentialField(id, field))
     },
   }
 })
@@ -829,7 +929,9 @@ async function handleTestConnection() {
     closeBtn: false,
   })
   try {
-    const result = await testMCPService(props.service.id)
+    const result = await (systemMode.value
+      ? testSystemMCPService(props.service.id)
+      : testMCPService(props.service.id))
     MessagePlugin.closeAll()
     const safe: MCPTestResult = result ?? {
       success: false,
@@ -976,6 +1078,14 @@ watch(
     } else {
       resetForm()
     }
+    // 空间分配开关跟随当前服务（add 模式全灭）。工作空间目录懒加载一次，
+    // 加载完成后重新播种，避免首开抽屉时目录未就绪导致开关全空。
+    if (systemMode.value) {
+      seedAssignmentRows(service)
+      if (!tenantsLoaded.value) {
+        void loadPlatformTenants().then(() => seedAssignmentRows(service))
+      }
+    }
   },
   { immediate: true },
 )
@@ -1032,16 +1142,32 @@ const handleSubmit = async () => {
   try {
     const data = buildPayload(props.mode === 'add')
     if (props.mode === 'add') {
-      const created = await createMCPService(data)
+      const created = await (systemMode.value
+        ? createSystemMCPService(data)
+        : createMCPService(data))
       MessagePlugin.success(t('mcpServiceDialog.toasts.created'))
+      // Apply workspace assignments (systemMode): the service exists now, so
+      // the replace-all call can go out. Failure only toasts — the drawer
+      // still flips to edit mode and the switches stay for a retry.
+      if (systemMode.value && !created.is_builtin) {
+        await applyAssignments(created.id)
+      }
       // Keep the drawer open and hand back the new service so the parent can
       // flip it into edit mode in place — OAuth authorization and "test
       // connection" both need a saved service id, so transitioning here lets
       // the user do them immediately instead of save → reopen.
       emit('created', created)
     } else {
-      await updateMCPService(props.service!.id, data)
+      await (systemMode.value
+        ? updateSystemMCPService(props.service!.id, data)
+        : updateMCPService(props.service!.id, data))
       MessagePlugin.success(t('mcpServiceDialog.toasts.updated'))
+      if (systemMode.value && !props.service?.is_builtin) {
+        // Entity saved, assignments pending — on failure keep the drawer open
+        // (no 'success' emit) so the user can retry the switches alone.
+        const ok = await applyAssignments(props.service!.id)
+        if (!ok) return
+      }
       emit('success')
     }
   } catch (error) {
@@ -1065,6 +1191,41 @@ const handleClose = () => {
 // ---- 抽屉内容 — 与 ModelEditorDialog 同款约定 ----
 .form-item {
   margin-bottom: 0;
+}
+
+// ---- 空间分配（000096 平台化）：一行一空间，右侧开关 ----
+.assignment-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.assignment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px;
+  background: var(--td-bg-color-container);
+
+  & + .assignment-row {
+    border-top: 1px solid var(--td-component-stroke);
+  }
+}
+
+.assignment-row__name {
+  min-width: 0;
+  font-size: 13px;
+  color: var(--td-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assignments-builtin-hint {
+  margin: -8px 0 16px;
 }
 
 // ---- 自定义请求头（与 ModelEditorDialog 同款 key/value 行） ----

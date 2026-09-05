@@ -47,10 +47,11 @@
         </button>
       </header>
       <SkillFilesPanel
-        v-if="visible && (catalogId || (configId && skillId))"
+        v-if="visible && (platform || catalogId || (configId && skillId))"
         :config-id="configId"
         :skill-id="skillId"
         :catalog-id="catalogId"
+        :platform="platform"
         :drawer-width="drawerWidth"
       />
     </div>
@@ -70,6 +71,8 @@ const props = defineProps<{
   configId?: string
   skillId?: string
   catalogId?: string
+  /** Platform mode (000098): catalogId is a platform skill id. */
+  platform?: boolean
   skillName: string
 }>()
 

@@ -33,13 +33,15 @@ func NewWebSearchProviderHandler(
 
 // --- request DTOs ---
 
-// CreateProviderRequest defines the request body for creating a provider
+// CreateProviderRequest defines the request body for creating a provider.
+// Since the 000095 platform rework there is no is_default flag here — the
+// created platform row is shared with workspaces (and per-workspace defaults
+// are set) through the tenant-assignments subresource.
 type CreateProviderRequest struct {
 	Name        string                            `json:"name" binding:"required"`
 	Provider    types.WebSearchProviderType       `json:"provider" binding:"required"`
 	Description string                            `json:"description"`
 	Parameters  types.WebSearchProviderParameters `json:"parameters"`
-	IsDefault   bool                              `json:"is_default"`
 }
 
 // UpdateProviderRequest defines the request body for updating a provider
@@ -47,7 +49,6 @@ type UpdateProviderRequest struct {
 	Name        string                            `json:"name"`
 	Description string                            `json:"description"`
 	Parameters  types.WebSearchProviderParameters `json:"parameters"`
-	IsDefault   bool                              `json:"is_default"`
 }
 
 // --- helpers ---
@@ -95,12 +96,10 @@ func (h *WebSearchProviderHandler) CreateProvider(c *gin.Context) {
 		tenantID, secutils.SanitizeForLog(req.Name), secutils.SanitizeForLog(string(req.Provider)))
 
 	provider := &types.WebSearchProviderEntity{
-		TenantID:    tenantID,
 		Name:        secutils.SanitizeForLog(req.Name),
 		Provider:    req.Provider,
 		Description: secutils.SanitizeForLog(req.Description),
 		Parameters:  req.Parameters,
-		IsDefault:   req.IsDefault,
 	}
 
 	if err := h.service.CreateProvider(ctx, provider); err != nil {
@@ -232,8 +231,7 @@ func (h *WebSearchProviderHandler) UpdateProvider(c *gin.Context) {
 
 	// Preserve existing values for top-level metadata fields when the
 	// request omits them (empty string from the JSON decoder). Without this,
-	// a partial update that only flips IsDefault would clobber Name and
-	// Description on the stored record.
+	// a partial update would clobber Name and Description on the record.
 	mergedName := req.Name
 	if mergedName == "" {
 		mergedName = existing.Name
@@ -246,12 +244,10 @@ func (h *WebSearchProviderHandler) UpdateProvider(c *gin.Context) {
 	// Build updated entity, keeping immutable fields from existing
 	provider := &types.WebSearchProviderEntity{
 		ID:          id,
-		TenantID:    tenantID,
 		Name:        secutils.SanitizeForLog(mergedName),
 		Provider:    existing.Provider, // Provider type is immutable after creation
 		Description: secutils.SanitizeForLog(mergedDescription),
 		Parameters:  mergedParams,
-		IsDefault:   req.IsDefault,
 	}
 
 	if err := h.service.UpdateProvider(ctx, provider); err != nil {
@@ -299,7 +295,7 @@ func (h *WebSearchProviderHandler) DeleteProvider(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.DeleteProvider(ctx, tenantID, id); err != nil {
+	if err := h.service.DeleteProvider(ctx, id); err != nil {
 		logger.Warnf(ctx, "Failed to delete web search provider %s: %v", id, err)
 		c.Error(errors.NewInternalServerError(err.Error()))
 		return
@@ -355,7 +351,7 @@ func (h *WebSearchProviderHandler) TestProviderByID(c *gin.Context) {
 		return
 	}
 
-	if err := h.doTestSearch(ctx, string(provider.Provider), provider.Parameters); err != nil {
+	if err := doTestSearch(ctx, h.registry, string(provider.Provider), provider.Parameters); err != nil {
 		logger.Warnf(ctx, "Web search provider test failed: %v", err)
 		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
 		return
@@ -393,7 +389,7 @@ func (h *WebSearchProviderHandler) TestProviderRaw(c *gin.Context) {
 		return
 	}
 
-	if err := h.doTestSearch(ctx, req.Provider, req.Parameters); err != nil {
+	if err := doTestSearch(ctx, h.registry, req.Provider, req.Parameters); err != nil {
 		logger.Warnf(ctx, "Web search provider test failed: %v", err)
 		c.JSON(http.StatusOK, gin.H{"success": false, "error": err.Error()})
 		return
@@ -403,15 +399,21 @@ func (h *WebSearchProviderHandler) TestProviderRaw(c *gin.Context) {
 }
 
 // doTestSearch creates a temporary provider and runs a simple test query.
+// Shared by the tenant-scoped and /system/admin test endpoints.
 //
 // The provider would otherwise try to authenticate against the upstream API
 // with the redacted placeholder (which is guaranteed to fail with a
 // confusing error). Reject it up front with an actionable message so the
 // user knows they should type a real key or test against the saved config
 // via /test instead.
-func (h *WebSearchProviderHandler) doTestSearch(ctx context.Context, providerType string, params types.WebSearchProviderParameters) error {
+func doTestSearch(
+	ctx context.Context,
+	registry *infra_web_search.Registry,
+	providerType string,
+	params types.WebSearchProviderParameters,
+) error {
 	logger.Infof(ctx, "[WebSearch][Test] testing provider type=%s", providerType)
-	searchProvider, err := h.registry.CreateProvider(providerType, params)
+	searchProvider, err := registry.CreateProvider(providerType, params)
 	if err != nil {
 		logger.Warnf(ctx, "[WebSearch][Test] failed to create provider: %v", err)
 		return fmt.Errorf("failed to create provider: %w", err)

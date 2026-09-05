@@ -2248,6 +2248,20 @@ func (r *installConfigRepo) ListByTenant(context.Context, uint64) ([]*types.Tena
 	return nil, nil
 }
 
+// The platform sandbox-connection surface is outside the skill install tests;
+// these exist only to satisfy the repository interface.
+func (r *installConfigRepo) ListBySourceConnection(
+	context.Context, string,
+) ([]*types.TenantSandboxConfigEntity, error) {
+	return nil, nil
+}
+
+func (r *installConfigRepo) MarkSourcePushed(
+	context.Context, uint64, string, string, time.Time,
+) error {
+	return nil
+}
+
 // ListAll returns the one config this fixture holds, so a housekeeping scan
 // sees the same config the install and removal tests act on.
 func (r *installConfigRepo) ListAll(context.Context) ([]*types.TenantSandboxConfigEntity, error) {
@@ -2752,6 +2766,19 @@ func (r *installSkillRepo) UpdateCatalog(_ context.Context, e *types.TenantSkill
 	}
 	cp := *e
 	r.catalogs[e.ID] = &cp
+	return nil
+}
+
+func (r *installSkillRepo) SetCatalogSourcePlatformSkill(
+	_ context.Context, _ uint64, catalogID, platformSkillID string,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if row, ok := r.catalogs[catalogID]; ok {
+		cp := *row
+		cp.SourcePlatformSkillID = platformSkillID
+		r.catalogs[catalogID] = &cp
+	}
 	return nil
 }
 

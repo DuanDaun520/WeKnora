@@ -26,19 +26,24 @@
       </div>
     </header>
 
-    <!-- 左侧菜单 + 内容区：后续系统管理功能以菜单项形式陆续加入 -->
+    <!-- 左侧菜单 + 内容区：系统管理功能以菜单项形式陆续加入。
+         三个「按空间代管」面板需先在内容区顶部选择目标空间；
+         网络搜索/沙箱连接/技能库为平台目录 + 按空间分配，无需选择空间。 -->
     <div class="console-body">
       <nav class="console-menu" :aria-label="$t('systemConsole.title')">
-        <div
-          v-for="item in menuItems"
-          :key="item.key"
-          :class="['console-menu-item', { active: currentSection === item.key }]"
-          :aria-current="currentSection === item.key ? 'page' : undefined"
-          @click="handleMenuClick(item.key)"
-        >
-          <t-icon :name="item.icon" size="16px" class="console-menu-icon" />
-          <span>{{ item.label }}</span>
-        </div>
+        <template v-for="group in menuGroups" :key="group.key">
+          <div class="console-menu-group">{{ group.label }}</div>
+          <div
+            v-for="item in group.items"
+            :key="item.key"
+            :class="['console-menu-item', { active: currentSection === item.key }]"
+            :aria-current="currentSection === item.key ? 'page' : undefined"
+            @click="handleMenuClick(item.key)"
+          >
+            <t-icon :name="item.icon" size="16px" class="console-menu-icon" />
+            <span>{{ item.label }}</span>
+          </div>
+        </template>
       </nav>
 
       <section class="console-content">
@@ -46,52 +51,185 @@
         <WorkspacesPanel v-else-if="currentSection === 'tenants'" />
         <ModelsPanel v-else-if="currentSection === 'models'" />
         <OllamaPanel v-else-if="currentSection === 'ollama'" />
+        <!-- 网络搜索 000095 平台化：平台级服务目录 + 按空间分配，无空间选择栏 -->
+        <WebSearchSettings v-else-if="currentSection === 'websearch'" />
+        <!-- MCP 服务 000096 平台化：平台级服务目录 + 按空间分配，无空间选择栏 -->
+        <McpSettings v-else-if="currentSection === 'mcp'" />
+        <!-- 沙箱连接 000097 平台化：平台级连接目录 + 按空间物化分配，无空间选择栏。
+             沙箱配置不再设独立代管面板：连接分配即物化配置，改连接后推送传播。 -->
+        <SandboxConnectionsPanel v-else-if="currentSection === 'sandbox-connections'" />
+        <!-- 技能库 000098 平台化：平台级技能注册 + 按空间物化分配，无空间选择栏 -->
+        <SkillLibraryPanel v-else-if="currentSection === 'skill-library'" />
+
+        <!-- 按空间代管面板：未选目标空间时给引导，选中后渲染管理页 -->
+        <template v-else-if="isManagedSection(currentSection)">
+          <ManagedWorkspaceBar />
+          <template v-if="managedStore.managedTenantId">
+            <VectorStoreSettings v-if="currentSection === 'vectorstore'" />
+            <ParserEngineSettings v-else-if="currentSection === 'parser'" />
+            <StorageBackendSettings v-else-if="currentSection === 'storage'" />
+          </template>
+          <div v-else class="managed-empty">
+            <t-empty :description="$t('systemConsole.workspace.emptyHint')" />
+          </div>
+        </template>
       </section>
     </div>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
+import type { LocationQueryRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useManagedWorkspaceStore } from '@/stores/managedWorkspace'
+import { useDeploymentCapabilitiesStore } from '@/stores/deploymentCapabilities'
+import { CONSOLE_SECTION_CAPABILITY } from '@/config/deploymentCapabilities'
 import { logout as logoutApi } from '@/api/auth'
 import UsersPanel from './UsersPanel.vue'
 import WorkspacesPanel from './WorkspacesPanel.vue'
 import ModelsPanel from './ModelsPanel.vue'
 import OllamaPanel from './OllamaPanel.vue'
+import WebSearchSettings from './WebSearchSettings.vue'
+import VectorStoreSettings from './VectorStoreSettings.vue'
+import ParserEngineSettings from './ParserEngineSettings.vue'
+import StorageBackendSettings from './StorageBackendSettings.vue'
+import McpSettings from './McpSettings.vue'
+import SandboxConnectionsPanel from './SandboxConnectionsPanel.vue'
+import SkillLibraryPanel from './SkillLibraryPanel.vue'
+import ManagedWorkspaceBar from './ManagedWorkspaceBar.vue'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const managedStore = useManagedWorkspaceStore()
+const deploymentCapabilities = useDeploymentCapabilitiesStore()
 
-type ConsoleSection = 'users' | 'tenants' | 'models' | 'ollama'
+type ConsoleSection =
+  | 'users'
+  | 'tenants'
+  | 'models'
+  | 'ollama'
+  | 'websearch'
+  | 'vectorstore'
+  | 'parser'
+  | 'storage'
+  | 'sandbox-connections'
+  | 'skill-library'
+  | 'mcp'
 
-const menuItems = computed(() => [
-  { key: 'users' as const, icon: 'user', label: t('systemConsole.menu.users') },
-  { key: 'tenants' as const, icon: 'system-sum', label: t('systemConsole.menu.tenants') },
-  { key: 'models' as const, icon: 'ai', label: t('systemConsole.menu.models') },
-  { key: 'ollama' as const, icon: 'cloud', label: t('systemConsole.menu.ollama') },
+// 按空间代管的三个面板：数据仍归属各空间，系统管理员选目标空间后管理。
+// 网络搜索（000095）与 MCP 服务（000096）平台化后是平台目录 + 分配制，
+// 不再是代管面板；沙箱配置并入「沙箱连接」（000097 物化分配制）；技能
+// 面板迁回工作空间 Settings 的只读「技能目录」（000099）。
+const MANAGED_SECTIONS = new Set<ConsoleSection>([
+  'vectorstore',
+  'parser',
+  'storage',
 ])
 
-const VALID_SECTIONS: ConsoleSection[] = ['users', 'tenants', 'models', 'ollama']
+const VALID_SECTIONS: ConsoleSection[] = [
+  'users',
+  'tenants',
+  'models',
+  'ollama',
+  'websearch',
+  'vectorstore',
+  'parser',
+  'storage',
+  'sandbox-connections',
+  'skill-library',
+  'mcp',
+]
+
+function isManagedSection(key: ConsoleSection): boolean {
+  return MANAGED_SECTIONS.has(key)
+}
+
+type MenuItem = { key: ConsoleSection; icon: string; label: string }
+type MenuGroup = { key: string; label: string; items: MenuItem[] }
+
+// 能力裁剪沿用工作空间 Settings 的键（CONSOLE_SECTION_CAPABILITY）：
+// 部署没有沙箱/MCP/搜索时控制台菜单同样隐藏对应项。
+function isSectionSupported(key: ConsoleSection): boolean {
+  return deploymentCapabilities.isSupported(CONSOLE_SECTION_CAPABILITY[key])
+}
+
+const menuGroups = computed<MenuGroup[]>(() => {
+  const all: MenuItem[] = [
+    { key: 'users', icon: 'user', label: t('systemConsole.menu.users') },
+    { key: 'tenants', icon: 'system-sum', label: t('systemConsole.menu.tenants') },
+    { key: 'models', icon: 'ai', label: t('systemConsole.menu.models') },
+    { key: 'ollama', icon: 'cloud', label: t('systemConsole.menu.ollama') },
+    { key: 'websearch', icon: 'search', label: t('settings.webSearchConfig') },
+    { key: 'vectorstore', icon: 'data-base', label: t('settings.vectorStoreEngine') },
+    { key: 'parser', icon: 'file-search', label: t('settings.parserEngine') },
+    { key: 'storage', icon: 'cloud', label: t('settings.storageEngine') },
+    { key: 'sandbox-connections', icon: 'link', label: t('settings.sandboxConnections') },
+    { key: 'skill-library', icon: 'root-list', label: t('settings.skillLibrary') },
+    { key: 'mcp', icon: 'tools', label: t('settings.mcpService') },
+  ]
+  const visible = all.filter((item) => isSectionSupported(item.key))
+  const pick = (keys: ConsoleSection[]) =>
+    keys.map((key) => visible.find((item) => item.key === key)).filter(Boolean) as MenuItem[]
+  return [
+    {
+      key: 'workspace',
+      label: t('systemConsole.menuGroups.workspace'),
+      items: pick(['users', 'tenants']),
+    },
+    {
+      key: 'runtime',
+      label: t('systemConsole.menuGroups.runtime'),
+      items: pick(['models', 'ollama']),
+    },
+    {
+      key: 'data_extensions',
+      label: t('systemConsole.menuGroups.dataExtensions'),
+      items: pick(['websearch', 'vectorstore', 'parser', 'storage', 'sandbox-connections', 'skill-library', 'mcp']),
+    },
+  ].filter((group) => group.items.length > 0)
+})
 
 const currentSection = ref<ConsoleSection>('users')
 
 // ?section= 深链：与 Settings.vue 的做法一致，切换菜单时同步 query，
-// 刷新 / 分享 URL 后仍停留在对应面板。
+// 刷新 / 分享 URL 后仍停留在对应面板。?tenant= 等代管参数通过展开
+// route.query 一并保留。
+// 沙箱配置面板并入「沙箱连接」后，旧深链 section=sandbox 改道过去；
+// 技能代管面板迁回工作空间（000099）后，旧深链 section=skills 跨路由
+// 改道到空间 Settings 的技能目录。
+const LEGACY_SECTION_ALIASES: Partial<Record<string, ConsoleSection>> = {
+  sandbox: 'sandbox-connections',
+}
+
 function normalizeSection(raw: unknown): ConsoleSection {
-  return typeof raw === 'string' && (VALID_SECTIONS as string[]).includes(raw)
-    ? (raw as ConsoleSection)
-    : 'users'
+  if (typeof raw !== 'string') return 'users'
+  if ((VALID_SECTIONS as string[]).includes(raw)) return raw as ConsoleSection
+  return LEGACY_SECTION_ALIASES[raw] ?? 'users'
+}
+
+// 技能面板已离开控制台：旧深链改道到工作空间 Settings 的 skill-catalog。
+// ?sandbox= 预选透传；?tenant= 有意丢弃——Settings 展示的是当前所选空间
+// 的目录，代管租户参数在那边没有语义。
+function redirectLegacySection(section: unknown): boolean {
+  if (section !== 'skills') return false
+  const query: Record<string, string> = { section: 'skill-catalog' }
+  if (typeof route.query.sandbox === 'string') query.sandbox = route.query.sandbox
+  void router.replace({ path: '/platform/settings', query })
+  return true
 }
 
 function handleMenuClick(key: ConsoleSection) {
   currentSection.value = key
   if (route.query.section !== key) {
-    void router.replace({ path: '/system/console', query: { section: key } })
+    // 控制台已无 sandbox 预选消费者（技能面板迁走），切面板时一并丢弃。
+    const query: LocationQueryRaw = { ...route.query, section: key }
+    delete query.sandbox
+    void router.replace({ path: '/system/console', query })
   }
 }
 
@@ -100,6 +238,7 @@ watch(
   (section) => {
     // 仅响应本路由上的 query 变化（路由守卫跳转其它页面时不干预）
     if (route.path !== '/system/console') return
+    if (redirectLegacySection(section)) return
     const next = normalizeSection(section)
     if (next !== currentSection.value) {
       currentSection.value = next
@@ -108,10 +247,17 @@ watch(
 )
 
 onMounted(() => {
+  if (redirectLegacySection(route.query.section)) return
   currentSection.value = normalizeSection(route.query.section)
   if (route.query.section !== currentSection.value) {
-    void router.replace({ path: '/system/console', query: { section: currentSection.value } })
+    void router.replace({ path: '/system/console', query: { ...route.query, section: currentSection.value } })
   }
+})
+
+// 离开控制台（含组件卸载兜底）：清除按空间代管状态，防止代管租户的
+// X-Tenant-ID 泄漏到系统管理员自己的空间请求里。
+onUnmounted(() => {
+  managedStore.clearManaged()
 })
 
 function enterWorkspace() {
@@ -200,7 +346,7 @@ async function handleLogout() {
   align-items: stretch;
 }
 
-// 左侧菜单：后续系统管理功能陆续加入，这里只做单级平铺。
+// 左侧菜单：按「空间与用户 / 模型与运行时 / 数据与扩展」分组平铺。
 .console-menu {
   width: 208px;
   flex: none;
@@ -210,6 +356,18 @@ async function handleLogout() {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  overflow-y: auto;
+}
+
+.console-menu-group {
+  padding: 12px 12px 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--td-text-color-placeholder);
+
+  &:first-child {
+    padding-top: 0;
+  }
 }
 
 .console-menu-item {
@@ -254,6 +412,10 @@ async function handleLogout() {
   overflow-y: auto;
 }
 
+.managed-empty {
+  padding: 48px 0;
+}
+
 @media (max-width: 720px) {
   .console-header {
     padding-left: 16px;
@@ -270,6 +432,10 @@ async function handleLogout() {
     flex-wrap: wrap;
     border-right: none;
     border-bottom: 1px solid var(--td-component-stroke);
+  }
+
+  .console-menu-group {
+    width: 100%;
   }
 
   .console-content {

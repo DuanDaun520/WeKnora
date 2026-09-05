@@ -55,6 +55,21 @@ test('legacy api / integrations / bare-tab query strings normalize to nav keys',
   assert.equal(isIntegrationSection('integration-unknown'), false)
 })
 
+test('the pre-000095 skills key aliases to the read-only skill catalog', () => {
+  // 000099：技能以只读「技能目录」回到空间 Settings，旧 openSettings/
+  // 书签里的 'skills' 归一化到 skill-catalog；?sandbox= 预选只在停留在
+  // 技能目录时保留，切走即清理，防止旧预选回流。
+  assert.equal(normalizeSettingsSection('skills'), 'skill-catalog')
+  assert.deepEqual(
+    buildSettingsRouteQuery('general', { section: 'skill-catalog', sandbox: 'sbx_1' }),
+    { section: 'general' },
+  )
+  assert.deepEqual(
+    buildSettingsRouteQuery('skill-catalog', { section: 'general', sandbox: 'sbx_1' }),
+    { section: 'skill-catalog', sandbox: 'sbx_1' },
+  )
+})
+
 test('canonical settings query skips a redundant replace', () => {
   assert.equal(
     settingsQueryUnchanged(

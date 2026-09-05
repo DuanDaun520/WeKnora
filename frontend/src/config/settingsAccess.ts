@@ -9,18 +9,12 @@ export type SettingsRoleKey = 'viewer' | 'contributor' | 'admin' | 'owner'
  */
 export const SETTINGS_SECTION_MIN_ROLE: Record<string, SettingsRoleKey> = {
   general: 'viewer',
-  // 模型 / Ollama / WeKnoraCloud 设置已随 000094 模型平台化迁入系统
-  // 管理控制台（/system/console），空间 Settings 不再出现这些入口。
-  websearch: 'admin',
+  // 模型 / Ollama / WeKnoraCloud 设置已随 000094 模型平台化、
+  // websearch / vectorstore / parser / storage / sandbox / mcp 六项基础
+  // 设施配置已随 000095 收权迁入系统管理控制台（/system/console）。
+  // 技能以只读「技能目录」形态回到空间 Settings（000099）：目录与文件
+  // 浏览对空间管理员开放，写动作仅系统管理员可见（见 SkillCatalogSettings）。
   chathistory: 'admin',
-  vectorstore: 'admin',
-  parser: 'admin',
-  storage: 'admin',
-  sandbox: 'admin',
-  // Install writes a root shell into the sandbox image every session of
-  // that config boots. Same Admin+ bar as the sandbox editor itself.
-  skills: 'admin',
-  mcp: 'admin',
   // 版本信息仅空间管理员可见。
   system: 'admin',
   userprofile: 'viewer',
@@ -30,15 +24,18 @@ export const SETTINGS_SECTION_MIN_ROLE: Record<string, SettingsRoleKey> = {
   memory: 'admin',
   // 沙箱密钥（个人环境变量）对普通用户隐藏，仅空间管理员可见。
   envvars: 'admin',
+  // 技能目录（000099）：空间管理员只读可见；系统管理员经 auth store 的
+  // currentTenantRole='admin' 旁路天然可见并可操作。
+  'skill-catalog': 'admin',
 }
 
 /**
  * A management-labelled avatar shortcut has a stricter threshold than the
- * corresponding read-only Settings page.
+ * corresponding read-only Settings page. Skills moved to the console
+ * (000095): the shortcut is now system-admin-only, see UserMenu.vue.
  */
 export const SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE = {
   members: 'admin',
-  skills: 'admin',
 } as const satisfies Record<string, SettingsRoleKey>
 
 export const SYSTEM_ADMIN_SETTINGS_SECTIONS = new Set([

@@ -72,6 +72,16 @@ func (r *userEnvConfigRepo) SetCordon(context.Context, uint64, string, time.Time
 func (r *userEnvConfigRepo) ClearCordon(context.Context, uint64, string) error {
 	panic("ClearCordon is outside the user env surface")
 }
+func (r *userEnvConfigRepo) ListBySourceConnection(
+	context.Context, string,
+) ([]*types.TenantSandboxConfigEntity, error) {
+	panic("ListBySourceConnection is outside the user env surface")
+}
+func (r *userEnvConfigRepo) MarkSourcePushed(
+	context.Context, uint64, string, string, time.Time,
+) error {
+	panic("MarkSourcePushed is outside the user env surface")
+}
 
 var _ repository.TenantSandboxConfigRepository = (*userEnvConfigRepo)(nil)
 

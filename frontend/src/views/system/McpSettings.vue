@@ -1,43 +1,62 @@
 <template>
-  <div class="mcp-settings">
-    <div class="section-header">
-      <h2>{{ $t('mcpSettings.title') }}</h2>
-      <p class="section-description">
-        {{ $t('mcpSettings.description') }}
-      </p>
+  <div class="panel-root mcp-settings">
+    <!-- 面板头与 UsersPanel 同款：标题 + 描述居左，刷新 / 新建按钮居右 -->
+    <div class="panel-header">
+      <div>
+        <h2>{{ $t('mcpSettings.title') }}</h2>
+        <p class="panel-header-desc">{{ $t('mcpSettings.description') }}</p>
+      </div>
+      <div class="panel-header-actions">
+        <t-button variant="outline" :loading="loading" @click="loadServices">
+          <template #icon><t-icon name="refresh" /></template>
+          {{ $t('mcpSettings.refresh') }}
+        </t-button>
+        <t-button theme="primary" @click="handleAdd">
+          <template #icon><t-icon name="add" /></template>
+          {{ $t('mcpSettings.addService') }}
+        </t-button>
+      </div>
+    </div>
+
+    <div class="console-toolbar">
+      <t-input
+        v-model="searchQuery"
+        class="toolbar-search"
+        clearable
+        :placeholder="$t('mcpSettings.searchPlaceholder')"
+      >
+        <template #prefix-icon><t-icon name="search" /></template>
+      </t-input>
+      <t-select
+        v-model="transportFilter"
+        class="toolbar-select"
+        :placeholder="$t('mcpSettings.filterTypeAll')"
+        clearable
+      >
+        <t-option value="sse" label="SSE" />
+        <t-option value="http-streamable" label="HTTP Streamable" />
+      </t-select>
     </div>
 
     <div v-if="loading" class="loading-container">
       <t-loading :text="$t('common.loading')" />
     </div>
 
-    <template v-else>
-      <div class="list-section-header">
-        <h3>{{ $t('mcpSettings.configuredServices') }}</h3>
-        <p>{{ $t('mcpSettings.manageAndTest') }}</p>
-      </div>
+    <div v-else-if="filteredServices.length === 0" class="empty-state">
+      <t-empty :description="hasActiveFilter ? $t('mcpSettings.noMatchHint') : $t('mcpSettings.emptyHint')" />
+    </div>
 
-      <div v-if="services.length === 0 && !authStore.hasRole('admin')" class="empty-state">
-        <t-empty :description="$t('mcpSettings.empty')" />
-      </div>
-
-      <div v-else class="services-grid">
+    <div v-else class="services-grid">
         <!-- 与 ModelSettings / WebSearchSettings 同形的卡片：左侧 transport 徽章 +
              标题 / 副标题 / url 三段式。开关挂在标题行右侧，三点菜单 hover 才出现。
-             SettingCard 当前没有其它消费者了，但保留组件供未来需要时复用。 -->
+             000096 平台化：卡片额外展示服务已分配的空间（builtin 对所有空间可见）。 -->
         <div
-          v-for="service in services"
+          v-for="service in filteredServices"
           :key="service.id"
-          class="service-card"
-          :class="[
-            `service-card--${service.transport_type || 'unknown'}`,
-            {
-              'service-card--builtin': service.is_builtin,
-              'service-card--clickable': isServiceCardClickable(),
-            },
-          ]"
-          :role="isServiceCardClickable() ? 'button' : undefined"
-          :tabindex="isServiceCardClickable() ? 0 : undefined"
+          class="service-card service-card--clickable"
+          :class="[`service-card--${service.transport_type || 'unknown'}`, { 'service-card--builtin': service.is_builtin }]"
+          role="button"
+          tabindex="0"
           @click="onServiceCardClick($event, service)"
           @keydown.enter="onServiceCardClick($event, service)"
         >
@@ -62,11 +81,7 @@
                 <span class="service-card__status-dot" />
                 {{ service.enabled ? $t('common.on') : $t('common.off') }}
               </span>
-              <div
-                v-if="(service.is_builtin ? getBuiltinServiceOptions() : getServiceOptions(service)).length > 0"
-                class="service-card__actions"
-                @click.stop
-              >
+              <div class="service-card__actions" @click.stop>
                 <t-dropdown
                   :options="service.is_builtin ? getBuiltinServiceOptions() : getServiceOptions(service)"
                   placement="bottom-right"
@@ -90,27 +105,32 @@
             <div v-if="service.url" class="service-card__url" :title="service.url">
               {{ service.url }}
             </div>
+            <!-- 已分配空间 chips：builtin 给一行轻提示（对所有空间可见） -->
+            <div v-if="!service.is_builtin" class="service-card__assignments">
+              <template v-if="service.assignments?.length">
+                <t-tag
+                  v-for="assignment in service.assignments"
+                  :key="assignment.tenant_id"
+                  size="small"
+                  variant="outline"
+                >
+                  {{ assignment.tenant_name }}
+                </t-tag>
+              </template>
+              <span v-else class="service-card__assignments-empty">
+                {{ $t('mcpSettings.unassigned') }}
+              </span>
+            </div>
           </div>
         </div>
-        <button
-          v-if="authStore.hasRole('admin')"
-          type="button"
-          class="service-card service-card--add"
-          @click="handleAdd"
-        >
-          <span class="service-card--add__icon" aria-hidden="true">
-            <add-icon />
-          </span>
-          <span class="service-card--add__label">{{ $t('mcpSettings.addService') }}</span>
-        </button>
       </div>
-    </template>
 
     <!-- Add/Edit Drawer -->
     <McpServiceDialog
       v-model:visible="dialogVisible"
       :service="currentService"
       :mode="dialogMode"
+      system-mode
       @success="handleDialogSuccess"
       @created="handleDialogCreated"
     />
@@ -118,35 +138,49 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { AddIcon } from 'tdesign-icons-vue-next'
 import { useI18n } from 'vue-i18n'
 import {
-  listMCPServices,
-  updateMCPService,
-  deleteMCPService,
-  type MCPService
+  listSystemMCPServices,
+  updateSystemMCPService,
+  deleteSystemMCPService,
+  type SystemMCPService
 } from '@/api/mcp-service'
-import McpServiceDialog from './components/McpServiceDialog.vue'
+import McpServiceDialog from './McpServiceDialog.vue'
 import { useConfirmDelete } from '@/components/settings/useConfirmDelete'
-import { useAuthStore } from '@/stores/auth'
 
 const { t } = useI18n()
-const authStore = useAuthStore()
 const confirmDelete = useConfirmDelete()
 
-const services = ref<MCPService[]>([])
+const services = ref<SystemMCPService[]>([])
 const loading = ref(false)
 const dialogVisible = ref(false)
 const dialogMode = ref<'add' | 'edit'>('add')
-const currentService = ref<MCPService | null>(null)
+const currentService = ref<SystemMCPService | null>(null)
 
-// Load MCP services
+// ---- 工具栏筛选（与 UsersPanel 的 console-toolbar 同款：搜索 + 类型下拉）----
+const searchQuery = ref('')
+const transportFilter = ref<'' | 'sse' | 'http-streamable'>('')
+
+const hasActiveFilter = computed(() => !!searchQuery.value.trim() || !!transportFilter.value)
+
+const filteredServices = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  return services.value.filter((service) => {
+    if (transportFilter.value && service.transport_type !== transportFilter.value) return false
+    if (!q) return true
+    return [service.name, service.description, service.url].some(
+      (field) => (field || '').toLowerCase().includes(q),
+    )
+  })
+})
+
+// Load the platform MCP catalog (with each service's workspace assignments)
 const loadServices = async () => {
   loading.value = true
   try {
-    services.value = await listMCPServices()
+    services.value = await listSystemMCPServices()
   } catch (error) {
     MessagePlugin.error(t('mcpSettings.toasts.loadFailed'))
     console.error('Failed to load MCP services:', error)
@@ -162,10 +196,7 @@ const handleAdd = () => {
   dialogVisible.value = true
 }
 
-const isServiceCardClickable = () => authStore.hasRole('admin')
-
-const onServiceCardClick = (event: Event, service: MCPService) => {
-  if (!isServiceCardClickable()) return
+const onServiceCardClick = (event: Event, service: SystemMCPService) => {
   if (event.type === 'keydown') {
     const ke = event as KeyboardEvent
     if (ke.key !== 'Enter' && ke.key !== ' ') return
@@ -177,7 +208,7 @@ const onServiceCardClick = (event: Event, service: MCPService) => {
 }
 
 // Handle edit button click
-const handleEdit = (service: MCPService) => {
+const handleEdit = (service: SystemMCPService) => {
   currentService.value = { ...service }
   dialogMode.value = 'edit'
   dialogVisible.value = true
@@ -190,11 +221,12 @@ const handleDialogSuccess = () => {
 }
 
 // Handle first create: keep the drawer open and flip it to edit mode bound to
-// the newly created service, so OAuth authorization and "test connection"
-// (both of which need a saved service id) are usable right away. The list is
-// refreshed in the background; we prefer the freshly-fetched record so the
-// edit form sees server-side fields (e.g. credential metadata).
-const handleDialogCreated = async (created: MCPService) => {
+// the newly created service, so "test connection" and the workspace
+// assignment switches (both of which need a saved service id) are usable
+// right away. The list is refreshed in the background; we prefer the
+// freshly-fetched record so the edit form sees server-side fields (e.g.
+// credential metadata).
+const handleDialogCreated = async (created: SystemMCPService) => {
   await loadServices()
   const full = services.value.find((s) => s.id === created.id) || created
   currentService.value = { ...full }
@@ -202,12 +234,12 @@ const handleDialogCreated = async (created: MCPService) => {
 }
 
 // Handle toggle enabled/disabled
-const handleToggleEnabled = async (service: MCPService) => {
+const handleToggleEnabled = async (service: SystemMCPService) => {
   if (!service || !service.id) return
 
   const originalState = service.enabled
   try {
-    await updateMCPService(service.id, { enabled: service.enabled })
+    await updateSystemMCPService(service.id, { enabled: service.enabled })
     MessagePlugin.success(service.enabled ? t('mcpSettings.toasts.enabled') : t('mcpSettings.toasts.disabled'))
   } catch (error) {
     service.enabled = originalState
@@ -217,14 +249,14 @@ const handleToggleEnabled = async (service: MCPService) => {
 }
 
 // Handle delete button click
-const handleDelete = (service: MCPService) => {
+const handleDelete = (service: SystemMCPService) => {
   if (!service || !service.id) return
 
   confirmDelete({
     body: t('mcpSettings.deleteConfirmBody', { name: service.name || t('mcpSettings.unnamed') }),
     onConfirm: async () => {
       try {
-        await deleteMCPService(service.id)
+        await deleteSystemMCPService(service.id)
         MessagePlugin.success(t('mcpSettings.toasts.deleted'))
         loadServices()
       } catch (error) {
@@ -235,14 +267,10 @@ const handleDelete = (service: MCPService) => {
   })
 }
 
-// Get service options for dropdown menu. MCP service mutations are all
-// Admin+ in the backend matrix, so non-Admins see an empty action menu.
-// 测试连接已挪到编辑抽屉的 footer，不再放在外层菜单里 — 单一入口减少
-// 用户疑惑（"为什么有两个测试入口，结果一样吗？"）。
-const getServiceOptions = (service: MCPService) => {
-  if (!authStore.hasRole('admin')) {
-    return []
-  }
+// Get service options for dropdown menu. 控制台整页仅系统管理员可达（路由
+// requiresSystemAdmin），菜单不再做角色判断。测试连接已挪到编辑抽屉的
+// footer，不再放在外层菜单里 — 单一入口减少用户疑惑。
+const getServiceOptions = (service: SystemMCPService) => {
   return [
     {
       content: service.enabled ? t('common.off') : t('common.on'),
@@ -253,12 +281,9 @@ const getServiceOptions = (service: MCPService) => {
   ]
 }
 
-// Builtin: 仅编辑（同样 Admin+ only）。内置服务测试也通过抽屉的 footer 触发，
+// Builtin: 仅编辑（不可启停/删除）。内置服务测试也通过抽屉的 footer 触发，
 // 不再在外层菜单露出"测试连接"项。
 const getBuiltinServiceOptions = () => {
-  if (!authStore.hasRole('admin')) {
-    return []
-  }
   return [
     { content: t('common.edit'), value: 'edit' }
   ]
@@ -267,7 +292,7 @@ const getBuiltinServiceOptions = () => {
 // Handle menu action. 'test' has been removed from the menu — testing now
 // lives only in the editor drawer. We keep the switch's case list narrow
 // so a stray 'test' from somewhere else falls through harmlessly.
-const handleMenuAction = (data: { value: string }, service: MCPService) => {
+const handleMenuAction = (data: { value: string }, service: SystemMCPService) => {
   switch (data.value) {
     case 'toggle':
       // Flip the local model and reuse the toggle path so the API call,
@@ -318,26 +343,10 @@ onMounted(() => {
 </script>
 
 <style scoped lang="less">
+@import './consolePanel.less';
+
 .mcp-settings {
   width: 100%;
-}
-
-.section-header {
-  margin-bottom: 28px;
-
-  h2 {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--td-text-color-primary);
-    margin: 0 0 8px 0;
-  }
-
-  .section-description {
-    font-size: 14px;
-    color: var(--td-text-color-secondary);
-    margin: 0;
-    line-height: 1.6;
-  }
 }
 
 .loading-container {
@@ -345,44 +354,15 @@ onMounted(() => {
   text-align: center;
 }
 
-.list-section-header {
-  margin-bottom: 16px;
-
-  h3 {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--td-text-color-primary);
-    margin: 0 0 4px 0;
-  }
-
-  p {
-    font-size: 13px;
-    color: var(--td-text-color-placeholder);
-    margin: 0;
-    line-height: 1.5;
-  }
-}
-
+// 空态：无服务或筛选无结果时占位（新建入口统一在 panel-header 右上角）
 .empty-state {
-  padding: 80px 0;
-  text-align: center;
-
-  :deep(.t-empty__description) {
-    font-size: 14px;
-    color: var(--td-text-color-placeholder);
-    margin-bottom: 16px;
-  }
+  padding: 48px 0;
 }
 
 .services-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 12px;
-
-  .service-card--add {
-    width: 100%;
-    height: 100%;
-  }
 }
 
 // Transport-distinguished card. 与 ModelSettings / WebSearchSettings 同形。
@@ -418,51 +398,6 @@ onMounted(() => {
   &--builtin:not(.service-card--clickable):hover {
     box-shadow: none;
     border-color: var(--td-component-stroke);
-  }
-
-  &--add {
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    min-height: 68px;
-    border-style: dashed;
-    background: transparent;
-    color: var(--td-text-color-placeholder);
-    cursor: pointer;
-    font: inherit;
-    text-align: center;
-
-    &:hover,
-    &:focus-visible {
-      color: var(--td-brand-color);
-      border-color: var(--td-brand-color);
-      background: color-mix(in srgb, var(--td-brand-color) 6%, transparent);
-      box-shadow: none;
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--td-brand-color);
-      outline-offset: 2px;
-    }
-
-    &__icon {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
-      color: var(--td-brand-color);
-      font-size: 18px;
-    }
-
-    &__label {
-      font-size: 13px;
-      font-weight: 500;
-      line-height: 1.4;
-    }
   }
 }
 
@@ -632,5 +567,24 @@ onMounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
+}
+
+// 已分配空间 chips（000096 平台化）：与 WebSearchSettings 卡片同款展示
+.service-card__assignments {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+
+  :deep(.t-tag) {
+    max-width: 100%;
+  }
+}
+
+.service-card__assignments-empty {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--td-text-color-placeholder);
 }
 </style>

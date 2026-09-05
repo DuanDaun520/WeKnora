@@ -37,6 +37,11 @@ func (r *MCPToolApprovalRepository) ListByService(ctx context.Context, tenantID 
 }
 
 // IsRequired returns true when a row exists with require_approval = true.
+//
+// Since the 000096 platform rework the policy has two layers: a workspace row
+// (tenant_id > 0) overrides the platform default row (tenant_id = 0) that the
+// admin console writes for shared services. The workspace row is checked
+// first; only when it is absent does the platform row apply.
 func (r *MCPToolApprovalRepository) IsRequired(ctx context.Context, tenantID uint64, serviceID, toolName string) (bool, error) {
 	var row types.MCPToolApproval
 	err := r.db.WithContext(ctx).
@@ -44,7 +49,22 @@ func (r *MCPToolApprovalRepository) IsRequired(ctx context.Context, tenantID uin
 		Where("tenant_id = ? AND service_id = ? AND tool_name = ?", tenantID, serviceID, toolName).
 		First(&row).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return false, nil
+		if tenantID == 0 {
+			return false, nil
+		}
+		// Fall back to the platform default policy for shared services.
+		var platformRow types.MCPToolApproval
+		err = r.db.WithContext(ctx).
+			Select("require_approval").
+			Where("tenant_id = 0 AND service_id = ? AND tool_name = ?", serviceID, toolName).
+			First(&platformRow).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("get mcp tool approval: %w", err)
+		}
+		return platformRow.RequireApproval, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("get mcp tool approval: %w", err)

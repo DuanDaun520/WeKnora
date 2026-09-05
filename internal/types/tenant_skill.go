@@ -151,9 +151,13 @@ type TenantSkillCatalogEntity struct {
 	// do not own a copy: sandbox uninstall must not delete this object.
 	BundleRef    string `gorm:"type:varchar(1024)"`
 	BundleSHA256 string `gorm:"type:varchar(64)"`
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
-	DeletedAt    gorm.DeletedAt
+	// SourcePlatformSkillID marks a row materialized from the platform skill
+	// library (000098); empty = workspace self-built. Provenance only — the
+	// row is an ordinary catalog row the workspace fully owns.
+	SourcePlatformSkillID string `gorm:"type:varchar(36)"`
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
+	DeletedAt            gorm.DeletedAt
 }
 
 // TableName pins the table so GORM's pluralizer cannot drift.

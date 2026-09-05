@@ -72,3 +72,77 @@ func NewWebSearchProviderResponses(ctx context.Context, es []*types.WebSearchPro
 	}
 	return out
 }
+
+// WebSearchProviderAssignmentDTO mirrors
+// types.WebSearchProviderAssignmentInfo — the admin-console view of one
+// "this workspace uses this service" row.
+type WebSearchProviderAssignmentDTO struct {
+	TenantID   uint64    `json:"tenant_id"`
+	TenantName string    `json:"tenant_name"`
+	IsDefault  bool      `json:"is_default"`
+	AssignedAt time.Time `json:"assigned_at"`
+}
+
+// SystemWebSearchProviderResponse is the platform-catalog shape served by
+// /system/admin/web-search-providers: the base provider plus its workspace
+// assignments. IsDefault is deliberately absent — a default is a
+// per-workspace property carried by the assignment rows, not by the
+// platform row.
+type SystemWebSearchProviderResponse struct {
+	ID          string                         `json:"id"`
+	TenantID    uint64                         `json:"tenant_id"`
+	Name        string                         `json:"name"`
+	Provider    types.WebSearchProviderType    `json:"provider"`
+	Description string                         `json:"description"`
+	Parameters  WebSearchProviderParametersDTO `json:"parameters"`
+	CreatedAt   time.Time                      `json:"created_at"`
+	UpdatedAt   time.Time                      `json:"updated_at"`
+	// Per-field "configured?" map. See MCPServiceResponse.Credentials.
+	Credentials  map[string]CredentialFieldMetadata `json:"credentials,omitempty"`
+	Assignments  []WebSearchProviderAssignmentDTO   `json:"assignments"`
+}
+
+// NewSystemWebSearchProviderResponse converts a platform entity plus its
+// assignment rows into the admin-console response shape.
+func NewSystemWebSearchProviderResponse(
+	ctx context.Context,
+	e *types.WebSearchProviderEntity,
+	assignments []types.WebSearchProviderAssignmentInfo,
+) *SystemWebSearchProviderResponse {
+	if e == nil {
+		return nil
+	}
+	params := WebSearchProviderParametersDTO{
+		EngineID:    e.Parameters.EngineID,
+		BaseURL:     e.Parameters.BaseURL,
+		ProxyURL:    e.Parameters.ProxyURL,
+		ExtraConfig: e.Parameters.ExtraConfig,
+	}
+	if !CanViewIntegrationSecrets(ctx) {
+		params.ProxyURL = ""
+		params.ExtraConfig = nil
+	}
+	dtos := make([]WebSearchProviderAssignmentDTO, 0, len(assignments))
+	for _, a := range assignments {
+		dtos = append(dtos, WebSearchProviderAssignmentDTO{
+			TenantID:   a.TenantID,
+			TenantName: a.TenantName,
+			IsDefault:  a.IsDefault,
+			AssignedAt: a.AssignedAt,
+		})
+	}
+	return &SystemWebSearchProviderResponse{
+		ID:          e.ID,
+		TenantID:    e.TenantID,
+		Name:        e.Name,
+		Provider:    e.Provider,
+		Description: e.Description,
+		Parameters:  params,
+		CreatedAt:   e.CreatedAt,
+		UpdatedAt:   e.UpdatedAt,
+		Credentials: map[string]CredentialFieldMetadata{
+			"api_key": {Configured: e.Parameters.APIKey != ""},
+		},
+		Assignments: dtos,
+	}
+}

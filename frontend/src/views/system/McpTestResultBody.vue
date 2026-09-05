@@ -99,7 +99,12 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import type { MCPTestResult, MCPTool } from '@/api/mcp-service'
-import { getMCPToolApprovals, setMCPToolApproval } from '@/api/mcp-service'
+import {
+  getMCPToolApprovals,
+  setMCPToolApproval,
+  getSystemMCPToolApprovals,
+  setSystemMCPToolApproval,
+} from '@/api/mcp-service'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 
@@ -110,9 +115,12 @@ interface Props {
   /** When true, (re)loads approval flags. Lets the dialog gate the fetch on
    *  visibility; defaults to true for always-rendered inline usage. */
   active?: boolean
+  /** 平台目录模式（000096）：读写 tenant_id=0 的平台默认审批策略，而非
+   *  当前空间的覆盖行。运行时解析优先空间行、回退平台行。 */
+  systemMode?: boolean
 }
 
-const props = withDefaults(defineProps<Props>(), { active: true })
+const props = withDefaults(defineProps<Props>(), { active: true, systemMode: false })
 
 const expandedToolIndex = ref<number | null>(null)
 const { t } = useI18n()
@@ -130,7 +138,9 @@ const mergeApprovals = async () => {
     return
   }
   try {
-    const rows = await getMCPToolApprovals(props.serviceId)
+    const rows = await (props.systemMode
+      ? getSystemMCPToolApprovals(props.serviceId)
+      : getMCPToolApprovals(props.serviceId))
     const map = new Map(rows.map((r) => [r.tool_name, r.require_approval]))
     displayTools.value = tools.map((tool) => ({
       ...tool,
@@ -155,7 +165,9 @@ const onRequireApprovalChange = async (toolName: string, value: boolean) => {
   if (!props.serviceId) return
   approvalLoading.value = { ...approvalLoading.value, [toolName]: true }
   try {
-    await setMCPToolApproval(props.serviceId, toolName, value)
+    await (props.systemMode
+      ? setSystemMCPToolApproval(props.serviceId, toolName, value)
+      : setMCPToolApproval(props.serviceId, toolName, value))
     displayTools.value = displayTools.value.map((x) =>
       x.name === toolName ? { ...x, require_approval: value } : x
     )

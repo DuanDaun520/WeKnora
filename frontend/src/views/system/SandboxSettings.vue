@@ -91,6 +91,10 @@
               <t-tag v-if="isLegacyRecord(record)" theme="warning" variant="light" size="small">
                 {{ $t('settings.sandbox.legacyConfig') }}
               </t-tag>
+              <!-- 000097：物化行只是普通配置行，来源仅作信息展示，不影响任何操作 -->
+              <t-tag v-else-if="record.source_connection_id" theme="primary" variant="light" size="small">
+                {{ $t('settings.sandbox.fromPlatformConnection') }}
+              </t-tag>
               <div class="sandbox-card__actions" @click.stop>
                 <t-dropdown
                   :options="cardMenu(record)"

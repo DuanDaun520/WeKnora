@@ -44,8 +44,12 @@ func RegisterModelRoutes(
 }
 
 // Sandbox configs are workspace infrastructure that hold provider credentials.
-// Scoped API keys cannot safely receive partial authority over them yet because
-// mutation can strand remote sandboxes.
+// Since the admin-console 按空间代管 migration the whole management surface
+// (config CRUD, inventory, config-scoped skills) is SystemAdmin-only and the
+// admin console drives it through X-Tenant-ID; workspace admins keep the
+// Viewer reads (agent editors resolve sandbox configs). Scoped API keys
+// cannot safely receive partial authority over them yet because mutation can
+// strand remote sandboxes.
 func RegisterSandboxConfigRoutes(
 	r *gin.RouterGroup,
 	h *handler.SandboxConfigHandler,
@@ -55,27 +59,27 @@ func RegisterSandboxConfigRoutes(
 	configs := g.apiKeyGroup(r.Group("/sandbox-configs"), apiKeyFullAccess())
 	{
 		configs.GET("", g.Viewer(), h.List)
-		configs.PUT("/workspace-policy", g.Admin(), h.SetWorkspacePolicy)
-		configs.POST("/templates/query", g.Admin(), h.QueryTemplates)
-		configs.POST("", g.Admin(), h.Create)
+		configs.PUT("/workspace-policy", g.SystemAdmin(), h.SetWorkspacePolicy)
+		configs.POST("/templates/query", g.SystemAdmin(), h.QueryTemplates)
+		configs.POST("", g.SystemAdmin(), h.Create)
 		configs.GET("/:id", g.Viewer(), h.Get)
-		configs.PUT("/:id", g.Admin(), h.Update)
-		configs.DELETE("/:id", g.Admin(), h.Delete)
-		configs.GET("/:id/sandboxes", g.Admin(), h.Inventory)
-		// Skills are Admin+ throughout, reads included: an upload drives a
-		// root shell whose output is baked into the image every session of
+		configs.PUT("/:id", g.SystemAdmin(), h.Update)
+		configs.DELETE("/:id", g.SystemAdmin(), h.Delete)
+		configs.GET("/:id/sandboxes", g.SystemAdmin(), h.Inventory)
+		// Skills are SystemAdmin throughout, reads included: an upload drives
+		// a root shell whose output is baked into the image every session of
 		// this config boots, and the listing names what that image carries.
-		configs.GET("/:id/skills", g.Admin(), skills.List)
-		configs.POST("/:id/skills", g.Admin(), skills.Upload)
-		configs.GET("/:id/skills/:skillId", g.Admin(), skills.Get)
-		configs.GET("/:id/skills/:skillId/files", g.Admin(), skills.ListFiles)
-		configs.GET("/:id/skills/:skillId/files/content", g.Admin(), skills.GetFile)
-		configs.POST("/:id/skills/:skillId/reinstall", g.Admin(), skills.Reinstall)
-		configs.POST("/:id/skills/:skillId/stop", g.Admin(), skills.Stop)
-		configs.PATCH("/:id/skills/:skillId", g.Admin(), skills.Patch)
-		configs.DELETE("/:id/skills/:skillId", g.Admin(), skills.Delete)
-		configs.GET("/:id/skills/:skillId/install-events", g.Admin(), skills.InstallEvents)
-		configs.GET("/:id/skills/:skillId/transcript", g.Admin(), skills.InstallTranscript)
+		configs.GET("/:id/skills", g.SystemAdmin(), skills.List)
+		configs.POST("/:id/skills", g.SystemAdmin(), skills.Upload)
+		configs.GET("/:id/skills/:skillId", g.SystemAdmin(), skills.Get)
+		configs.GET("/:id/skills/:skillId/files", g.SystemAdmin(), skills.ListFiles)
+		configs.GET("/:id/skills/:skillId/files/content", g.SystemAdmin(), skills.GetFile)
+		configs.POST("/:id/skills/:skillId/reinstall", g.SystemAdmin(), skills.Reinstall)
+		configs.POST("/:id/skills/:skillId/stop", g.SystemAdmin(), skills.Stop)
+		configs.PATCH("/:id/skills/:skillId", g.SystemAdmin(), skills.Patch)
+		configs.DELETE("/:id/skills/:skillId", g.SystemAdmin(), skills.Delete)
+		configs.GET("/:id/skills/:skillId/install-events", g.SystemAdmin(), skills.InstallEvents)
+		configs.GET("/:id/skills/:skillId/transcript", g.SystemAdmin(), skills.InstallTranscript)
 	}
 }
 
@@ -130,12 +134,13 @@ func RegisterInitializationRoutes(r *gin.RouterGroup, handler *handler.Initializ
 
 // RegisterMCPServiceRoutes registers MCP service routes.
 //
-// MCP services are tenant-level integrations (external tool servers); we
-// gate reads to Viewer+ and any mutation/test to Admin+. Tool-approval
-// resolution is also Admin+ since approving a pending tool call grants
-// the agent permission to execute side-effecting external commands.
-// Credential subresource writes are Admin+ as well since secrets are
-// tenant-scoped.
+// MCP services are tenant-level integrations (external tool servers).
+// Since the admin-console 按空间代管 migration the management surface
+// (CRUD, connection tests, credential subresource, tool-approval policy)
+// is SystemAdmin-only, driven from the console through X-Tenant-ID;
+// workspace members keep the Viewer reads (agent editors list services,
+// tools and per-user OAuth state). Interactive /agent flows stay Viewer+ —
+// they are runtime conversations, not configuration.
 func RegisterMCPServiceRoutes(
 	r *gin.RouterGroup,
 	handler *handler.MCPServiceHandler,
@@ -151,29 +156,29 @@ func RegisterMCPServiceRoutes(
 
 	mcpServices := g.apiKeyGroup(r.Group("/mcp-services"), apiKeyManageMCPServices(apiKeyFullAccess()))
 	{
-		// Create MCP service — Admin+
-		mcpServices.POST("", g.Admin(), handler.CreateMCPService)
+		// Create MCP service — SystemAdmin
+		mcpServices.POST("", g.SystemAdmin(), handler.CreateMCPService)
 		// List MCP services — Viewer+
 		mcpServices.GET("", g.Viewer(), handler.ListMCPServices)
 		// Get MCP service by ID — Viewer+
 		mcpServices.GET("/:id", g.Viewer(), handler.GetMCPService)
-		// Update MCP service — Admin+
-		mcpServices.PUT("/:id", g.Admin(), handler.UpdateMCPService)
-		// Delete MCP service — Admin+
-		mcpServices.DELETE("/:id", g.Admin(), handler.DeleteMCPService)
-		// Test MCP service connection — Admin+ (probes external infra)
-		mcpServices.POST("/:id/test", g.Admin(), handler.TestMCPService)
+		// Update MCP service — SystemAdmin
+		mcpServices.PUT("/:id", g.SystemAdmin(), handler.UpdateMCPService)
+		// Delete MCP service — SystemAdmin
+		mcpServices.DELETE("/:id", g.SystemAdmin(), handler.DeleteMCPService)
+		// Test MCP service connection — SystemAdmin (probes external infra)
+		mcpServices.POST("/:id/test", g.SystemAdmin(), handler.TestMCPService)
 		// Get MCP service tools — Viewer+
 		mcpServices.GET("/:id/tools", g.Viewer(), handler.GetMCPServiceTools)
 		// Get MCP service resources — Viewer+
 		mcpServices.GET("/:id/resources", g.Viewer(), handler.GetMCPServiceResources)
 		// Per-field credential subresource: secrets never travel via the main
-		// PUT body. See internal/handler/mcp_credentials.go for the contract. — Admin+
-		mcpServices.PUT("/:id/credentials", g.Admin(), credHandler.Put)
-		mcpServices.DELETE("/:id/credentials/:field", g.Admin(), credHandler.DeleteField)
-		// MCP tool human approval (issue #1173) — Viewer+ to read, Admin+ to set policy
+		// PUT body. See internal/handler/mcp_credentials.go for the contract. — SystemAdmin
+		mcpServices.PUT("/:id/credentials", g.SystemAdmin(), credHandler.Put)
+		mcpServices.DELETE("/:id/credentials/:field", g.SystemAdmin(), credHandler.DeleteField)
+		// MCP tool human approval (issue #1173) — Viewer+ to read, SystemAdmin to set policy
 		mcpServices.GET("/:id/tool-approvals", g.Viewer(), handler.ListMCPToolApprovals)
-		mcpServices.PUT("/:id/tool-approvals/:tool_name", g.Admin(), handler.SetMCPToolApproval)
+		mcpServices.PUT("/:id/tool-approvals/:tool_name", g.SystemAdmin(), handler.SetMCPToolApproval)
 		// Per-user OAuth authorization flow. Viewer+ may authorize/inspect/
 		// revoke their own token; the callback is the separate public route
 		// registered above.
@@ -208,13 +213,17 @@ func RegisterWebSearchRoutes(r *gin.RouterGroup, webSearchHandler *handler.WebSe
 	}
 }
 
-// RegisterWebSearchProviderRoutes registers CRUD routes for web search
-// provider configurations.
+// RegisterWebSearchProviderRoutes registers the tenant-scoped web search
+// provider routes.
 //
-// Provider rows hold external service credentials (Bing, Tavily, Google,
-// etc.); reads are Viewer+, all mutations / connection tests (which
-// probe external systems with stored credentials) and the per-field
-// credential subresource are Admin+.
+// Since the 000095 platform rework provider rows are platform-owned and
+// shared with workspaces through tenant_web_search_provider_assignments
+// (see routes_system_websearch.go for the admin-console CRUD + assignment
+// endpoints). This group keeps two duties: reads (Viewer+) resolve a
+// workspace's assigned services for the chat input and agent editors, and
+// the SystemAdmin-gated writes remain registered as the platform-API-key
+// surface (manage_web_search) — their handlers operate on the platform
+// catalog, with the X-Tenant-ID only scoping the visibility check.
 func RegisterWebSearchProviderRoutes(
 	r *gin.RouterGroup,
 	h *handler.WebSearchProviderHandler,
@@ -225,58 +234,60 @@ func RegisterWebSearchProviderRoutes(
 	{
 		// List available provider types (metadata for UI forms) — Viewer+
 		providers.GET("/types", g.Viewer(), h.ListProviderTypes)
-		// Test with raw credentials (no persistence) — Admin+
-		providers.POST("/test", g.Admin(), h.TestProviderRaw)
+		// Test with raw credentials (no persistence) — SystemAdmin
+		providers.POST("/test", g.SystemAdmin(), h.TestProviderRaw)
 		// CRUD
-		providers.POST("", g.Admin(), h.CreateProvider)
+		providers.POST("", g.SystemAdmin(), h.CreateProvider)
 		providers.GET("", g.Viewer(), h.ListProviders)
 		providers.GET("/:id", g.Viewer(), h.GetProvider)
-		providers.PUT("/:id", g.Admin(), h.UpdateProvider)
-		providers.DELETE("/:id", g.Admin(), h.DeleteProvider)
-		// Per-field credential subresource — Admin+
-		providers.PUT("/:id/credentials", g.Admin(), credHandler.Put)
-		providers.DELETE("/:id/credentials/:field", g.Admin(), credHandler.DeleteField)
-		// Test existing saved provider — Admin+
-		providers.POST("/:id/test", g.Admin(), h.TestProviderByID)
+		providers.PUT("/:id", g.SystemAdmin(), h.UpdateProvider)
+		providers.DELETE("/:id", g.SystemAdmin(), h.DeleteProvider)
+		// Per-field credential subresource — SystemAdmin
+		providers.PUT("/:id/credentials", g.SystemAdmin(), credHandler.Put)
+		providers.DELETE("/:id/credentials/:field", g.SystemAdmin(), credHandler.DeleteField)
+		// Test existing saved provider — SystemAdmin
+		providers.POST("/:id/test", g.SystemAdmin(), h.TestProviderByID)
 	}
 }
 
 // RegisterVectorStoreRoutes registers CRUD routes for vector store configurations.
 //
-// Vector stores are tenant-level infrastructure; reads are Viewer+, all
-// writes (and connection tests, which probe external systems with stored
-// credentials) are Admin+.
+// Vector stores are tenant-level infrastructure. Since the admin-console
+// 按空间代管 migration the management surface is SystemAdmin-only; reads
+// stay Viewer+ (KB creation resolves candidate stores).
 func RegisterVectorStoreRoutes(r *gin.RouterGroup, h *handler.VectorStoreHandler, g *rbacGuards) {
 	stores := g.apiKeyGroup(r.Group("/vector-stores"), apiKeyManageVectorStores(apiKeyFullAccess()))
 	{
 		// List available engine types (metadata for UI forms) — Viewer+
 		stores.GET("/types", g.Viewer(), h.ListStoreTypes)
-		// Test with raw credentials (no persistence) — Admin+
-		stores.POST("/test", g.Admin(), h.TestStoreRaw)
+		// Test with raw credentials (no persistence) — SystemAdmin
+		stores.POST("/test", g.SystemAdmin(), h.TestStoreRaw)
 		// CRUD
-		stores.POST("", g.Admin(), h.CreateStore)
+		stores.POST("", g.SystemAdmin(), h.CreateStore)
 		stores.GET("", g.Viewer(), h.ListStores)
 		stores.GET("/:id", g.Viewer(), h.GetStore)
-		stores.PUT("/:id", g.Admin(), h.UpdateStore)
-		stores.DELETE("/:id", g.Admin(), h.DeleteStore)
-		// Test existing saved or env store — Admin+
-		stores.POST("/:id/test", g.Admin(), h.TestStoreByID)
+		stores.PUT("/:id", g.SystemAdmin(), h.UpdateStore)
+		stores.DELETE("/:id", g.SystemAdmin(), h.DeleteStore)
+		// Test existing saved or env store — SystemAdmin
+		stores.POST("/:id/test", g.SystemAdmin(), h.TestStoreByID)
 	}
 }
 
 // RegisterStorageBackendRoutes manages concrete object/file storage instances.
+// Management surface is SystemAdmin since the admin-console 按空间代管
+// migration (console drives it through X-Tenant-ID); reads stay Viewer+.
 func RegisterStorageBackendRoutes(r *gin.RouterGroup, h *handler.StorageBackendHandler, g *rbacGuards) {
 	backends := g.apiKeyGroup(r.Group("/storage-backends"), apiKeyManageStorageBackends(apiKeyFullAccess()))
 	{
 		backends.GET("/types", g.Viewer(), h.Types)
-		backends.POST("/test", g.Admin(), h.TestRaw)
-		backends.POST("", g.Admin(), h.Create)
+		backends.POST("/test", g.SystemAdmin(), h.TestRaw)
+		backends.POST("", g.SystemAdmin(), h.Create)
 		backends.GET("", g.Viewer(), h.List)
 		backends.GET("/:id", g.Viewer(), h.Get)
-		backends.PUT("/:id", g.Admin(), h.Update)
-		backends.DELETE("/:id", g.Admin(), h.Delete)
-		backends.POST("/:id/test", g.Admin(), h.TestByID)
-		backends.PUT("/:id/default", g.Admin(), h.SetDefault)
+		backends.PUT("/:id", g.SystemAdmin(), h.Update)
+		backends.DELETE("/:id", g.SystemAdmin(), h.Delete)
+		backends.POST("/:id/test", g.SystemAdmin(), h.TestByID)
+		backends.PUT("/:id/default", g.SystemAdmin(), h.SetDefault)
 	}
 }
 

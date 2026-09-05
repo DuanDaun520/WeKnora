@@ -154,6 +154,52 @@ const (
 	AuditActionSystemModelCredentials AuditAction = "system.model_credentials_changed"
 	AuditActionSystemModelsAssigned   AuditAction = "system.tenant_models_assigned"
 
+	// Platform web-search governance actions fired by the
+	// /system/admin/web-search-providers* endpoints (000095 rework: search
+	// services are configured once at platform level and shared with
+	// workspaces through explicit assignments). TenantID=0 (system scope);
+	// TargetType=web_search_provider / TargetID=<provider id>. The
+	// assignment action's details carry the tenant id list.
+	AuditActionSystemWebSearchProviderCreated  AuditAction = "system.web_search_provider_created"
+	AuditActionSystemWebSearchProviderUpdated  AuditAction = "system.web_search_provider_updated"
+	AuditActionSystemWebSearchProviderDeleted  AuditAction = "system.web_search_provider_deleted"
+	AuditActionSystemWebSearchProviderAssigned AuditAction = "system.web_search_provider_tenants_assigned"
+
+	// Platform MCP governance actions fired by the
+	// /system/admin/mcp-services* endpoints (000096 rework: MCP services are
+	// configured once at platform level and shared with workspaces through
+	// explicit assignments). TenantID=0 (system scope); TargetType=
+	// mcp_service / TargetID=<service id>. The assignment action's details
+	// carry the tenant id list.
+	AuditActionSystemMCPServiceCreated  AuditAction = "system.mcp_service_created"
+	AuditActionSystemMCPServiceUpdated  AuditAction = "system.mcp_service_updated"
+	AuditActionSystemMCPServiceDeleted  AuditAction = "system.mcp_service_deleted"
+	AuditActionSystemMCPServiceAssigned AuditAction = "system.mcp_service_tenants_assigned"
+
+	// Platform sandbox connections (000097): a provider connection configured
+	// once and materialized into workspaces through explicit assignments;
+	// edits propagate only via the manual push action. TenantID=0 (system
+	// scope); TargetType=sandbox_connection / TargetID=<connection id>. The
+	// assignment action's details carry the tenant id list; the push action's
+	// carry per-status counts.
+	AuditActionSystemSandboxConnectionCreated  AuditAction = "system.sandbox_connection_created"
+	AuditActionSystemSandboxConnectionUpdated  AuditAction = "system.sandbox_connection_updated"
+	AuditActionSystemSandboxConnectionDeleted  AuditAction = "system.sandbox_connection_deleted"
+	AuditActionSystemSandboxConnectionAssigned AuditAction = "system.sandbox_connection_tenants_assigned"
+	AuditActionSystemSandboxConnectionPushed   AuditAction = "system.sandbox_connection_pushed"
+
+	// Platform skill library (000098): a skill registered once and
+	// materialized into workspaces through explicit assignments; edits
+	// propagate only via the manual push action, installs stay a per-workspace
+	// decision. TenantID=0 (system scope); TargetType=platform_skill /
+	// TargetID=<skill id>. The assignment action's details carry the tenant id
+	// list; the push action's carry per-status counts.
+	AuditActionSystemPlatformSkillCreated  AuditAction = "system.platform_skill_created"
+	AuditActionSystemPlatformSkillUpdated  AuditAction = "system.platform_skill_updated"
+	AuditActionSystemPlatformSkillDeleted  AuditAction = "system.platform_skill_deleted"
+	AuditActionSystemPlatformSkillAssigned AuditAction = "system.platform_skill_tenants_assigned"
+	AuditActionSystemPlatformSkillPushed   AuditAction = "system.platform_skill_pushed"
+
 	// Runtime queue mutations are privileged SystemAdmin actions. Retrying an
 	// archived task can repeat its original side effects; deleting one removes
 	// the Redis failure record. Both must leave a platform audit trail.

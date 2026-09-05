@@ -626,6 +626,18 @@
     100% { background-position: -100% 0; }
   }
 
+  // 外链图片加载失败后的文字占位（模型幻觉 URL / 失效外链）。
+  // 由 attachExternalImageErrorFallback 在 <img> error 时替换生成。
+  :deep(.markdown-image-unavailable) {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 6px;
+    background: var(--td-bg-color-secondarycontainer, #f3f3f3);
+    color: var(--td-text-color-secondary);
+    font-size: 12px;
+    line-height: 20px;
+  }
+
   :deep(p:has(> img:only-child)) {
     margin: 1.25em 0;
     line-height: 0;

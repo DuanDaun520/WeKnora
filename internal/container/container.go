@@ -164,6 +164,9 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewMCPToolApprovalRepository))
 	must(container.Provide(repository.NewMCPOAuthRepository))
 	must(container.Provide(repository.NewTenantSandboxConfigRepository))
+	must(container.Provide(repository.NewSandboxConnectionRepository))
+	must(container.Provide(repository.NewPlatformSkillRepository))
+	must(container.Provide(repository.NewPlatformSkillAssignmentRepository))
 	must(container.Provide(repository.NewTenantSkillRepository))
 	must(container.Provide(repository.NewCustomAgentRepository))
 	must(container.Provide(repository.NewOrganizationRepository))
@@ -223,6 +226,30 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		files interfaces.StorageBackendResolver,
 	) *service.TenantSandboxConfigService {
 		return service.NewTenantSandboxConfigService(repo, agents, buildGlobalSandboxConfig(), skills, files)
+	}))
+	// The platform sandbox-connection service takes narrow local interfaces,
+	// so it is wired through an explicit closure like its tenant sibling.
+	must(container.Provide(func(
+		connections repository.SandboxConnectionRepository,
+		configs repository.TenantSandboxConfigRepository,
+		configSvc *service.TenantSandboxConfigService,
+		skills repository.TenantSkillRepository,
+		tenants interfaces.TenantService,
+	) *service.SandboxConnectionService {
+		return service.NewSandboxConnectionService(connections, configs, configSvc, skills, tenants)
+	}))
+	// The platform skill library service (000098) rides the tenant skill
+	// service for materialization and takes the same narrow tenant reader as
+	// its sandbox-connection sibling.
+	must(container.Provide(func(
+		skills repository.PlatformSkillRepository,
+		assignments repository.PlatformSkillAssignmentRepository,
+		tenantSkills repository.TenantSkillRepository,
+		catalogSvc *service.TenantSkillService,
+		tenants interfaces.TenantService,
+		resolver interfaces.StorageBackendResolver,
+	) *service.PlatformSkillService {
+		return service.NewPlatformSkillService(skills, assignments, tenantSkills, catalogSvc, tenants, resolver)
 	}))
 	must(container.Provide(func(s *service.TenantSandboxConfigService) service.WorkspaceSandboxPolicy {
 		return s
@@ -416,8 +443,12 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewMCPServiceHandler))
 	must(container.Provide(handler.NewMCPCredentialsHandler))
 	must(container.Provide(handler.NewMCPOAuthHandler))
+	must(container.Provide(handler.NewSystemMCPServiceHandler))
+	must(container.Provide(handler.NewSystemSandboxConnectionHandler))
+	must(container.Provide(handler.NewSystemSkillHandler))
 	must(container.Provide(handler.NewModelCredentialsHandler))
 	must(container.Provide(handler.NewWebSearchProviderCredentialsHandler))
+	must(container.Provide(handler.NewSystemWebSearchProviderHandler))
 	must(container.Provide(handler.NewDataSourceCredentialsHandler))
 	must(container.Provide(handler.NewWebSearchHandler))
 	must(container.Provide(handler.NewWebSearchProviderHandler))
@@ -1626,6 +1657,7 @@ func registerWebSearchProviders(registry *infra_web_search.Registry) {
 	registry.Register("zhipu", infra_web_search.NewZhipuProvider)
 	registry.Register("exa", infra_web_search.NewExaProvider)
 	registry.Register("metaso", infra_web_search.NewMetasoProvider)
+	registry.Register("serpbase", infra_web_search.NewSerpbaseProvider)
 }
 
 // registerIMService registers adapter factories, loads enabled channels, and

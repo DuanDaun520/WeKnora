@@ -556,7 +556,7 @@ import { useSettingsStore } from '@/stores/settings';
 import { useAuthStore } from '@/stores/auth';
 import { useI18n } from 'vue-i18n';
 import i18n from '@/i18n';
-import { hydrateProtectedFileImages, clearProtectedFileFailureCache, sanitizeMarkdownHTML } from '@/utils/security';
+import { hydrateProtectedFileImages, clearProtectedFileFailureCache, sanitizeMarkdownHTML, attachExternalImageErrorFallback } from '@/utils/security';
 import {
   artifactIndexFromEventTarget,
   hydrateArtifactImages,
@@ -931,6 +931,7 @@ watch(
     clearProtectedFileFailureCache();
     nextTick(async () => {
       await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+    attachExternalImageErrorFallback(rootElement.value, t('error.imageUnavailable'));
     });
   },
 );
@@ -1406,6 +1407,7 @@ watch(eventStream, (stream) => {
 
   nextTick(async () => {
     await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+    attachExternalImageErrorFallback(rootElement.value, t('error.imageUnavailable'));
     await enhanceMarkdownContainer(rootElement.value);
     // Auto-scroll thinking detail content to bottom during streaming
     if (newActiveIds.size > 0 && rootElement.value) {
@@ -1587,6 +1589,7 @@ watch(answerFullyRendered, (ready) => {
   clearProtectedFileFailureCache();
   nextTick(async () => {
     await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+    attachExternalImageErrorFallback(rootElement.value, t('error.imageUnavailable'));
     await enhanceMarkdownContainer(rootElement.value);
   });
 }, { immediate: true });
@@ -2071,6 +2074,7 @@ const toggleIntermediateSteps = () => {
   nextTick(async () => {
     if (rootElement.value) {
       await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+      attachExternalImageErrorFallback(rootElement.value, t('error.imageUnavailable'));
     }
   });
 };
@@ -2409,6 +2413,7 @@ onMounted(() => {
     root.addEventListener('keydown', keydownListener, true);
     rebindCitations();
     await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+    attachExternalImageErrorFallback(rootElement.value, t('error.imageUnavailable'));
     await hydrateArtifactImages(rootElement.value, artifactRefContext.value);
   });
 });
@@ -2434,6 +2439,7 @@ onUpdated(() => {
     // de-duped, and failures back off for a cooldown — so a not-yet-ready file
     // simply retries later (and the answerFullyRendered pass is the backstop).
     await hydrateProtectedFileImages(rootElement.value, protectedFileAccess.value);
+    attachExternalImageErrorFallback(rootElement.value, t('error.imageUnavailable'));
     await hydrateArtifactImages(rootElement.value, artifactRefContext.value);
   });
 });

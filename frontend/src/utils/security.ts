@@ -577,3 +577,76 @@ export async function hydrateProtectedFileImages(
     }
   }));
 }
+
+// External (http/https) markdown images can fail to load — most often because
+// the model fabricated a placeholder URL that was never in the retrieved
+// context. Protected resource:// images are removed silently by
+// hydrateProtectedFileImages when the proxy 404s; plain external images got
+// no such treatment and left an empty gap. This pass swaps failed loads for
+// a short notice instead. Like the protected-file caches it hangs off window
+// so Vite hot updates don't forget already-known-broken URLs.
+const brokenExternalImageSources = (() => {
+  if (typeof window === 'undefined') return new Set<string>();
+  const scope = window as typeof window & { __weknoraBrokenImageSourcesV1__?: Set<string> };
+  scope.__weknoraBrokenImageSourcesV1__ ||= new Set<string>();
+  return scope.__weknoraBrokenImageSourcesV1__;
+})();
+
+function swapBrokenExternalImage(img: HTMLImageElement, unavailableLabel: string): void {
+  if (!img.isConnected) return;
+  if (unavailableLabel) {
+    const note = document.createElement('span');
+    note.className = 'markdown-image-unavailable';
+    note.textContent = unavailableLabel;
+    img.replaceWith(note);
+    return;
+  }
+  // No label (i18n-free surfaces like the embed page): remove silently,
+  // including the empty <p> wrapper markdown emits for standalone images.
+  const parent = img.parentElement;
+  img.remove();
+  if (parent?.tagName === 'P' && !parent.textContent?.trim() && parent.children.length === 0) {
+    parent.remove();
+  }
+}
+
+/**
+ * 给普通外链 Markdown 图片挂加载失败兜底：失败后以文字占位（提供
+ * unavailableLabel 时）或直接移除（未提供时）替换 <img>，
+ * 避免模型编造的无效图片链接在回答里留下空白/破图。
+ * provider:// 受保护图片不在此处理（由 hydrateProtectedFileImages 负责移除）。
+ */
+export function attachExternalImageErrorFallback(
+  root: ParentNode | null | undefined,
+  unavailableLabel?: string,
+): void {
+  if (!root || typeof window === 'undefined') {
+    return;
+  }
+  root.querySelectorAll<HTMLImageElement>('img.markdown-image').forEach((img) => {
+    const src = (img.getAttribute('src') || '').trim();
+    if (!src || src.startsWith('blob:') || src.startsWith('data:')) return;
+    if (isProviderFileURL(src) || img.getAttribute('data-protected-src')) return;
+    if (img.dataset.imageErrorWatched === '1') return;
+    img.dataset.imageErrorWatched = '1';
+    // Typewriter re-renders recreate <img> elements; remembered URLs swap at
+    // once instead of waiting for another error round-trip.
+    if (brokenExternalImageSources.has(src)) {
+      swapBrokenExternalImage(img, unavailableLabel || '');
+      return;
+    }
+    if (img.complete && img.naturalWidth === 0) {
+      brokenExternalImageSources.add(src);
+      swapBrokenExternalImage(img, unavailableLabel || '');
+      return;
+    }
+    img.addEventListener(
+      'error',
+      () => {
+        brokenExternalImageSources.add(src);
+        swapBrokenExternalImage(img, unavailableLabel || '');
+      },
+      { once: true },
+    );
+  });
+}

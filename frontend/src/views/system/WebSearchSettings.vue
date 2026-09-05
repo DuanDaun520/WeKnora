@@ -1,26 +1,62 @@
 <template>
-  <div class="websearch-settings">
-    <div class="section-header">
-      <h2>{{ t('webSearchSettings.title') }}</h2>
-      <p class="section-description">{{ t('webSearchSettings.description') }}</p>
+  <div class="panel-root websearch-settings">
+    <!-- 面板头与 UsersPanel 同款：标题 + 描述居左，刷新 / 新建按钮居右 -->
+    <div class="panel-header">
+      <div>
+        <h2>{{ t('webSearchSettings.title') }}</h2>
+        <p class="panel-header-desc">{{ t('webSearchSettings.description') }}</p>
+      </div>
+      <div class="panel-header-actions">
+        <t-button variant="outline" :loading="listLoading" @click="loadProviderEntities">
+          <template #icon><t-icon name="refresh" /></template>
+          {{ t('webSearchSettings.refresh') }}
+        </t-button>
+        <t-button theme="primary" @click="openAddDialog">
+          <template #icon><t-icon name="add" /></template>
+          {{ t('webSearchSettings.addProvider') }}
+        </t-button>
+      </div>
     </div>
 
-    <h3 class="list-section-title">{{ t('webSearchSettings.providersTitle') }}</h3>
+    <div class="console-toolbar">
+      <t-input
+        v-model="searchQuery"
+        class="toolbar-search"
+        clearable
+        :placeholder="t('webSearchSettings.searchPlaceholder')"
+      >
+        <template #prefix-icon><t-icon name="search" /></template>
+      </t-input>
+      <t-select
+        v-model="providerFilter"
+        class="toolbar-select"
+        :placeholder="t('webSearchSettings.filterTypeAll')"
+        clearable
+      >
+        <t-option v-for="pt in providerTypes" :key="pt.id" :value="pt.id" :label="pt.name" />
+      </t-select>
+    </div>
+
+    <div v-if="listLoading" class="loading-container">
+      <t-loading :text="t('common.loading')" />
+    </div>
+
+    <div v-else-if="filteredProviders.length === 0" class="empty-state">
+      <t-empty :description="hasActiveFilter ? t('webSearchSettings.noMatchHint') : t('webSearchSettings.emptyHint')" />
+    </div>
 
     <!-- Provider List —— 与 ModelSettings 的卡片同形：左侧标识徽章 + 标题 / 副标题 / proxy URL 三段式。
          不复用 SettingCard 的原因和 Models 一样：每页有微妙不同的右上侧栏需求（这里没有控件，
-         Mcp 有开关），SettingCard 仍服务于其它消费者。 -->
-    <div v-if="providerEntities.length === 0 && !authStore.hasRole('admin')" class="empty-state">
-      <t-empty :description="t('webSearchSettings.noProvidersDesc')" />
-    </div>
+         Mcp 有开关），SettingCard 仍服务于其它消费者。
+         000095 平台化：卡片额外展示服务已分配的空间（默认空间带 tag）。 -->
     <div v-else class="provider-grid">
       <div
-        v-for="entity in providerEntities"
+        v-for="entity in filteredProviders"
         :key="entity.id"
         class="provider-card"
-        :class="[`provider-card--${entity.provider}`, { 'provider-card--clickable': isProviderCardClickable() }]"
-        :role="isProviderCardClickable() ? 'button' : undefined"
-        :tabindex="isProviderCardClickable() ? 0 : undefined"
+        :class="[`provider-card--${entity.provider}`, 'provider-card--clickable']"
+        role="button"
+        tabindex="0"
         @click="onProviderCardClick($event, entity)"
         @keydown.enter="onProviderCardClick($event, entity)"
       >
@@ -71,19 +107,28 @@
           <div v-if="entity.parameters?.proxy_url" class="provider-card__url" :title="entity.parameters.proxy_url">
             {{ entity.parameters.proxy_url }}
           </div>
+          <!-- 已分配空间 chips：默认空间带 tag；未分配时给一行轻提示 -->
+          <div class="provider-card__assignments">
+            <template v-if="entity.assignments?.length">
+              <t-tag
+                v-for="assignment in entity.assignments"
+                :key="assignment.tenant_id"
+                size="small"
+                variant="outline"
+                :class="{ 'provider-card__tenant-chip--default': assignment.is_default }"
+              >
+                {{ assignment.tenant_name }}
+                <span v-if="assignment.is_default" class="provider-card__tenant-default">
+                  {{ t('webSearchSettings.defaultTag') }}
+                </span>
+              </t-tag>
+            </template>
+            <span v-else class="provider-card__assignments-empty">
+              {{ t('webSearchSettings.unassigned') }}
+            </span>
+          </div>
         </div>
       </div>
-      <button
-        v-if="authStore.hasRole('admin')"
-        type="button"
-        class="provider-card provider-card--add"
-        @click="openAddDialog"
-      >
-        <span class="provider-card--add__icon" aria-hidden="true">
-          <add-icon />
-        </span>
-        <span class="provider-card--add__label">{{ t('webSearchSettings.addProvider') }}</span>
-      </button>
     </div>
 
     <!-- Add/Edit Drawer — 与 ModelEditorDialog / Parser / Storage 抽屉同款风格 -->
@@ -294,14 +339,45 @@
             />
             <p class="form-desc">{{ t('webSearchSettings.proxyUrlHelp') }}</p>
           </div>
+        </section>
 
-          <div class="form-item">
-            <label class="form-label">{{ t('webSearchSettings.setAsDefault') }}</label>
-            <div class="vision-toggle">
-              <t-switch v-model="providerForm.is_default" />
-              <span class="form-desc form-desc--inline">{{ t('webSearchSettings.setAsDefaultDesc') }}</span>
-            </div>
+        <!-- Section 4 — 空间分配（000095 平台化）：服务配置一次，按空间分配；
+             每个空间可标记默认（保存时服务端保证每空间至多一个默认，跨服务自动清让）。 -->
+        <section class="setting-drawer__section">
+          <h4 class="setting-drawer__section-title">{{ t('webSearchSettings.assignmentsSection') }}</h4>
+          <p class="form-desc">{{ t('webSearchSettings.assignmentsSectionDesc') }}</p>
+
+          <div v-if="assignmentRows.length === 0" class="form-desc">
+            {{ t('webSearchSettings.noPlatformTenants') }}
           </div>
+          <template v-else>
+            <div class="assignment-row assignment-row--head">
+              <span></span>
+              <span>{{ t('webSearchSettings.assignSwitchLabel') }}</span>
+              <span>{{ t('webSearchSettings.defaultSwitchLabel') }}</span>
+            </div>
+            <div v-for="row in assignmentRows" :key="row.tenantId" class="assignment-row">
+              <div class="assignment-row__main">
+                <span class="assignment-row__name" :title="row.tenantName">{{ row.tenantName }}</span>
+                <!-- 该空间当前默认在其他服务上：提示会被本次标记顶替 -->
+                <span
+                  v-if="row.assigned && !row.isDefault && otherDefaultName(row.tenantId)"
+                  class="assignment-row__hint"
+                >
+                  {{ t('webSearchSettings.otherDefaultHint', { name: otherDefaultName(row.tenantId) }) }}
+                </span>
+              </div>
+              <div class="assignment-row__switches">
+                <t-switch v-model="row.assigned" size="small" />
+                <t-switch
+                  v-model="row.isDefault"
+                  size="small"
+                  :disabled="!row.assigned"
+                  :aria-label="t('webSearchSettings.defaultSwitchLabel')"
+                />
+              </div>
+            </div>
+          </template>
         </section>
       </t-form>
     </SettingDrawer>
@@ -312,9 +388,8 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
-import { AddIcon } from 'tdesign-icons-vue-next'
 import {
-  listWebSearchProviders,
+  listSystemWebSearchProviders,
   listWebSearchProviderTypes,
   createWebSearchProvider,
   updateWebSearchProvider,
@@ -322,28 +397,52 @@ import {
   testWebSearchProvider,
   putWebSearchProviderCredentials,
   deleteWebSearchProviderCredentialField,
-  type WebSearchProviderEntity,
+  updateWebSearchProviderTenantAssignments,
+  type SystemWebSearchProviderEntity,
   type WebSearchProviderTypeInfo,
   type WebSearchCredentialField,
 } from '@/api/web-search-provider'
+import { listPlatformTenants, type PlatformTenant } from '@/api/system'
 import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import CredentialResource, {
   type CredentialFieldDef,
   type CredentialResourceApi,
 } from '@/components/credentials/CredentialResource.vue'
 import { useConfirmDelete } from '@/components/settings/useConfirmDelete'
-import { useAuthStore } from '@/stores/auth'
-import { providerLogo } from './providerLogos'
+import { providerLogo } from '@/views/settings/providerLogos'
 
 const { t } = useI18n()
-const authStore = useAuthStore()
 const confirmDelete = useConfirmDelete()
 
 // ===== State =====
-const providerEntities = ref<WebSearchProviderEntity[]>([])
+const providerEntities = ref<SystemWebSearchProviderEntity[]>([])
 const providerTypes = ref<WebSearchProviderTypeInfo[]>([])
+// 列表加载态（刷新按钮 / 首屏 loading 占位共用）
+const listLoading = ref(false)
+
+// ---- 工具栏筛选（与 UsersPanel 的 console-toolbar 同款：搜索 + 类型下拉）----
+const searchQuery = ref('')
+const providerFilter = ref('')
+
+const hasActiveFilter = computed(() => !!searchQuery.value.trim() || !!providerFilter.value)
+
+const filteredProviders = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  return providerEntities.value.filter((entity) => {
+    if (providerFilter.value && entity.provider !== providerFilter.value) return false
+    if (!q) return true
+    return [entity.name, entity.description].some(
+      (field) => (field || '').toLowerCase().includes(q),
+    )
+  })
+})
+// Workspace catalog for the drawer's assignment section; loaded once.
+const platformTenants = ref<PlatformTenant[]>([])
+// Drawer-local assignment state: one row per workspace, regardless of
+// assignment — the switches express the full replace payload.
+const assignmentRows = ref<Array<{ tenantId: number; tenantName: string; assigned: boolean; isDefault: boolean }>>([])
 const showAddProviderDialog = ref(false)
-const editingProvider = ref<WebSearchProviderEntity | null>(null)
+const editingProvider = ref<SystemWebSearchProviderEntity | null>(null)
 const testing = ref(false)
 const saving = ref(false)
 const formRef = ref<any>()
@@ -365,13 +464,11 @@ const providerForm = ref<{
     proxy_url?: string
     extra_config: Record<string, string>
   }
-  is_default: boolean
 }>({
   name: '',
   provider: 'duckduckgo',
   description: '',
   parameters: { extra_config: {} },
-  is_default: false,
 })
 
 // Invalidate the cached test result whenever the user edits a connection
@@ -509,13 +606,13 @@ const onProviderTypeChange = () => {
 }
 
 const loadProviderEntities = async () => {
+  listLoading.value = true
   try {
-    const response = await listWebSearchProviders()
-    if (response.data && Array.isArray(response.data)) {
-      providerEntities.value = response.data
-    }
+    providerEntities.value = await listSystemWebSearchProviders()
   } catch (error) {
     console.error('Failed to load provider entities:', error)
+  } finally {
+    listLoading.value = false
   }
 }
 
@@ -527,6 +624,46 @@ const loadProviderTypes = async () => {
   }
 }
 
+const loadPlatformTenants = async () => {
+  try {
+    const response = await listPlatformTenants()
+    platformTenants.value = response.tenants || []
+  } catch (error) {
+    console.error('Failed to load platform tenants:', error)
+  }
+}
+
+// Seeds the drawer's assignment switches: one row per workspace, assigned
+// flags coming from the provider's existing assignments (saved order is
+// irrelevant — the list mirrors the workspace catalog order).
+const seedAssignmentRows = (entity: SystemWebSearchProviderEntity | null) => {
+  const assignedByTenant = new Map(
+    (entity?.assignments || []).map(a => [a.tenant_id, a]),
+  )
+  assignmentRows.value = platformTenants.value.map(tenant => {
+    const assignment = assignedByTenant.get(tenant.id)
+    return {
+      tenantId: tenant.id,
+      tenantName: tenant.name,
+      assigned: !!assignment,
+      isDefault: !!assignment?.is_default,
+    }
+  })
+}
+
+// Name of the OTHER service currently holding a workspace's default flag —
+// used to warn that flipping the default switch here will take it over.
+const otherDefaultName = (tenantId: number): string | null => {
+  for (const provider of providerEntities.value) {
+    if (provider.id === editingProvider.value?.id) continue
+    const hit = (provider.assignments || []).find(
+      a => a.tenant_id === tenantId && a.is_default,
+    )
+    if (hit) return provider.name
+  }
+  return null
+}
+
 const openAddDialog = () => {
   editingProvider.value = null
   providerForm.value = {
@@ -536,13 +673,13 @@ const openAddDialog = () => {
     parameters: {
       extra_config: providerConfigDefaults(providerTypes.value[0]?.id || 'duckduckgo'),
     },
-    is_default: providerEntities.value.length === 0
   }
+  seedAssignmentRows(null)
   lastTestOk.value = null
   showAddProviderDialog.value = true
 }
 
-const editProvider = (entity: WebSearchProviderEntity) => {
+const editProvider = (entity: SystemWebSearchProviderEntity) => {
   editingProvider.value = entity
   providerForm.value = {
     name: entity.name,
@@ -560,8 +697,8 @@ const editProvider = (entity: WebSearchProviderEntity) => {
         ...(entity.parameters?.extra_config || {}),
       },
     },
-    is_default: entity.is_default || false,
   }
+  seedAssignmentRows(entity)
   lastTestOk.value = null
   showAddProviderDialog.value = true
 }
@@ -579,7 +716,7 @@ const saveProvider = async () => {
     // Build the parameters payload. api_key only flows in on initial
     // create — edit mode commits credentials through <CredentialResource>
     // (a dedicated PUT /credentials call) before this save runs.
-    const paramsOut: WebSearchProviderEntity['parameters'] = {
+    const paramsOut: SystemWebSearchProviderEntity['parameters'] = {
       engine_id: providerForm.value.parameters.engine_id,
       base_url: providerForm.value.parameters.base_url,
       proxy_url: providerForm.value.parameters.proxy_url,
@@ -595,21 +732,45 @@ const saveProvider = async () => {
       paramsOut.api_key = providerForm.value.parameters.api_key
     }
 
-    const data: Partial<WebSearchProviderEntity> = {
+    const data: Partial<SystemWebSearchProviderEntity> = {
       name: providerForm.value.name.trim() || selectedProviderType.value?.name || providerForm.value.provider,
       provider: providerForm.value.provider as any,
       description: providerForm.value.description,
       parameters: paramsOut,
-      is_default: providerForm.value.is_default,
     }
 
+    // Step 1 — save the platform service entity.
+    let providerId = editingProvider.value?.id
     if (editingProvider.value) {
-      await updateWebSearchProvider(editingProvider.value.id!, data)
+      await updateWebSearchProvider(providerId!, data)
       MessagePlugin.success(t('webSearchSettings.toasts.providerUpdated'))
     } else {
-      await createWebSearchProvider(data)
+      const response: any = await createWebSearchProvider(data)
+      providerId = response?.data?.id
+      // Switch the drawer into edit mode before anything else: if the
+      // assignment step below fails the user retries an update, not a
+      // second create.
+      editingProvider.value = { ...data, id: providerId } as SystemWebSearchProviderEntity
       MessagePlugin.success(t('webSearchSettings.toasts.providerCreated'))
     }
+
+    // Step 2 — replace the workspace assignments (replace-all semantics:
+    // a workspace switched off is unassigned).
+    try {
+      await updateWebSearchProviderTenantAssignments(
+        providerId!,
+        assignmentRows.value
+          .filter(row => row.assigned)
+          .map(row => ({ tenant_id: row.tenantId, is_default: row.isDefault })),
+      )
+    } catch (error: any) {
+      // Entity saved, assignments not — keep the drawer open with the
+      // current state so the user can retry the assignment step alone.
+      MessagePlugin.error(error?.message || t('webSearchSettings.toasts.assignmentsSaveFailed'))
+      await loadProviderEntities()
+      return
+    }
+
     showAddProviderDialog.value = false
     await loadProviderEntities()
   } catch (error: any) {
@@ -619,7 +780,7 @@ const saveProvider = async () => {
   }
 }
 
-const deleteProvider = (entity: WebSearchProviderEntity) => {
+const deleteProvider = (entity: SystemWebSearchProviderEntity) => {
   confirmDelete({
     body: t('webSearchSettings.deleteConfirm'),
     onConfirm: async () => {
@@ -669,10 +830,7 @@ const testConnection = async () => {
   }
 }
 
-const isProviderCardClickable = () => authStore.hasRole('admin')
-
-const onProviderCardClick = (event: Event, entity: WebSearchProviderEntity) => {
-  if (!isProviderCardClickable()) return
+const onProviderCardClick = (event: Event, entity: SystemWebSearchProviderEntity) => {
   if (event.type === 'keydown') {
     const ke = event as KeyboardEvent
     if (ke.key !== 'Enter' && ke.key !== ' ') return
@@ -683,22 +841,16 @@ const onProviderCardClick = (event: Event, entity: WebSearchProviderEntity) => {
   editProvider(entity)
 }
 
-const getProviderOptions = (_entity: WebSearchProviderEntity) => {
-  // Web search providers carry external API credentials; the backend
-  // gates every mutation/test behind Admin+ (RegisterWebSearchProviderRoutes).
-  // Hide the action menu entirely for non-Admins so they don't trip 403s.
-  // 测试连接已挪到编辑抽屉的 footer，不再放在外层菜单里 — 单一入口减少
-  // 用户疑惑（"为什么有两个测试入口，结果一样吗？"）。
-  if (!authStore.hasRole('admin')) {
-    return []
-  }
+const getProviderOptions = (_entity: SystemWebSearchProviderEntity) => {
+  // 控制台整页仅系统管理员可达（路由 requiresSystemAdmin），菜单不再做
+  // 角色判断。测试连接已挪到编辑抽屉的 footer，不放外层菜单 — 单一入口。
   return [
     { content: t('common.edit'), value: 'edit' },
     { content: t('common.delete'), value: 'delete', theme: 'error' as const }
   ]
 }
 
-const handleMenuAction = (data: { value: string }, entity: WebSearchProviderEntity) => {
+const handleMenuAction = (data: { value: string }, entity: SystemWebSearchProviderEntity) => {
   switch (data.value) {
     case 'edit':
       editProvider(entity)
@@ -711,49 +863,31 @@ const handleMenuAction = (data: { value: string }, entity: WebSearchProviderEnti
 
 // ===== Init =====
 onMounted(async () => {
-  await Promise.all([loadProviderTypes(), loadProviderEntities()])
+  await Promise.all([loadProviderTypes(), loadProviderEntities(), loadPlatformTenants()])
 })
 </script>
 
 <style lang="less" scoped>
+@import './consolePanel.less';
+
 .websearch-settings {
   width: 100%;
 }
 
-.section-header {
-  margin-bottom: 28px;
-
-  h2 {
-    font-size: 20px;
-    font-weight: 600;
-    color: var(--td-text-color-primary);
-    margin: 0 0 8px 0;
-  }
-
-  .section-description {
-    font-size: 14px;
-    color: var(--td-text-color-secondary);
-    margin: 0;
-    line-height: 1.6;
-  }
+.loading-container {
+  padding: 40px 0;
+  text-align: center;
 }
 
-.list-section-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--td-text-color-primary);
-  margin: 0 0 16px 0;
+// 空态：无服务或筛选无结果时占位（新建入口统一在 panel-header 右上角）
+.empty-state {
+  padding: 48px 0;
 }
 
 .provider-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 12px;
-
-  .provider-card--add {
-    width: 100%;
-    height: 100%;
-  }
 }
 
 // 卡片视觉与 ModelSettings 的 model-card 同构（徽章 + 标题 / 副标题 / url 三段式）。
@@ -781,51 +915,6 @@ onMounted(async () => {
     &:focus-visible {
       outline: 2px solid var(--td-brand-color);
       outline-offset: 2px;
-    }
-  }
-
-  &--add {
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    min-height: 68px;
-    border-style: dashed;
-    background: transparent;
-    color: var(--td-text-color-placeholder);
-    cursor: pointer;
-    font: inherit;
-    text-align: center;
-
-    &:hover,
-    &:focus-visible {
-      color: var(--td-brand-color);
-      border-color: var(--td-brand-color);
-      background: color-mix(in srgb, var(--td-brand-color) 6%, transparent);
-      box-shadow: none;
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--td-brand-color);
-      outline-offset: 2px;
-    }
-
-    &__icon {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
-      color: var(--td-brand-color);
-      font-size: 18px;
-    }
-
-    &__label {
-      font-size: 13px;
-      font-weight: 500;
-      line-height: 1.4;
     }
   }
 }
@@ -919,6 +1008,10 @@ onMounted(async () => {
   background: rgba(37, 99, 235, 0.12);
   color: #2563EB;
 }
+.provider-card--serpbase .provider-card__badge {
+  background: rgba(124, 58, 237, 0.12);
+  color: #7C3AED;
+}
 
 .provider-card__body {
   flex: 1;
@@ -1005,15 +1098,29 @@ onMounted(async () => {
   min-width: 0;
 }
 
-.empty-state {
-  padding: 64px 0;
-  text-align: center;
+// ---- 已分配空间 chips（卡片底部）----
+.provider-card__assignments {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  min-width: 0;
+}
 
-  :deep(.t-empty__description) {
-    font-size: 14px;
-    color: var(--td-text-color-placeholder);
-    margin-bottom: 16px;
-  }
+.provider-card__assignments-empty {
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+}
+
+.provider-card__tenant-chip--default {
+  color: var(--td-brand-color);
+  border-color: var(--td-brand-color);
+}
+
+.provider-card__tenant-default {
+  margin-left: 2px;
+  font-weight: 600;
 }
 
 .provider-option {
@@ -1069,10 +1176,72 @@ onMounted(async () => {
   display: none;
 }
 
-.vision-toggle {
+// ---- 空间分配区块（抽屉 Section 4）----
+.assignment-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+
+  & + .assignment-row {
+    border-top: 1px solid var(--td-component-stroke);
+  }
+}
+
+.assignment-row--head {
+  padding-top: 4px;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+
+  // 只有表头行带底部下划线 + 右侧两列表头与开关列对齐
+  & + .assignment-row {
+    border-top: none;
+  }
+}
+
+.assignment-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.assignment-row__name {
+  font-size: 13px;
+  color: var(--td-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assignment-row__hint {
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
+}
+
+// 两列开关固定宽度，表头与开关列对齐
+.assignment-row__switches {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+
+  > :first-child {
+    width: 48px;
+    display: flex;
+    justify-content: center;
+  }
+
+  > :last-child {
+    width: 48px;
+    display: flex;
+    justify-content: center;
+  }
+}
+
+.assignment-row--head > span:not(:first-child) {
+  width: 48px;
+  text-align: center;
 }
 
 // ---- footer-left 测试按钮的状态 icon（与 ModelEditorDialog/MCP 同款） ----
@@ -1200,5 +1369,9 @@ onMounted(async () => {
 .websearch-drawer--zhipu .setting-drawer__header-icon {
   background: rgba(37, 99, 235, 0.12);
   color: #2563EB;
+}
+.websearch-drawer--serpbase .setting-drawer__header-icon {
+  background: rgba(124, 58, 237, 0.12);
+  color: #7C3AED;
 }
 </style>

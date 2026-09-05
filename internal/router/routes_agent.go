@@ -69,9 +69,14 @@ func RegisterUserFavoriteRoutes(r *gin.RouterGroup, h *handler.UserResourceFavor
 
 // RegisterSkillRoutes registers skill routes.
 //
-// PR 2 currently only exposes a read-only `ListSkills`; gated to
-// Viewer+. Future skill upload / enable endpoints must use Admin+ since
-// skills run sandboxed code on tenant resources.
+// Runtime reads stay Viewer+ (@ mention picker lists usable skills, agent
+// editor reads the catalog). File browsing is Viewer+ too: workspace members
+// can inspect the files of their tenant's skill catalog from the workspace
+// skill-catalog panel (tenant isolation via sandboxConfigTenantID, same
+// source as ListCatalog). The remaining management surface — registration,
+// install, deletion — bakes skills into sandbox images and stays
+// SystemAdmin-only (driven from the platform skill library / X-Tenant-ID).
+// Scoped API keys cannot hold any of it.
 func RegisterSkillRoutes(r *gin.RouterGroup, skillHandler *handler.SkillHandler, g *rbacGuards) {
 	skills := r.Group("/skills")
 	{
@@ -83,11 +88,12 @@ func RegisterSkillRoutes(r *gin.RouterGroup, skillHandler *handler.SkillHandler,
 	// Catalog writes bake into sandbox images; scoped API keys cannot hold them.
 	catalogWrite := g.apiKeyGroup(r.Group("/skills/catalog"), apiKeyFullAccess())
 	{
-		catalogWrite.POST("", g.Admin(), skillHandler.RegisterCatalog)
-		catalogWrite.POST("/:id/install", g.Admin(), skillHandler.InstallCatalog)
-		catalogWrite.GET("/:id/files", g.Admin(), skillHandler.ListCatalogFiles)
-		catalogWrite.GET("/:id/files/content", g.Admin(), skillHandler.GetCatalogFile)
-		catalogWrite.DELETE("/:id", g.Admin(), skillHandler.DeleteCatalog)
+		catalogWrite.POST("", g.SystemAdmin(), skillHandler.RegisterCatalog)
+		catalogWrite.POST("/:id/install", g.SystemAdmin(), skillHandler.InstallCatalog)
+		// Read-only file browsing rides along with the Viewer+ catalog reads.
+		catalogWrite.GET("/:id/files", g.Viewer(), skillHandler.ListCatalogFiles)
+		catalogWrite.GET("/:id/files/content", g.Viewer(), skillHandler.GetCatalogFile)
+		catalogWrite.DELETE("/:id", g.SystemAdmin(), skillHandler.DeleteCatalog)
 	}
 }
 

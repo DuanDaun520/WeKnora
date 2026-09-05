@@ -87,6 +87,10 @@ type sandboxConfigResponse struct {
 	Config      *types.TenantSandboxConfig `json:"config"`
 	CreatedAt   time.Time                  `json:"created_at"`
 	UpdatedAt   time.Time                  `json:"updated_at"`
+	// SourceConnectionID is set when this row was materialized from a platform
+	// sandbox connection (000097). Empty means the workspace built it itself;
+	// either way the row behaves identically on every workspace route.
+	SourceConnectionID string `json:"source_connection_id,omitempty"`
 }
 
 func sandboxConfigTenantID(c *gin.Context) uint64 {
@@ -98,13 +102,14 @@ func toSandboxConfigResponse(e *types.TenantSandboxConfigEntity) sandboxConfigRe
 		return sandboxConfigResponse{}
 	}
 	return sandboxConfigResponse{
-		ID:          e.ID,
-		Name:        e.Name,
-		Description: e.Description,
-		SandboxType: e.SandboxType,
-		Config:      types.SandboxConfigForResponse(e.Config, true),
-		CreatedAt:   e.CreatedAt,
-		UpdatedAt:   e.UpdatedAt,
+		ID:                 e.ID,
+		Name:               e.Name,
+		Description:        e.Description,
+		SandboxType:        e.SandboxType,
+		Config:             types.SandboxConfigForResponse(e.Config, true),
+		CreatedAt:          e.CreatedAt,
+		UpdatedAt:          e.UpdatedAt,
+		SourceConnectionID: e.SourceConnectionID,
 	}
 }
 

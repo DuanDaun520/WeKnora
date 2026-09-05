@@ -27,6 +27,12 @@ import (
 //  3. The "is this configured?" metadata travels on the main resource
 //     response (MCPServiceResponse.Credentials) — no separate GET endpoint
 //     needed. Only PUT and DELETE live here.
+//
+// Since the 000096 platform rework services are platform rows, and these
+// handlers are registered on BOTH the tenant group (platform-API-key surface)
+// and /system/admin/mcp-services (admin console). tenantID == 0 (no workspace
+// context) means platform scope; a tenant context scopes the lookup to the
+// services visible to that workspace.
 type MCPCredentialsHandler struct {
 	svc interfaces.MCPServiceService
 }
@@ -66,11 +72,9 @@ type mcpCredentialsPutRequest struct {
 func (h *MCPCredentialsHandler) Put(c *gin.Context) {
 	ctx := c.Request.Context()
 	serviceID := c.Param("id")
+	// 0 = platform scope (admin console system route); a tenant context
+	// restricts the lookup to that workspace's visible services.
 	tenantID := c.GetUint64(types.TenantIDContextKey.String())
-	if tenantID == 0 {
-		c.Error(errors.NewBadRequestError("Workspace ID cannot be empty"))
-		return
-	}
 
 	var req mcpCredentialsPutRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -133,11 +137,8 @@ func (h *MCPCredentialsHandler) DeleteField(c *gin.Context) {
 	ctx := c.Request.Context()
 	serviceID := c.Param("id")
 	field := c.Param("field")
+	// 0 = platform scope (admin console system route).
 	tenantID := c.GetUint64(types.TenantIDContextKey.String())
-	if tenantID == 0 {
-		c.Error(errors.NewBadRequestError("Workspace ID cannot be empty"))
-		return
-	}
 	if field != "api_key" && field != "token" {
 		c.Error(errors.NewBadRequestError("unknown credential field: " + secutils.SanitizeForLog(field)))
 		return

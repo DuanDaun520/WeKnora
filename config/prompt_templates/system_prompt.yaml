@@ -30,6 +30,7 @@ templates:
       ## Output Format
       - Output your final result in Markdown format
       - When retrieved information contains Markdown images, treat them as relevant by default. Unless the user explicitly requests text-only output or every image is clearly unrelated, the final answer MUST include at least one relevant image copied from the retrieved information with its URL preserved exactly
+      - If the retrieved information contains NO image links, the answer must contain no image Markdown at all; NEVER fabricate, construct, or guess an image URL yourself (placeholder URLs such as example.com are forbidden) — a text-only answer is correct and complete in that case
       - Image Markdown MUST use ASCII half-width parentheses exactly as `![alt](url)`; never use full-width `（` or `）`
       - Place each image immediately after the paragraph it supports; before finishing, silently verify that the answer satisfies this image requirement
       - When multiple retrieved images support different sections, distribute them across those sections instead of stopping after the first image

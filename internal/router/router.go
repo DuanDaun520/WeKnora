@@ -28,66 +28,70 @@ import (
 type RouterParams struct {
 	dig.In
 
-	Config                       *config.Config
-	FileService                  interfaces.FileService
-	UserService                  interfaces.UserService
-	KBService                    interfaces.KnowledgeBaseService
-	KnowledgeService             interfaces.KnowledgeService
-	ChunkService                 interfaces.ChunkService
-	SessionService               interfaces.SessionService
-	MessageService               interfaces.MessageService
-	ModelService                 interfaces.ModelService
-	EvaluationService            interfaces.EvaluationService
-	KBShareService               interfaces.KBShareService
-	AgentShareService            interfaces.AgentShareService
-	KBHandler                    *handler.KnowledgeBaseHandler
-	KnowledgeHandler             *handler.KnowledgeHandler
-	TenantHandler                *handler.TenantHandler
-	TenantService                interfaces.TenantService
-	TenantAPIKeyService          interfaces.TenantAPIKeyService
-	TenantMemberService          interfaces.TenantMemberService
-	TenantMemberHandler          *handler.TenantMemberHandler
-	AuditLogHandler              *handler.AuditLogHandler
-	AuditLogService              interfaces.AuditLogService
-	ChunkHandler                 *handler.ChunkHandler
-	SessionHandler               *session.Handler
-	MessageHandler               *handler.MessageHandler
-	MessageSuggestionHandler     *handler.MessageSuggestionHandler
-	ModelHandler                 *handler.ModelHandler
-	SystemModelHandler           *handler.SystemModelHandler
-	ModelCredentialsHandler      *handler.ModelCredentialsHandler
-	SandboxConfigHandler         *handler.SandboxConfigHandler
-	SandboxSkillHandler          *handler.SandboxSkillHandler
-	MeEnvVarHandler              *handler.MeEnvVarHandler
-	EvaluationHandler            *handler.EvaluationHandler
-	AuthHandler                  *handler.AuthHandler
-	InitializationHandler        *handler.InitializationHandler
-	SystemHandler                *handler.SystemHandler
-	MCPServiceHandler            *handler.MCPServiceHandler
-	MCPCredentialsHandler        *handler.MCPCredentialsHandler
-	MCPOAuthHandler              *handler.MCPOAuthHandler
-	WebSearchHandler             *handler.WebSearchHandler
-	WebSearchProviderHandler     *handler.WebSearchProviderHandler
-	WebSearchCredentialsHandler  *handler.WebSearchProviderCredentialsHandler
-	VectorStoreHandler           *handler.VectorStoreHandler
-	StorageBackendHandler        *handler.StorageBackendHandler
-	StorageBackendResolver       interfaces.StorageBackendResolver
-	ResourceCatalog              interfaces.ResourceCatalog
-	FAQHandler                   *handler.FAQHandler
-	TagHandler                   *handler.TagHandler
-	CustomAgentHandler           *handler.CustomAgentHandler
-	UserFavoriteHandler          *handler.UserResourceFavoriteHandler
-	SkillHandler                 *handler.SkillHandler
-	OrganizationHandler          *handler.OrganizationHandler
-	IMHandler                    *handler.IMHandler
-	EmbedChannelHandler          *handler.EmbedChannelHandler
-	EmbedChannelService          interfaces.EmbedChannelService
-	RedisClient                  *redis.Client
-	DataSourceHandler            *handler.DataSourceHandler
-	DataSourceCredentialsHandler *handler.DataSourceCredentialsHandler
-	WeKnoraCloudHandler          *handler.WeKnoraCloudHandler
-	WikiPageHandler              *handler.WikiPageHandler
-	MemoryHandler                *handler.MemoryHandler
+	Config                         *config.Config
+	FileService                    interfaces.FileService
+	UserService                    interfaces.UserService
+	KBService                      interfaces.KnowledgeBaseService
+	KnowledgeService               interfaces.KnowledgeService
+	ChunkService                   interfaces.ChunkService
+	SessionService                 interfaces.SessionService
+	MessageService                 interfaces.MessageService
+	ModelService                   interfaces.ModelService
+	EvaluationService              interfaces.EvaluationService
+	KBShareService                 interfaces.KBShareService
+	AgentShareService              interfaces.AgentShareService
+	KBHandler                      *handler.KnowledgeBaseHandler
+	KnowledgeHandler               *handler.KnowledgeHandler
+	TenantHandler                  *handler.TenantHandler
+	TenantService                  interfaces.TenantService
+	TenantAPIKeyService            interfaces.TenantAPIKeyService
+	TenantMemberService            interfaces.TenantMemberService
+	TenantMemberHandler            *handler.TenantMemberHandler
+	AuditLogHandler                *handler.AuditLogHandler
+	AuditLogService                interfaces.AuditLogService
+	ChunkHandler                   *handler.ChunkHandler
+	SessionHandler                 *session.Handler
+	MessageHandler                 *handler.MessageHandler
+	MessageSuggestionHandler       *handler.MessageSuggestionHandler
+	ModelHandler                   *handler.ModelHandler
+	SystemModelHandler             *handler.SystemModelHandler
+	ModelCredentialsHandler        *handler.ModelCredentialsHandler
+	SandboxConfigHandler           *handler.SandboxConfigHandler
+	SandboxSkillHandler            *handler.SandboxSkillHandler
+	MeEnvVarHandler                *handler.MeEnvVarHandler
+	EvaluationHandler              *handler.EvaluationHandler
+	AuthHandler                    *handler.AuthHandler
+	InitializationHandler          *handler.InitializationHandler
+	SystemHandler                  *handler.SystemHandler
+	MCPServiceHandler              *handler.MCPServiceHandler
+	MCPCredentialsHandler          *handler.MCPCredentialsHandler
+	MCPOAuthHandler                *handler.MCPOAuthHandler
+	SystemMCPServiceHandler        *handler.SystemMCPServiceHandler
+	SystemSandboxConnectionHandler *handler.SystemSandboxConnectionHandler
+	SystemSkillHandler             *handler.SystemSkillHandler
+	WebSearchHandler               *handler.WebSearchHandler
+	WebSearchProviderHandler       *handler.WebSearchProviderHandler
+	WebSearchCredentialsHandler    *handler.WebSearchProviderCredentialsHandler
+	SystemWebSearchProviderHandler *handler.SystemWebSearchProviderHandler
+	VectorStoreHandler             *handler.VectorStoreHandler
+	StorageBackendHandler          *handler.StorageBackendHandler
+	StorageBackendResolver         interfaces.StorageBackendResolver
+	ResourceCatalog                interfaces.ResourceCatalog
+	FAQHandler                     *handler.FAQHandler
+	TagHandler                     *handler.TagHandler
+	CustomAgentHandler             *handler.CustomAgentHandler
+	UserFavoriteHandler            *handler.UserResourceFavoriteHandler
+	SkillHandler                   *handler.SkillHandler
+	OrganizationHandler            *handler.OrganizationHandler
+	IMHandler                      *handler.IMHandler
+	EmbedChannelHandler            *handler.EmbedChannelHandler
+	EmbedChannelService            interfaces.EmbedChannelService
+	RedisClient                    *redis.Client
+	DataSourceHandler              *handler.DataSourceHandler
+	DataSourceCredentialsHandler   *handler.DataSourceCredentialsHandler
+	WeKnoraCloudHandler            *handler.WeKnoraCloudHandler
+	WikiPageHandler                *handler.WikiPageHandler
+	MemoryHandler                  *handler.MemoryHandler
 }
 
 // NewRouter 创建新的路由
@@ -274,8 +278,12 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterSystemAdminRoutes(v1, params.SystemHandler, params.AuditLogHandler, rbacGuards)
 		RegisterSystemAdminModelRoutes(v1, params.ModelHandler, params.SystemModelHandler, params.InitializationHandler, rbacGuards)
 		RegisterMCPServiceRoutes(v1, params.MCPServiceHandler, params.MCPCredentialsHandler, params.MCPOAuthHandler, rbacGuards)
+		RegisterSystemAdminMCPRoutes(v1, params.SystemMCPServiceHandler, params.MCPCredentialsHandler, params.MCPServiceHandler, rbacGuards)
 		RegisterWebSearchRoutes(v1, params.WebSearchHandler, rbacGuards)
 		RegisterWebSearchProviderRoutes(v1, params.WebSearchProviderHandler, params.WebSearchCredentialsHandler, rbacGuards)
+		RegisterSystemAdminWebSearchRoutes(v1, params.SystemWebSearchProviderHandler, params.WebSearchCredentialsHandler, rbacGuards)
+		RegisterSystemAdminSandboxConnectionRoutes(v1, params.SystemSandboxConnectionHandler, rbacGuards)
+	RegisterSystemAdminSkillRoutes(v1, params.SystemSkillHandler, rbacGuards)
 		RegisterVectorStoreRoutes(v1, params.VectorStoreHandler, rbacGuards)
 		RegisterStorageBackendRoutes(v1, params.StorageBackendHandler, rbacGuards)
 		RegisterCustomAgentRoutes(v1, params.CustomAgentHandler, rbacGuards)

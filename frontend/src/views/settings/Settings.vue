@@ -25,27 +25,7 @@
                       'has-submenu': item.children && item.children.length > 0,
                       'expanded': expandedMenus.includes(item.key)
                     }]" @click="handleNavClick(item)">
-                      <!-- 网络搜索使用自定义 SVG 图标 -->
-                      <svg v-if="item.key === 'websearch'" width="17" height="17" viewBox="0 0 18 18" fill="none"
-                        xmlns="http://www.w3.org/2000/svg" class="nav-icon">
-                        <circle cx="9" cy="9" r="7" stroke="currentColor" stroke-width="1.2" fill="none" />
-                        <path d="M 9 2 A 3.5 7 0 0 0 9 16" stroke="currentColor" stroke-width="1.2" fill="none" />
-                        <path d="M 9 2 A 3.5 7 0 0 1 9 16" stroke="currentColor" stroke-width="1.2" fill="none" />
-                        <line x1="2.94" y1="5.5" x2="15.06" y2="5.5" stroke="currentColor" stroke-width="1.2"
-                          stroke-linecap="round" />
-                        <line x1="2.94" y1="12.5" x2="15.06" y2="12.5" stroke="currentColor" stroke-width="1.2"
-                          stroke-linecap="round" />
-                      </svg>
-                      <!-- 沙箱：隔离运行窗口，避免和 Ollama / 系统设置共用 server -->
-                      <svg v-else-if="item.key === 'sandbox'" width="17" height="17" viewBox="0 0 18 18" fill="none"
-                        xmlns="http://www.w3.org/2000/svg" class="nav-icon">
-                        <rect x="2.5" y="3" width="13" height="12" rx="2" stroke="currentColor" stroke-width="1.2"
-                          fill="none" />
-                        <path d="M2.5 6.5h13" stroke="currentColor" stroke-width="1.2" />
-                        <path d="M5.5 10h4M5.5 12.5h2.5" stroke="currentColor" stroke-width="1.2"
-                          stroke-linecap="round" />
-                      </svg>
-                      <span v-else-if="item.emoji" class="nav-icon nav-icon-emoji">{{ item.emoji }}</span>
+                      <span v-if="item.emoji" class="nav-icon nav-icon-emoji">{{ item.emoji }}</span>
                       <t-icon v-else :name="item.icon" class="nav-icon" />
                       <span class="nav-label">{{ item.label }}</span>
                       <t-icon v-if="item.children && item.children.length > 0"
@@ -90,11 +70,6 @@
                     <GeneralSettings />
                   </div>
 
-                  <!-- 网络搜索配置 -->
-                  <div v-if="currentSection === 'websearch'" class="section">
-                    <WebSearchSettings />
-                  </div>
-
                   <!-- 消息管理 -->
                   <div v-if="currentSection === 'chathistory'" class="section">
                     <ChatHistorySettings />
@@ -115,29 +90,9 @@
                     <EnvVarSettings />
                   </div>
 
-                  <!-- 向量数据库引擎 -->
-                  <div v-if="currentSection === 'vectorstore'" class="section">
-                    <VectorStoreSettings />
-                  </div>
-
-                  <!-- 解析引擎 -->
-                  <div v-if="currentSection === 'parser'" class="section">
-                    <ParserEngineSettings />
-                  </div>
-
-                  <!-- 存储引擎 -->
-                  <div v-if="currentSection === 'storage'" class="section">
-                    <StorageEngineSettings />
-                  </div>
-
-                  <!-- 沙箱 -->
-                  <div v-if="currentSection === 'sandbox'" class="section">
-                    <SandboxSettings />
-                  </div>
-
-                  <!-- 技能目录：登记后可装到多份沙箱，智能体只从当前沙箱的就绪集合选用 -->
-                  <div v-if="currentSection === 'skills'" class="section">
-                    <SkillSettings :initial-sandbox-id="currentSubSection" />
+                  <!-- 技能目录（000099）：空间侧只读视图，写动作仅系统管理员 -->
+                  <div v-if="currentSection === 'skill-catalog'" class="section">
+                    <SkillCatalogSettings />
                   </div>
 
                   <!-- 系统信息 -->
@@ -183,11 +138,6 @@
                   <div v-if="isIntegrationSection(currentSection)" class="section">
                     <IntegrationSettingsSection :tab="integrationTabFromSection(currentSection)" />
                   </div>
-
-                  <!-- MCP 服务 -->
-                  <div v-if="currentSection === 'mcp'" class="section">
-                    <McpSettings />
-                  </div>
                 </template>
               </div>
             </div>
@@ -211,17 +161,11 @@ import SystemInfo from './SystemInfo.vue'
 import TenantInfo from './TenantInfo.vue'
 import UserProfile from './UserProfile.vue'
 import GeneralSettings from './GeneralSettings.vue'
-import McpSettings from './McpSettings.vue'
-import WebSearchSettings from './WebSearchSettings.vue'
 import ChatHistorySettings from './ChatHistorySettings.vue'
 import MemorySettings from './MemorySettings.vue'
 import EnvVarSettings from './EnvVarSettings.vue'
+import SkillCatalogSettings from './SkillCatalogSettings.vue'
 import MemoryWorkspaceSettings from './MemoryWorkspaceSettings.vue'
-import VectorStoreSettings from './VectorStoreSettings.vue'
-import ParserEngineSettings from './ParserEngineSettings.vue'
-import StorageEngineSettings from './StorageBackendSettings.vue'
-import SandboxSettings from './SandboxSettings.vue'
-import SkillSettings from './SkillSettings.vue'
 import TenantMembers from './TenantMembers.vue'
 import SystemSettings from '@/views/system/SystemSettings.vue'
 import RuntimeQueues from '@/views/system/RuntimeQueues.vue'
@@ -238,7 +182,6 @@ import {
   SYSTEM_ADMIN_SETTINGS_SECTIONS,
 } from '@/config/settingsAccess'
 import { SETTINGS_SECTION_CAPABILITY } from '@/config/deploymentCapabilities'
-import { SKILL_ICON } from '@/types/mention'
 import {
   buildSettingsRouteQuery,
   integrationSectionKey,
@@ -275,43 +218,67 @@ type NavGroup = {
 
 // 设置二级导航的最低可见角色来自 settingsAccess.ts，和
 // internal/router/router.go 的守卫矩阵对齐。
-// 以「页面里至少有 1 个有意义的写操作所要求的最低角色」为基准，把基础设
-// 施配置（websearch 写、parser/storage/vector/mcp
-// CRUD、sandbox 连接、skills 安装、chat-history 配置）统一收到 admin；只读类（general / system info /
-// tenant-info / members 名册）保留 viewer 可见；最高敏感的 reset api
-// key 是 owner-only。改这张表前请在 router.go 里复核对应路由组。
+// 以「页面里至少有 1 个有意义的写操作所要求的最低角色」为基准：
+// 只读类（general / system info / tenant-info / members 名册）保留 viewer
+// 可见；chathistory 配置收到 admin；最高敏感的 reset api key 是
+// owner-only。改这张表前请在 router.go 里复核对应路由组。
 //
 // 特别说明：
 // - chathistory 页面唯一的「启用消息索引」开关 PUT /tenants/kv/chat-history-config
 //   后端走 g.Admin()。给 viewer/contributor 看到入口、点开开关、保存时
 //   403，体验很差，所以入口本身归 admin。
-// - models / ollama / weknoracloud 三页已随 000094 模型平台化迁入系统
-//   管理控制台，空间 Settings 不再出现（settingsAccess.ts 同步收表）。
+// - models / ollama / weknoracloud 三页已随 000094 模型平台化、
+//   websearch / vectorstore / parser / storage / sandbox / mcp 六页已随
+//   000095 基础设施收权迁入系统管理控制台，空间 Settings 不再出现
+//   （settingsAccess.ts 同步收表，旧深链走 LEGACY_CONSOLE_SECTIONS）。
+//   skills 以只读「技能目录」回来（000099，见 settingsAccess.ts）。
 const SYSTEM_ADMIN_SECTIONS = SYSTEM_ADMIN_SETTINGS_SECTIONS
 
 const normalizeSettingsSection = (section: string) => {
   return normalizeSettingsSectionFromQuery(section, route.query.tab as string | undefined)
 }
 
-// 000094 模型平台化：models / ollama / weknoracloud 三页已迁入系统管理
-// 控制台。旧深链、openSettings 调用与 settings-nav 事件在这里统一改道：
-// 系统管理员直接跳控制台对应面板，其他角色提示权限变化后回到首个可见
-// 面板（weknoracloud 的模型侧归模型管理，解析引擎凭证仍在 parser 页内）。
+// 000094 模型平台化：models / ollama / weknoracloud 三页迁入系统管理控制台。
+// 000095 基础设施收权：websearch / vectorstore / parser / storage / sandbox /
+// mcp 六页同样迁入控制台。旧深链、openSettings 调用与 settings-nav 事件在
+// 这里统一改道：系统管理员直接跳控制台对应面板，其他角色提示权限变化后
+// 回到首个可见面板（weknoracloud 的模型侧归模型管理，解析引擎凭证仍在
+// parser 页内）。其中 websearch 经 000095 平台化已是平台目录 + 分配制，
+// 与 models/ollama 一样不再需要目标空间。skills 不在此列：技能以只读
+// 「技能目录」回到空间 Settings（000099），旧键经 settingsRoute 的别名表
+// 归一化到 skill-catalog。
 const LEGACY_CONSOLE_SECTIONS: Record<string, string> = {
   models: 'models',
   ollama: 'ollama',
   weknoracloud: 'models',
+  websearch: 'websearch',
+  vectorstore: 'vectorstore',
+  parser: 'parser',
+  storage: 'storage',
+  // 沙箱配置面板已并入「沙箱连接」（000097 分配制），旧入口一并改道。
+  sandbox: 'sandbox-connections',
+  mcp: 'mcp',
 }
+
+// 控制台里仍按空间代管的面板 — 只有这些深链需要 ?tenant= 预选空间。
+const MANAGED_CONSOLE_TARGETS = new Set(['vectorstore', 'parser', 'storage'])
 
 const redirectLegacySection = (section: string): boolean => {
   const target = LEGACY_CONSOLE_SECTIONS[section]
   if (!target) return false
   if (authStore.isSystemAdmin) {
+    // 代管目标空间默认取系统管理员当前所在空间（没绑空间时留空，由
+    // 控制台顶栏自行选择）。
     if (uiStore.showSettingsModal) uiStore.closeSettings()
-    void router.push({ path: '/system/console', query: { section: target } })
+    const query: Record<string, string> = { section: target }
+    if (MANAGED_CONSOLE_TARGETS.has(target)) {
+      const currentTenant = localStorage.getItem('weknora_selected_tenant_id')
+      if (currentTenant) query.tenant = currentTenant
+    }
+    void router.push({ path: '/system/console', query })
     return true
   }
-  MessagePlugin.warning(t('settings.modelSettings.movedToConsole'))
+  MessagePlugin.warning(t('settings.movedToConsole'))
   const fallback = navItems.value[0]?.key || 'general'
   currentSection.value = fallback
   currentSubSection.value = ''
@@ -367,15 +334,8 @@ const navItems = computed(() => {
   }))
   const all: NavItem[] = [
     { key: 'general', icon: 'setting', label: t('general.title') },
-    { key: 'websearch', icon: 'search', label: t('settings.webSearchConfig') },
     { key: 'chathistory', icon: 'chat', label: t('chatHistorySettings.title') },
     { key: 'memory', icon: 'bulletpoint', label: t('memoryWorkspaceSettings.title') },
-    { key: 'vectorstore', icon: 'data-base', label: t('settings.vectorStoreEngine') },
-    { key: 'parser', icon: 'file-search', label: t('settings.parserEngine') },
-    { key: 'storage', icon: 'cloud', label: t('settings.storageEngine') },
-    { key: 'sandbox', icon: 'code', label: t('settings.sandbox.title') },
-    { key: 'skills', icon: SKILL_ICON, label: t('settings.skills.title') },
-    { key: 'mcp', icon: 'tools', label: t('settings.mcpService') },
     { key: 'system', icon: 'info-circle', label: t('settings.versionInfo') },
     { key: 'system-global', icon: 'server', label: t('settings.system') },
     { key: 'runtime-queues', icon: 'queue', label: t('settings.taskQueue') },
@@ -384,6 +344,7 @@ const navItems = computed(() => {
     { key: 'userprofile', icon: 'user', label: t('userProfile.title') },
     { key: 'mymemory', icon: 'bookmark', label: t('memorySettings.title') },
     { key: 'envvars', icon: 'key', label: t('envVarSettings.title') },
+    { key: 'skill-catalog', icon: 'rocket', label: t('settings.skills.title') },
     { key: 'tenant', icon: 'user-circle', label: t('settings.tenantInfo') },
     { key: 'members', icon: 'usergroup', label: t('tenantMember.title') },
     ...integrationItems,
@@ -400,10 +361,10 @@ const navItems = computed(() => {
 const navGroups = computed<NavGroup[]>(() => {
   const itemMap = new Map(navItems.value.map((item) => [item.key, item]))
   const pickItems = (keys: string[]) => keys.map((key) => itemMap.get(key)).filter(Boolean) as NavItem[]
-  // 分组：账户 → 空间 → 模型 → 发布集成 → 数据与扩展 → 系统管理 → 平台
-  // 关键调整：把个人偏好(general)和用户信息收进「账户」；
-  // 把空间内功能开关(chathistory)从「平台」挪到「空间」；
-  // 把检索引擎和外部集成合并为「数据与扩展」，避免两个 2~3 项的窄分组。
+  // 分组：账户 → 空间 → 发布集成 → 系统管理 → 平台
+  // 历史调整：个人偏好(general)和用户信息收进「账户」；空间内功能开关
+  // (chathistory)从「平台」挪到「空间」；「数据与扩展」分组随基础设施
+  // 收权整体迁入系统管理控制台后删除。
   return [
     {
       key: 'account',
@@ -413,7 +374,7 @@ const navGroups = computed<NavGroup[]>(() => {
     {
       key: 'workspace',
       label: t('settings.navGroups.workspace'),
-      items: pickItems(['tenant', 'members', 'chathistory', 'memory']),
+      items: pickItems(['tenant', 'members', 'chathistory', 'memory', 'skill-catalog']),
     },
     {
       key: 'integrations',
@@ -424,19 +385,6 @@ const navGroups = computed<NavGroup[]>(() => {
         integrationSectionKey('api'),
         integrationSectionKey('chrome'),
         integrationSectionKey('claw'),
-      ]),
-    },
-    {
-      key: 'data_extensions',
-      label: t('settings.navGroups.dataExtensions'),
-      items: pickItems([
-        'vectorstore',
-        'parser',
-        'storage',
-        'sandbox',
-        'skills',
-        'websearch',
-        'mcp',
       ]),
     },
     {
@@ -537,21 +485,15 @@ watch(() => uiStore.settingsInitialSection, (section) => {
           }
         }, 300)
       }
-    } else if (normalizedSection === 'skills') {
-      // Sandbox config id from the agent editor / sandbox cards. Skills has
-      // no nav children, so this is the only way to preselect the target image.
-      currentSubSection.value = uiStore.settingsInitialSubSection || ''
     } else {
       currentSubSection.value = ''
     }
   }
 }, { immediate: true })
 
-watch(() => uiStore.settingsInitialSubSection, (sub) => {
-  if (uiStore.settingsInitialSection === 'skills' && visible.value) {
-    currentSubSection.value = sub || ''
-  }
-})
+// skill-catalog（000099 回迁）无子菜单：openSettings('skill-catalog', sandboxId)
+// 的预选由组件自己读 uiStore.settingsInitialSubSection / ?sandbox=，这里不
+// 需要 subsection 监听；旧 openSettings('skills') 经 settingsRoute 别名归一化。
 
 watch(
   () => [visible.value, route.path, route.query.section, deploymentCapabilities.loaded] as const,
@@ -575,9 +517,7 @@ watch(
       return
     }
     currentSection.value = normalizedSection
-    currentSubSection.value = normalizedSection === 'skills'
-      ? (uiStore.settingsInitialSubSection || '')
-      : ''
+    currentSubSection.value = ''
     syncSettingsRoute(normalizedSection)
   },
   { immediate: true },

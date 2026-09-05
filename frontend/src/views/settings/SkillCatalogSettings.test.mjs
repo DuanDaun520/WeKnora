@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-const source = readFileSync(new URL('./SkillSettings.vue', import.meta.url), 'utf8')
+const source = readFileSync(new URL('./SkillCatalogSettings.vue', import.meta.url), 'utf8')
 
 test('skill settings lists the catalog instead of switching sandboxes', () => {
   assert.match(source, /listSkillCatalog/)
@@ -97,4 +97,24 @@ test('install step shows parsed skill and sandbox backend details', () => {
   assert.match(source, /sandbox-pick-list/)
   assert.doesNotMatch(source, /t-alert/)
   assert.doesNotMatch(source, /registered-alert/)
+})
+
+test('catalog rows materialized from the platform skill library carry a provenance pill', () => {
+  // 000098 溯源：分配物化的目录行显示「来自技能库」，自建行不渲染。
+  assert.match(source, /source_platform_skill_id/)
+  assert.match(source, /skill-card__from-library/)
+  assert.match(source, /settings\.skills\.fromLibrary/)
+})
+
+test('workspace view is read-only for tenant admins, writable for system admins', () => {
+  // 000099 空间侧技能目录：面板回到工作空间 Settings，写动作（登记/
+  // 安装/删除）只对系统管理员露出——后端本就 g.SystemAdmin()，UI 门只是
+  // 提前对齐 403。沙箱预选不再走 prop，由组件读 uiStore / ?sandbox=。
+  assert.match(source, /isSystemAdmin/)
+  assert.match(source, /const canManage = computed/)
+  assert.match(source, /v-if="canManage"/)
+  assert.match(source, /settings\.skills\.readonlyHint/)
+  assert.match(source, /settings\.skills\.emptyDescReadonly/)
+  assert.match(source, /uiStore\.settingsInitialSubSection/)
+  assert.doesNotMatch(source, /defineProps<\{[^}]*initialSandboxId/)
 })

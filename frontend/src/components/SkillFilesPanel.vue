@@ -134,6 +134,10 @@ import {
   listCatalogSkillFiles,
 } from '@/api/skill'
 import {
+  getPlatformSkillFile,
+  listPlatformSkillFiles,
+} from '@/api/skill-library'
+import {
   getConfigSkillFile,
   listConfigSkillFiles,
   type ConfigSkillFileContent,
@@ -164,6 +168,8 @@ const props = defineProps<{
   configId?: string
   skillId?: string
   catalogId?: string
+  /** Platform mode (000098): catalogId is a platform skill id and the fetches hit /system/admin/skills. */
+  platform?: boolean
   drawerWidth: number
 }>()
 
@@ -489,7 +495,7 @@ async function enhancePreview() {
 }
 
 async function selectFile(path: string) {
-  if (!props.catalogId && (!props.configId || !props.skillId)) return
+  if (!props.platform && !props.catalogId && (!props.configId || !props.skillId)) return
   selectedPath.value = path
   fileLoading.value = true
   fileError.value = ''
@@ -499,9 +505,11 @@ async function selectFile(path: string) {
   frontmatterFields.value = []
   markdownMode.value = 'preview'
   try {
-    const res = props.catalogId
-      ? await getCatalogSkillFile(props.catalogId, path)
-      : await getConfigSkillFile(props.configId || '', props.skillId || '', path)
+    const res = props.platform
+      ? await getPlatformSkillFile(props.catalogId || '', path)
+      : props.catalogId
+        ? await getCatalogSkillFile(props.catalogId, path)
+        : await getConfigSkillFile(props.configId || '', props.skillId || '', path)
     const data = res?.data
     file.value = data || null
     if (!data) {
@@ -526,7 +534,7 @@ async function copyContent() {
 }
 
 async function loadFiles() {
-  if (!props.catalogId && (!props.configId || !props.skillId)) return
+  if (!props.platform && !props.catalogId && (!props.configId || !props.skillId)) return
   listLoading.value = true
   listError.value = ''
   nodes.value = []
@@ -534,9 +542,11 @@ async function loadFiles() {
   file.value = null
   fileError.value = ''
   try {
-    const res = props.catalogId
-      ? await listCatalogSkillFiles(props.catalogId)
-      : await listConfigSkillFiles(props.configId || '', props.skillId || '')
+    const res = props.platform
+      ? await listPlatformSkillFiles(props.catalogId || '')
+      : props.catalogId
+        ? await listCatalogSkillFiles(props.catalogId)
+        : await listConfigSkillFiles(props.configId || '', props.skillId || '')
     const list = res?.data || []
     const tree = buildTree(list)
     nodes.value = tree
@@ -553,7 +563,7 @@ async function loadFiles() {
 }
 
 watch(
-  () => [props.catalogId, props.configId, props.skillId],
+  () => [props.catalogId, props.configId, props.skillId, props.platform],
   () => {
     void loadFiles()
   },

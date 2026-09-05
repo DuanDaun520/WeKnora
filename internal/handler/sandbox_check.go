@@ -126,26 +126,42 @@ func (h *SystemHandler) CheckSandboxConfig(c *gin.Context) {
 			incoming = stored
 		}
 	}
-	if !req.Deep {
+
+	result, err := runSandboxCheck(ctx, incoming, stored, req.Deep)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+}
+
+// runSandboxCheck is the provider-probe core shared by the workspace sandbox
+// route and the platform sandbox-connection drawer (000097). stored resolves
+// redacted secrets in incoming; a nil incoming with a non-nil stored probes the
+// stored config as-is. The response shape and every probe are identical on both
+// surfaces so the settings drawer renders one component for both.
+func runSandboxCheck(
+	ctx context.Context,
+	incoming, stored *types.TenantSandboxConfig,
+	deep bool,
+) (*SandboxCheckResponse, error) {
+	if !deep {
 		incoming = sandboxConnectionCheckConfig(incoming)
 	}
 	merged, err := service.SanitizeSandboxConfig(incoming, stored)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": err.Error()})
-		return
+		return nil, err
 	}
 	effective, err := sandbox.ResolveEffectiveConfig(merged, sandbox.DefaultConfig())
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"code": 1, "msg": err.Error()})
-		return
+		return nil, err
 	}
 
 	result := &SandboxCheckResponse{OK: true, Provider: string(effective.Type)}
 	client, err := sandbox.NewRemoteClientForCheck(effective)
 	if err != nil {
 		result.add("client_build", false, err.Error(), 0)
-		c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
-		return
+		return result, nil
 	}
 
 	// Level 1: an authenticated control-plane call, which validates endpoint
@@ -168,7 +184,7 @@ func (h *SystemHandler) CheckSandboxConfig(c *gin.Context) {
 		"supports_reconnect":    caps.SupportsReconnect,
 	}
 
-	if !req.Deep || healthErr != nil {
+	if !deep || healthErr != nil {
 		reason := skipReasonNeedsDeepCheck
 		if healthErr != nil {
 			reason = skipReasonControlPlaneUnreachable
@@ -176,12 +192,11 @@ func (h *SystemHandler) CheckSandboxConfig(c *gin.Context) {
 		result.skip("template_exists", reason)
 		result.skip("sandbox_exec", reason)
 		result.skip("egress_available", reason)
-		c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
-		return
+		return result, nil
 	}
 
-	h.runDeepSandboxCheck(ctx, client, effective, result)
-	c.JSON(http.StatusOK, gin.H{"success": true, "data": result})
+	runDeepSandboxCheck(ctx, client, effective, result)
+	return result, nil
 }
 
 // sandboxConnectionCheckConfig supplies a private template placeholder for a
@@ -256,7 +271,7 @@ func firstProbeLine(output string) string {
 
 // runDeepSandboxCheck creates one throwaway sandbox and verifies a command can
 // run inside it. The sandbox is always deleted, including on failure.
-func (h *SystemHandler) runDeepSandboxCheck(
+func runDeepSandboxCheck(
 	ctx context.Context,
 	client sandbox.RemoteSandboxClient,
 	cfg *sandbox.Config,
@@ -334,7 +349,7 @@ func (h *SystemHandler) runDeepSandboxCheck(
 		result.add("sandbox_exec", true, "", latency)
 	}
 
-	h.probeSandboxEgress(probeCtx, client, handle, result)
+	probeSandboxEgress(probeCtx, client, handle, result)
 }
 
 // egressProbeTargets are tried in order; the first reachable one passes
@@ -351,7 +366,7 @@ var egressProbeTargets = []struct {
 // probeSandboxEgress verifies the sandbox can reach the public internet.
 // Any single target succeeding is enough — skill installs only need some
 // outbound path, not both CN and international reachability.
-func (h *SystemHandler) probeSandboxEgress(
+func probeSandboxEgress(
 	ctx context.Context,
 	client sandbox.RemoteSandboxClient,
 	handle sandbox.RemoteSandboxHandle,

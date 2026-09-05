@@ -805,11 +805,14 @@ func resolveTenantRole(
 	}
 
 	// 2. 跨空间超管直通：CanAccessAllTenants 用户切到别的空间时不强制要求 membership。
+	//    系统管理员同理 —— IsTenantAccessible 已放行其 X-Tenant-ID switch（管理后台
+	//    「按空间代管」依赖这条），角色解析必须同步授予临时角色，否则 RBAC 强制时
+	//    会在下一步 fail-closed，代管面板全部 403。
 	//    注意：这里只授予临时 Admin 角色，不写入 tenant_members，避免"看一眼别人空间"
 	//    意外升级为持久化所有权。
-	if crossTenantSwitch && user.CanAccessAllTenants {
+	if crossTenantSwitch && (user.CanAccessAllTenants || user.IsSystemAdmin) {
 		logger.Infof(ctx,
-			"[auth] resolveTenantRole step2 (cross-tenant superuser) -> Admin: user=%s tenant=%d",
+			"[auth] resolveTenantRole step2 (cross-tenant superuser/system admin) -> Admin: user=%s tenant=%d",
 			user.ID, targetTenantID)
 		return types.TenantRoleAdmin, true
 	}

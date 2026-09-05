@@ -966,6 +966,9 @@ func (r *reaperSkillStore) ListCatalogsByTenant(
 func (r *reaperSkillStore) UpdateCatalog(context.Context, *types.TenantSkillCatalogEntity) error {
 	panic("UpdateCatalog is outside the reaper surface")
 }
+func (r *reaperSkillStore) SetCatalogSourcePlatformSkill(context.Context, uint64, string, string) error {
+	panic("SetCatalogSourcePlatformSkill is outside the reaper surface")
+}
 func (r *reaperSkillStore) DeleteCatalog(context.Context, uint64, string) error {
 	panic("DeleteCatalog is outside the reaper surface")
 }
@@ -1005,6 +1008,18 @@ func (r *reaperConfigStore) ListByTenant(context.Context, uint64) ([]*types.Tena
 
 func (r *reaperConfigStore) Update(context.Context, *types.TenantSandboxConfigEntity) error {
 	panic("Update is outside the reaper surface")
+}
+
+func (r *reaperConfigStore) ListBySourceConnection(
+	context.Context, string,
+) ([]*types.TenantSandboxConfigEntity, error) {
+	panic("ListBySourceConnection is outside the reaper surface")
+}
+
+func (r *reaperConfigStore) MarkSourcePushed(
+	context.Context, uint64, string, string, time.Time,
+) error {
+	panic("MarkSourcePushed is outside the reaper surface")
 }
 
 func (r *reaperConfigStore) SoftDelete(context.Context, uint64, string) error {

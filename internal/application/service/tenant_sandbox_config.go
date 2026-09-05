@@ -562,7 +562,28 @@ func (s *TenantSandboxConfigService) QueryTemplates(
 			return nil, err
 		}
 	}
+	return s.runTemplateQueryCore(
+		ctx, fmt.Sprintf("tenant:%d", tenantID), merged,
+		in.EnsureStandard, in.ReplaceStandard,
+		func(ctx context.Context, newID string, oldIDs []string) error {
+			return s.persistSpawnTemplateID(ctx, tenantID, merged, newID, oldIDs)
+		},
+	)
+}
 
+// runTemplateQueryCore is the provider-facing half of a template query shared
+// by the workspace route and the platform sandbox-connection drawer (000097).
+// scope namespaces the singleflight — "tenant:<id>" there, "connection:<id>"
+// here — so concurrent provisioning requests still collapse per owner.
+// persistRebuilt, on a successful replace, records the new standard template
+// id on the caller's persisted payload; an error keeps the previous templates.
+func (s *TenantSandboxConfigService) runTemplateQueryCore(
+	ctx context.Context,
+	scope string,
+	merged *types.TenantSandboxConfig,
+	ensureStandard, replaceStandard bool,
+	persistRebuilt func(ctx context.Context, newID string, oldIDs []string) error,
+) (*SandboxTemplateCatalog, error) {
 	// Catalog access needs the control-plane connection but does not need a
 	// spawn template yet. A private placeholder lets the same effective-config
 	// validation protect every other required field without weakening runtime
@@ -633,15 +654,15 @@ func (s *TenantSandboxConfigService) QueryTemplates(
 	// explicit settings-page action: auto-ensure on every refresh made DNS
 	// and image changes impossible to apply, and left admins unsure whether
 	// they had asked for a build.
-	wantStandard := in.ReplaceStandard || (in.EnsureStandard && usable == nil)
+	wantStandard := replaceStandard || (ensureStandard && usable == nil)
 	if wantStandard {
 		op := "ensure"
-		if in.ReplaceStandard {
+		if replaceStandard {
 			op = "replace"
 		}
-		key := op + ":" + ensureTemplateKey(tenantID, sandbox.IdentityOf(merged))
+		key := op + ":" + ensureTemplateKey(scope, sandbox.IdentityOf(merged))
 		ensured, ensureErr, _ := s.ensureTemplate.Do(key, func() (any, error) {
-			if in.ReplaceStandard {
+			if replaceStandard {
 				return catalog.ReplaceStandardTemplate(ctx)
 			}
 			return catalog.EnsureStandardTemplate(ctx)
@@ -656,8 +677,8 @@ func (s *TenantSandboxConfigService) QueryTemplates(
 		result.Templates = deduplicateSandboxTemplates(append(result.Templates, *standard))
 		if sandbox.IsTemplateReady(standard.Status) {
 			result.Provisioned = true
-			if in.ReplaceStandard {
-				persistErr := s.persistSpawnTemplateID(ctx, tenantID, merged, standard.ID, oldStandardIDs)
+			if replaceStandard {
+				persistErr := persistRebuilt(ctx, standard.ID, oldStandardIDs)
 				if persistErr != nil {
 					logger.Warnf(ctx, "[sandbox] persist rebuilt template id: %v; keeping previous templates",
 						persistErr)
@@ -851,12 +872,14 @@ func pickStandardTemplate(items []sandbox.RemoteTemplate) *sandbox.RemoteTemplat
 	return best
 }
 
-// ensureTemplateKey names one cluster as seen by one tenant. The identity
+// ensureTemplateKey names one cluster as seen by one owner. scope is the
+// singleflight namespace of the caller ("tenant:<id>" for the workspace route,
+// "connection:<id>" for the platform sandbox-connection drawer). The identity
 // carries an API key, so it is hashed rather than formatted: this string is
 // only ever compared, and it should not be able to surface a credential in a
 // panic trace or a heap dump.
-func ensureTemplateKey(tenantID uint64, identity sandbox.SandboxIdentity) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%d|%#v", tenantID, identity)))
+func ensureTemplateKey(scope string, identity sandbox.SandboxIdentity) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s|%#v", scope, identity)))
 	return hex.EncodeToString(sum[:])
 }
 

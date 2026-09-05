@@ -91,7 +91,15 @@ type TenantSkillRepository interface {
 	// ListCatalogsByTenant returns every live catalog row of one workspace.
 	ListCatalogsByTenant(ctx context.Context, tenantID uint64) ([]*types.TenantSkillCatalogEntity, error)
 	// UpdateCatalog writes mutable definition fields (bundle, description, version).
+	// It deliberately does not list source_platform_skill_id: GORM map-updates
+	// only touch the listed keys, so pushes re-registering a materialized row
+	// keep its provenance intact.
 	UpdateCatalog(ctx context.Context, e *types.TenantSkillCatalogEntity) error
+	// SetCatalogSourcePlatformSkill is the ONLY writer of the provenance
+	// column (000098): the platform surface stamps it right after a catalog
+	// row is materialized from a platform skill. An empty platformSkillID
+	// clears the link.
+	SetCatalogSourcePlatformSkill(ctx context.Context, tenantID uint64, catalogID, platformSkillID string) error
 	// DeleteCatalog soft-deletes a definition. Install rows are not touched.
 	DeleteCatalog(ctx context.Context, tenantID uint64, catalogID string) error
 	// ListSkillsByCatalog returns installations of one catalog skill.
@@ -467,6 +475,20 @@ func (r *tenantSkillRepository) UpdateCatalog(ctx context.Context, e *types.Tena
 			"bundle_ref":    e.BundleRef,
 			"bundle_sha256": e.BundleSHA256,
 			"updated_at":    time.Now(),
+		}).Error
+}
+
+// SetCatalogSourcePlatformSkill writes the provenance column alone — separate
+// from UpdateCatalog so no ordinary definition write can clobber or restore it.
+func (r *tenantSkillRepository) SetCatalogSourcePlatformSkill(
+	ctx context.Context, tenantID uint64, catalogID, platformSkillID string,
+) error {
+	return r.db.WithContext(ctx).
+		Model(&types.TenantSkillCatalogEntity{}).
+		Where("tenant_id = ? AND id = ?", tenantID, catalogID).
+		Updates(map[string]any{
+			"source_platform_skill_id": platformSkillID,
+			"updated_at":               time.Now(),
 		}).Error
 }
 

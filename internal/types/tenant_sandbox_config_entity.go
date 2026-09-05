@@ -51,6 +51,17 @@ type TenantSandboxConfigEntity struct {
 	// IsCordoned: it is a lease, never a permanent lock.
 	CordonedAt *time.Time
 
+	// SourceConnectionID links a config materialized from a platform sandbox
+	// connection (sandbox_connections.id). Empty = workspace self-built.
+	// Written only at materialization; workspace edits never change it.
+	SourceConnectionID string `gorm:"column:source_connection_id;type:varchar(36)"`
+
+	// SourcePushedAt is the source connection's updated_at snapshot at the
+	// last successful push (or at materialization, so fresh assignments do
+	// not read as drifting). The platform console calls the row drifting
+	// when the connection's updated_at is newer.
+	SourcePushedAt *time.Time `gorm:"column:source_pushed_at"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt gorm.DeletedAt `gorm:"index"`

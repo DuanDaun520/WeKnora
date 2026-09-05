@@ -1238,8 +1238,11 @@ func (h *TenantHandler) UpdateTenantKV(c *gin.Context) {
 
 	switch key {
 	case "web-search-config", "parser-engine-config", "storage-engine-config":
-		if !dto.CanViewIntegrationSecrets(ctx) {
-			c.Error(errors.NewForbiddenError("integration configuration requires admin access"))
+		// 写侧随控制台按空间代管收权：工作空间管理员不再能改这三个
+		// 集成配置键，只有系统管理员（控制台经 X-Tenant-ID 代管）和
+		// 具备相应能力的 API key 可以。
+		if !dto.CanManageIntegrationSecrets(ctx) {
+			c.Error(errors.NewForbiddenError("integration configuration is managed by system administrators"))
 			return
 		}
 	}

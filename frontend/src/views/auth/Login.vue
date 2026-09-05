@@ -95,63 +95,7 @@
       </svg>
     </div>
 
-    <!-- Logo - Top Left -->
-    <a href="https://github.com/Tencent/WeKnora" target="_blank" class="header-logo" :title="$t('common.github')">
-      <img src="@/assets/img/weknora.png" alt="WeKnora" class="logo-image" />
-    </a>
-
-    <!-- Header Links - Top Right -->
-    <div class="header-links">
-      <a href="https://weknora.weixin.qq.com" target="_blank" class="header-link" :title="$t('common.website')">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-          stroke-linecap="round">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="2" y1="12" x2="22" y2="12" />
-          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-        </svg>
-        <span class="link-text">{{ $t('common.website') }}</span>
-      </a>
-
-      <a href="https://github.com/Tencent/WeKnora" target="_blank" class="header-link" :title="$t('common.info')">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor">
-          <path
-            d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z" />
-        </svg>
-        <span class="link-text">GitHub</span>
-      </a>
-    </div>
-
-    <!-- Left Showcase Section -->
-    <div class="showcase-section">
-      <div class="showcase-content">
-        <p class="showcase-subtitle">{{ $t('platform.subtitle') }}</p>
-        <p class="showcase-description">{{ $t('platform.description') }}</p>
-
-        <div class="feature-tags">
-          <span class="tag">{{ $t('platform.rag') }}</span>
-          <span class="tag">{{ $t('platform.agent') }}</span>
-          <span class="tag">{{ $t('platform.wiki') }}</span>
-          <span class="tag">{{ $t('platform.hybridSearch') }}</span>
-        </div>
-
-        <!-- Swiper Carousel -->
-        <div class="carousel-container">
-          <swiper :modules="modules" :slides-per-view="1" :loop="true" :autoplay="{
-            delay: 4000,
-            disableOnInteraction: false,
-          }" :effect="'fade'" :fade-effect="{ crossFade: true }"
-            :pagination="{ clickable: true, dynamicBullets: false }" :speed="800" class="screenshot-swiper">
-            <swiper-slide v-for="(slide, index) in slides" :key="index">
-              <div class="slide-content">
-                <img :src="slide.image" :alt="slide.title" class="slide-image" />
-              </div>
-            </swiper-slide>
-          </swiper>
-        </div>
-      </div>
-    </div>
-
-    <!-- Right Form Section -->
+    <!-- Centered Form Section -->
     <div class="form-section">
       <div class="form-panel">
         <!-- 强制改密卡片：管理员开户/重置的密码（MustChangePassword=true）首登必须轮换 -->
@@ -166,7 +110,7 @@
               @submit="handleMustChangeSubmit" layout="vertical" label-align="top">
               <t-form-item :label="$t('userProfile.changePassword.currentLabel')" name="oldPassword">
                 <t-input v-model="mustChangeForm.oldPassword" :placeholder="$t('userProfile.changePassword.currentPlaceholder')"
-                  type="password" autocomplete="current-password" size="large" :disabled="mustChangeLoading" />
+                  type="password" autocomplete="new-password" size="large" :disabled="mustChangeLoading" />
               </t-form-item>
 
               <t-form-item :label="$t('userProfile.changePassword.newLabel')" name="newPassword">
@@ -196,21 +140,23 @@
         <!-- Login Card -->
         <div class="form-card" v-if="!mustChangeMode">
           <div class="form-header">
-            <h2 class="form-title">{{ $t('auth.login') }}</h2>
-            <p class="form-welcome">{{ $t('auth.subtitle') }}</p>
+            <img class="brand-logo" :src="logoUrl" alt="">
+            <h2 class="form-title">{{ $t('platform.brandName') }}</h2>
+            <p class="form-welcome">{{ $t('platform.subtitle') }}</p>
           </div>
 
           <div class="form-content">
             <t-form ref="formRef" :data="formData" :rules="formRules" @submit="handleLogin" layout="vertical"
               label-align="top">
               <t-form-item :label="$t('auth.employeeId')" name="email">
-                <t-input v-model="formData.email" :placeholder="$t('auth.employeeIdPlaceholder')" type="text"
-                  autocomplete="username" size="large" :disabled="loading" />
+                <t-auto-complete v-model="formData.email" :options="loginIdOptions"
+                  :placeholder="$t('auth.employeeIdPlaceholder')" filterable clearable size="large" :disabled="loading"
+                  autocomplete="off" name="zhishu-login-id" />
               </t-form-item>
 
               <t-form-item :label="$t('auth.password')" name="password">
                 <t-input v-model="formData.password" :placeholder="$t('auth.passwordPlaceholder')" type="password"
-                  autocomplete="current-password" size="large" :disabled="loading" @enter="handleLogin" />
+                  autocomplete="new-password" size="large" :disabled="loading" @enter="handleLogin" />
               </t-form-item>
 
               <t-button type="submit" theme="primary" size="large" block :loading="loading" class="submit-button">
@@ -218,21 +164,7 @@
               </t-button>
             </t-form>
 
-            <!-- Features list -->
-            <div class="login-features">
-              <div class="feature-item">
-                <span class="feature-icon">✓</span>
-                <span class="feature-text">{{ $t('platform.multimodalParsing') }}</span>
-              </div>
-              <div class="feature-item">
-                <span class="feature-icon">✓</span>
-                <span class="feature-text">{{ $t('platform.hybridSearchEngine') }}</span>
-              </div>
-              <div class="feature-item">
-                <span class="feature-icon">✓</span>
-                <span class="feature-text">{{ $t('platform.ragQandA') }}</span>
-              </div>
-            </div>
+            <p class="test-mode-note">{{ $t('auth.testModeNote') }}</p>
           </div>
         </div>
       </div>
@@ -242,16 +174,12 @@
 
 <script setup lang="ts">
 import { ref, reactive, nextTick, onMounted, computed } from 'vue'
+import logoUrl from '@/assets/img/logo.png'
 import { useRoute, useRouter } from 'vue-router'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useRoleLabel } from '@/composables/useRoleLabel'
 import { notifyLoginSuccess } from '@/utils/loginNotify'
 import { newPasswordRules } from '@/utils/passwordPolicy'
-import { Swiper, SwiperSlide } from 'swiper/vue'
-import { Autoplay, EffectFade, Pagination } from 'swiper/modules'
-import 'swiper/css'
-import 'swiper/css/effect-fade'
-import 'swiper/css/pagination'
 import {
   login,
   changePassword,
@@ -260,44 +188,11 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 
-// Import screenshot images
-import screenshot1 from '@/assets/img/screenshot-1.svg'
-import screenshot2 from '@/assets/img/screenshot-2.svg'
-import screenshot3 from '@/assets/img/screenshot-3.svg'
-import screenshot4 from '@/assets/img/screenshot-4.svg'
-
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const { t, tm } = useI18n()
 const { formatRole, roleIcon } = useRoleLabel()
-
-// Swiper modules
-const modules = [Autoplay, EffectFade, Pagination]
-
-// Carousel slides data
-const slides = [
-  {
-    image: screenshot4,
-    title: t('platform.carousel.agenticRagTitle'),
-    description: t('platform.carousel.agenticRagDesc')
-  },
-  {
-    image: screenshot2,
-    title: t('platform.carousel.hybridSearchTitle'),
-    description: t('platform.carousel.hybridSearchDesc')
-  },
-  {
-    image: screenshot3,
-    title: t('platform.carousel.wikiTitle'),
-    description: t('platform.carousel.wikiDesc')
-  },
-  {
-    image: screenshot1,
-    title: t('platform.carousel.smartDocRetrievalTitle'),
-    description: t('platform.carousel.smartDocRetrievalDesc')
-  }
-]
 
 // Form references
 const formRef = ref()
@@ -305,6 +200,41 @@ const formRef = ref()
 // State management
 const loading = ref(false)
 const complexPasswordEnabled = ref(false)
+
+// 本系统专属的登录历史：只记录登录成功的工号（localStorage，最多 5 个），
+// 用 t-auto-complete 下拉展示，替代浏览器按域名共享的原生自动填充——
+// 同域名下跑多个系统时原生建议会混入其他账号。
+const LOGIN_HISTORY_KEY = 'zhishu_login_ids'
+const savedLoginIds = ref<string[]>([])
+const loginIdOptions = computed(() => savedLoginIds.value.map(id => ({ label: id, value: id })))
+
+const loadLoginHistory = () => {
+  try {
+    const raw = localStorage.getItem(LOGIN_HISTORY_KEY)
+    const list = raw ? JSON.parse(raw) : []
+    savedLoginIds.value = Array.isArray(list)
+      ? list.filter((x: unknown): x is string => typeof x === 'string').slice(0, 5)
+      : []
+  } catch {
+    savedLoginIds.value = []
+  }
+}
+
+const rememberLoginId = (id: string) => {
+  const v = id.trim()
+  if (!v) return
+  savedLoginIds.value = [v, ...savedLoginIds.value.filter(x => x !== v)].slice(0, 5)
+  localStorage.setItem(LOGIN_HISTORY_KEY, JSON.stringify(savedLoginIds.value))
+}
+
+// 后端登录失败固定返回英文模糊文案（防止探测区分账号不存在/密码错误），
+// 展示层映射为中文；未知文案原样透出。
+const localizeAuthError = (msg?: string) => {
+  if (!msg) return t('auth.loginErrorRetry')
+  if (/invalid employee id/i.test(msg)) return t('auth.loginErrorEmployeeId')
+  if (/account is disabled/i.test(msg)) return t('auth.accountDisabled')
+  return msg
+}
 
 // 强制改密状态。登录响应带 must_change_password=true（管理员开户/重置
 // 密码）或存量会话被 403 PASSWORD_CHANGE_REQUIRED 拦回登录页时切入该
@@ -474,6 +404,8 @@ const handleLogin = async () => {
     })
 
     if (response.success) {
+      // 认证已通过才记入本系统登录历史（含待强制改密的首登）
+      rememberLoginId(response.user?.employee_id || formData.email.trim())
       // 管理员开户/重置密码的首登：优先于一切后续流程，
       // 先完成改密再重新登录。
       if (response.must_change_password || response.user?.must_change_password) {
@@ -483,7 +415,7 @@ const handleLogin = async () => {
       await persistLoginResponse(response)
       notifyLoginSuccess(response, t, tm, formatRole, roleIcon)
     } else {
-      MessagePlugin.error(response.message || t('auth.loginErrorEmployeeId'))
+      MessagePlugin.error(localizeAuthError(response.message))
     }
   } catch (error: any) {
     console.error('登录错误:', error)
@@ -495,6 +427,7 @@ const handleLogin = async () => {
 
 // Check if already logged in
 onMounted(async () => {
+  loadLoginHistory()
   if (authStore.isLoggedIn) {
     // 管理员重置密码后，存量会话的后续请求被 403 PASSWORD_CHANGE_REQUIRED
     // 拦回登录页。此时本地会话仍有效，若照常跳平台页会形成
@@ -749,190 +682,22 @@ onMounted(async () => {
   }
 }
 
-/* Left Showcase Section */
-.showcase-section {
-  flex: 0 0 52%;
-  display: flex;
-  align-items: flex-end;
-  padding: 100px 30px 100px 50px;
-  box-sizing: border-box;
-  position: relative;
-}
-
-.showcase-content {
-  width: 100%;
-  max-width: 600px;
-  position: relative;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  margin-bottom: 60px;
-}
-
-.showcase-subtitle {
-  margin-top: 0;
-  font-size: 22px;
-  color: rgba(255, 255, 255, 0.95);
-  margin: 0 0 8px 0;
-  font-family: var(--app-font-family);
-  line-height: 1.4;
-  font-weight: 500;
-}
-
-.showcase-description {
-  font-size: 15px;
-  color: rgba(255, 255, 255, 0.8);
-  margin: 0 0 28px 0;
-  font-family: var(--app-font-family);
-  line-height: 1.5;
-}
-
-.feature-tags {
-  display: flex;
-  gap: 12px;
-  margin-bottom: 40px;
-  flex-wrap: wrap;
-}
-
-.tag {
-  display: inline-block;
-  padding: 8px 20px;
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 20px;
-  color: var(--td-text-color-anti);
-  font-size: 14px;
-  font-weight: 500;
-  font-family: var(--app-font-family);
-}
-
-/* Carousel */
-.carousel-container {
-  width: 100%;
-  margin-top: 48px;
-}
-
-.screenshot-swiper {
-  width: 100%;
-  border-radius: 16px;
-  overflow: hidden;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-  padding-bottom: 40px;
-
-  :deep(.swiper-wrapper) {
-    transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
-  }
-
-  :deep(.swiper-pagination) {
-    bottom: 15px !important;
-    z-index: 10;
-  }
-
-  :deep(.swiper-pagination-bullet) {
-    width: 10px;
-    height: 10px;
-    background: rgba(255, 255, 255, 0.5);
-    opacity: 1;
-    transition: all 0.3s ease;
-    margin: 0 6px !important;
-  }
-
-  :deep(.swiper-pagination-bullet-active) {
-    background: var(--td-bg-color-container);
-    width: 28px;
-    border-radius: 5px;
-  }
-}
-
-.slide-content {
-  width: 100%;
-  height: 100%;
-  background: var(--td-bg-color-container);
-  border-radius: 16px;
-  overflow: hidden;
+/* Centered Form Section */
+.form-section {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.slide-image {
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: contain;
-}
-
-/* Right Form Section */
-.form-section {
-  flex: 0 0 48%;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding: 40px 50px 100px 30px;
+  padding: 40px 24px;
   box-sizing: border-box;
   position: relative;
+  z-index: 2;
 }
 
 .form-panel {
   width: 100%;
-  max-width: 480px;
-  margin-bottom: 60px;
+  max-width: 400px;
   position: relative;
-  z-index: 2;
-}
-
-.header-logo {
-  position: fixed;
-  top: 32px;
-  left: 50px;
-  z-index: 100;
-  cursor: pointer;
-
-  .logo-image {
-    width: 120px;
-    height: auto;
-  }
-}
-
-.header-links {
-  position: fixed;
-  top: 28px;
-  right: 28px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  z-index: 100;
-}
-
-.header-link {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 9px 15px;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  color: var(--td-text-color-anti);
-  text-decoration: none;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: var(--app-font-family);
-  letter-spacing: 0.2px;
-  cursor: pointer;
-  position: relative;
-
-  svg {
-    flex-shrink: 0;
-  }
-
-  .link-text {
-    line-height: 1;
-  }
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.3);
-    border-color: rgba(255, 255, 255, 0.4);
-    color: var(--td-text-color-anti);
-  }
 }
 
 .form-card {
@@ -950,8 +715,24 @@ onMounted(async () => {
   margin-bottom: 32px;
 }
 
+.brand-logo {
+  width: 56px;
+  height: 56px;
+  display: block;
+  margin: 0 auto 16px;
+}
+
+.test-mode-note {
+  margin: 20px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+  font-family: var(--app-font-family);
+  user-select: none;
+}
+
 .form-title {
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 600;
   color: var(--td-text-color-primary);
   margin: 0 0 6px 0;
@@ -1038,7 +819,7 @@ onMounted(async () => {
   font-size: 16px;
   font-weight: 500;
   font-family: var(--app-font-family);
-  margin: 20px 0 16px 0;
+  margin: 20px 0 0 0;
 }
 
 .form-footer {
@@ -1064,87 +845,8 @@ onMounted(async () => {
   }
 }
 
-.login-features {
-  margin-top: 20px;
-  padding: 0;
-
-  .feature-item {
-    display: flex;
-    align-items: center;
-    margin-bottom: 12px;
-    font-size: 13px;
-    color: var(--td-text-color-secondary);
-    font-family: var(--app-font-family);
-
-    &:last-child {
-      margin-bottom: 0;
-    }
-
-    .feature-icon {
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      background: var(--td-success-color-light);
-      color: var(--td-brand-color-active);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 12px;
-      font-weight: 700;
-      margin-right: 10px;
-      flex-shrink: 0;
-    }
-
-    .feature-text {
-      line-height: 1.4;
-    }
-  }
-}
-
 /* Responsive Design */
-@media (max-width: 1024px) {
-  .knowledge-node:nth-of-type(n + 13) {
-    display: none;
-  }
-
-  .connection-line:nth-of-type(n + 13) {
-    display: none;
-  }
-
-  .showcase-subtitle {
-    font-size: 18px;
-  }
-
-  .header-logo {
-    top: 26px;
-    left: 40px;
-
-    .logo-image {
-      width: 100px;
-    }
-  }
-
-  .header-links {
-    top: 22px;
-    right: 22px;
-    gap: 8px;
-
-    .link-text {
-      display: none;
-    }
-
-    .header-link {
-      padding: 10px;
-      gap: 0;
-    }
-  }
-}
-
 @media (max-width: 768px) {
-  .login-layout {
-    flex-direction: column;
-  }
-
   .knowledge-node:nth-of-type(n + 9) {
     display: none;
   }
@@ -1153,56 +855,8 @@ onMounted(async () => {
     display: none;
   }
 
-  .showcase-section {
-    flex: 0 0 auto;
-    min-height: 50vh;
-    padding: 40px 24px;
-  }
-
-  .showcase-content {
-    max-width: 100%;
-  }
-
-  .header-logo {
-    top: 22px;
-    left: 30px;
-
-    .logo-image {
-      width: 80px;
-    }
-  }
-
-  .showcase-subtitle {
-    font-size: 16px;
-    margin-bottom: 24px;
-  }
-
-  .feature-tags {
-    margin-bottom: 24px;
-  }
-
-  .carousel-container {
-    margin-top: 24px;
-  }
-
   .form-section {
-    flex: 0 0 auto;
     padding: 24px;
-  }
-
-  .header-links {
-    top: 18px;
-    right: 18px;
-    gap: 8px;
-
-    .link-text {
-      display: inline;
-    }
-
-    .header-link {
-      padding: 8px 12px;
-      font-size: 12px;
-    }
   }
 
   .form-card {
@@ -1219,42 +873,8 @@ onMounted(async () => {
     display: none;
   }
 
-  .showcase-section {
-    padding: 32px 20px;
-  }
-
-  .header-logo {
-    top: 18px;
-    left: 20px;
-
-    .logo-image {
-      width: 70px;
-    }
-  }
-
-  .showcase-subtitle {
-    font-size: 14px;
-  }
-
-  .tag {
-    font-size: 12px;
-    padding: 6px 16px;
-  }
-
   .form-section {
     padding: 20px;
-  }
-
-  .header-links {
-    top: 14px;
-    right: 14px;
-    gap: 6px;
-    flex-wrap: wrap;
-
-    .header-link {
-      padding: 7px 10px;
-      font-size: 11px;
-    }
   }
 
   .form-card {
@@ -1296,23 +916,6 @@ html[theme-mode="dark"] {
     stroke: rgba(255, 255, 255, 0.25);
   }
 
-  .header-logo .logo-image {
-    filter: invert(1) hue-rotate(180deg) brightness(1.1);
-  }
-
-  .header-link {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.15);
-
-    &:hover {
-      background: rgba(255, 255, 255, 0.2);
-    }
-  }
-
-  .tag {
-    background: rgba(255, 255, 255, 0.12);
-  }
-
   .form-card {
     background: rgba(36, 36, 36, 0.97) !important;
     box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4) !important;
@@ -1329,14 +932,6 @@ html[theme-mode="dark"] {
     &:focus-within {
       border-color: var(--td-brand-color) !important;
     }
-  }
-
-  .screenshot-swiper .swiper-pagination-bullet-active {
-    background: rgba(255, 255, 255, 0.9) !important;
-  }
-
-  .login-features .feature-icon {
-    background: rgba(6, 176, 77, 0.15);
   }
 }
 </style>

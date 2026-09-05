@@ -173,6 +173,23 @@ func TestResolveTenantRole_CrossTenantSuperuserGetsAdmin_NoAutoPromote(t *testin
 	}
 }
 
+func TestResolveTenantRole_SystemAdminCrossTenantGetsAdmin_NoAutoPromote(t *testing.T) {
+	// 管理后台「按空间代管」：IsTenantAccessible 已放行系统管理员的 X-Tenant-ID
+	// switch，角色解析必须同步授予临时 Admin，否则 RBAC 强制时代管面板全部 403。
+	// 系统管理员典型形态是 tenantless（TenantID=0）。与超管一致：不写 tenant_members。
+	svc := newFakeMemberService()
+	svc.seedActive("member", 10000, types.TenantRoleOwner) // 目标空间已有成员，堵死自愈路径
+	user := &types.User{ID: "sysadmin", TenantID: 0, IsSystemAdmin: true}
+
+	got, ok := resolveTenantRole(context.Background(), svc, user, 10000, true, cfgWithRBAC(true))
+	if !ok || got != types.TenantRoleAdmin {
+		t.Fatalf("got (%v, %v), want (admin, true)", got, ok)
+	}
+	if len(svc.addCalls) != 0 {
+		t.Fatalf("system admin must not trigger auto-promote, got %+v", svc.addCalls)
+	}
+}
+
 func TestResolveTenantRole_AutoPromoteRequiresHomeTenant(t *testing.T) {
 	// 回归 H1：即便 target 是孤儿空间，只要不是用户自己的 home tenant，
 	// 就不能 auto-promote 为 Owner。

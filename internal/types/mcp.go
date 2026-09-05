@@ -22,9 +22,14 @@ const (
 
 // MCPService represents an MCP (Model Context Protocol) service configuration
 type MCPService struct {
-	ID             string             `json:"id"                     gorm:"type:varchar(36);primaryKey"`
-	TenantID       uint64             `json:"tenant_id"              gorm:"uniqueIndex:idx_tenant_name"`
-	Name           string             `json:"name"                   gorm:"type:varchar(255);not null;uniqueIndex:idx_tenant_name"`
+	ID string `json:"id" gorm:"type:varchar(36);primaryKey"`
+	// TenantID is retained for schema compatibility but is dead since the
+	// 000096 platform rework: non-builtin rows are platform-owned (0) and a
+	// workspace's visibility is the assignment table. Plain index (the old
+	// uniqueIndex tag never matched the shipped migrations and would now be
+	// wrong anyway — multiple workspaces may share same-named services).
+	TenantID       uint64             `json:"tenant_id"              gorm:"index:idx_mcp_services_tenant_name"`
+	Name           string             `json:"name"                   gorm:"type:varchar(255);not null;index:idx_mcp_services_tenant_name"`
 	Description    string             `json:"description"            gorm:"type:text"`
 	Enabled        bool               `json:"enabled"                gorm:"default:true;index"`
 	TransportType  MCPTransportType   `json:"transport_type"         gorm:"type:varchar(50);not null"`

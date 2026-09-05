@@ -28,6 +28,7 @@ import { useChatStreamHandler } from '@/composables/useChatStreamHandler'
 import { getMessageList } from '@/api/chat'
 import { configSkillTranscriptUrl } from '@/api/system'
 import { getApiBaseUrl } from '@/utils/api-base'
+import { resolveRequestTenantId } from '@/stores/managedWorkspace'
 import { generateRandomString } from '@/utils/index'
 import AgentStreamDisplay from '@/views/chat/components/AgentStreamDisplay.vue'
 import i18n from '@/i18n'
@@ -106,7 +107,8 @@ function stop() {
 async function follow(run: number): Promise<boolean> {
   const url = `${getApiBaseUrl()}${configSkillTranscriptUrl(props.configId, props.skillId)}`
   const token = localStorage.getItem('weknora_token')
-  const tenantId = localStorage.getItem('weknora_selected_tenant_id')
+  // 控制台代管空间优先（与 axios 拦截器同一解析函数）
+  const tenantId = resolveRequestTenantId()
   const ac = new AbortController()
   controller = ac
   if (run !== openRun) {

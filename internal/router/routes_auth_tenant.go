@@ -77,9 +77,14 @@ func RegisterTenantRoutes(
 		// is obtained from authentication context; the URL :key is a
 		// config key, not a tenant ID, so these stay outside the
 		// PathTenantMatch group. Tenant-level surface: full-access keys may
-		// call it, and scoped keys need manage_tenant_settings.
+		// call it, and scoped keys need manage_tenant_settings. PUT is
+		// AdminOrSystemAdmin: since the admin-console 按空间代管 migration a
+		// system admin manages the integration keys (parser-engine-config
+		// etc., gated further in-handler via CanManageIntegrationSecrets)
+		// through X-Tenant-ID with a Viewer tenant role, while the remaining
+		// keys keep their tenant-Admin semantics.
 		g.apiKeyRoute(tenantRoutes, http.MethodGet, "/kv/:key", apiKeyManageTenantSettings(apiKeyFullAccess()), g.Viewer(), handler.GetTenantKV)
-		g.apiKeyRoute(tenantRoutes, http.MethodPut, "/kv/:key", apiKeyManageTenantSettings(apiKeyFullAccess()), g.Admin(), handler.UpdateTenantKV)
+		g.apiKeyRoute(tenantRoutes, http.MethodPut, "/kv/:key", apiKeyManageTenantSettings(apiKeyFullAccess()), g.AdminOrSystemAdmin(), handler.UpdateTenantKV)
 
 		// Per-tenant endpoints share PathTenantMatch at the group level.
 		// Most /tenants/:id/* endpoints stay undeclared for API keys by
@@ -182,7 +187,8 @@ func RegisterAuthRoutes(r *gin.RouterGroup, handler *handler.AuthHandler, g *rba
 // are gated to Viewer+ — any tenant member can see "is the parser
 // reachable". The /*-check / /reconnect endpoints actively probe
 // remote services with tenant credentials and could trigger network
-// fanout, so they're Admin+.
+// fanout; since the admin-console 按空间代管 migration they are
+// SystemAdmin-only (the console drives them through X-Tenant-ID).
 func RegisterSystemRoutes(
 	r *gin.RouterGroup,
 	handler *handler.SystemHandler,
@@ -193,11 +199,11 @@ func RegisterSystemRoutes(
 		systemRoutes.With(apiKeyAny()).GET("/capabilities", g.Viewer(), handler.GetDeploymentCapabilities)
 		systemRoutes.GET("/info", g.Viewer(), handler.GetSystemInfo)
 		systemRoutes.GET("/parser-engines", g.Viewer(), handler.ListParserEngines)
-		systemRoutes.POST("/parser-engines/check", g.Admin(), handler.CheckParserEngines)
-		systemRoutes.POST("/docreader/reconnect", g.Admin(), handler.ReconnectDocReader)
+		systemRoutes.POST("/parser-engines/check", g.SystemAdmin(), handler.CheckParserEngines)
+		systemRoutes.POST("/docreader/reconnect", g.SystemAdmin(), handler.ReconnectDocReader)
 		systemRoutes.GET("/storage-engine-status", g.Viewer(), handler.GetStorageEngineStatus)
-		systemRoutes.POST("/storage-engine-check", g.Admin(), handler.CheckStorageEngine)
-		systemRoutes.POST("/sandbox-check", g.Admin(), handler.CheckSandboxConfig)
+		systemRoutes.POST("/storage-engine-check", g.SystemAdmin(), handler.CheckStorageEngine)
+		systemRoutes.POST("/sandbox-check", g.SystemAdmin(), handler.CheckSandboxConfig)
 	}
 }
 

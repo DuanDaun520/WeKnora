@@ -1202,9 +1202,9 @@ export default {
       categoryAction: '下一步'
     },
     navGroups: {
-      basic: '基础',
-      knowledge: '知识检索',
+      basic: '基础配置',
       capability: '能力扩展',
+      advanced: '高级配置',
       integration: '发布集成'
     }
   },
@@ -1866,6 +1866,103 @@ export default {
     withKnowledgeBase: '知识库',
     withWebSearch: '网络搜索'
   },
+  // 平台级「沙箱连接」（000097）：管理后台配置一次，按空间物化分配
+  sandboxConnections: {
+    title: '沙箱连接',
+    description: '平台统一维护沙箱连接，分配后每个空间得到一份独立配置；编辑连接需手动「推送更新」才会传播到已分配空间。',
+    refresh: '刷新',
+    addConnection: '新建连接',
+    searchPlaceholder: '搜索连接名称',
+    filterTypeAll: '全部类型',
+    emptyHint: '还没有沙箱连接，点击右上角「新建连接」创建。',
+    noMatchHint: '没有匹配的连接',
+    updatedAt: '更新于',
+    unassigned: '未分配空间',
+    assignmentDriftHint: '连接有更新未推送',
+    assignmentInSync: '已是最新推送的配置',
+    pushAction: '推送更新',
+    pushResultTitle: '推送结果',
+    pushBlockedCount: '被阻止',
+    pushStatus: {
+      updated: '已更新',
+      blockedLive: '有存活沙箱，已阻止',
+      blockedSnapshot: '技能快照锁定，已阻止',
+      skippedCordoned: '正在被其它操作修改，已跳过',
+      error: '失败',
+    },
+    deleteConfirmBody: '确定删除连接「{name}」吗？删除前需先取消全部分配。',
+    blockedAssignmentsExist: '该连接仍有关联的空间配置，请先在编辑抽屉中取消全部分配。',
+    toasts: {
+      loadFailed: '加载沙箱连接失败',
+      pushFailed: '推送更新失败',
+      deleted: '已删除',
+      deleteFailed: '删除失败',
+    },
+    // ---- 编辑抽屉（systemMode）----
+    assignmentsSection: '空间分配',
+    assignmentsSectionDesc: '分配会在每个空间物化一份独立的沙箱配置；编辑连接后需手动「推送更新」传播。',
+    noPlatformTenants: '暂无可分配的空间',
+    assignSwitchLabel: '分配到该空间',
+    assignmentSkillsHint: '已装 {count} 个技能，取消分配前需先在空间内清理',
+    assignmentBlockedTitle: '以下空间的操作被拒绝：',
+    assignmentPartialHint: '连接已保存，但部分空间的分配操作被拒绝',
+    identityRotationHint: '身份字段（后端类型、端点、凭据、域名、Proxy）已更改：已装技能或仍有沙箱的空间会拒绝本次推送。',
+    outcomeSkillsInstalled: '已装技能：{skills}',
+    outcomeSandboxesStillLive: '仍有 {count} 个存活沙箱',
+    outcomeInventoryUnverifiable: '无法核实该空间的沙箱占用',
+    outcomeSnapshotReleaseFailed: '技能快照释放失败',
+    outcomeFailed: '操作失败',
+  },
+  skillLibrary: {
+    title: '技能库',
+    description: '平台统一注册技能，分配后每个空间得到一份独立技能定义；编辑技能需手动「推送更新」才会传播到已分配空间。',
+    refresh: '刷新',
+    addSkill: '注册技能',
+    searchPlaceholder: '搜索技能名称',
+    emptyHint: '还没有平台技能，点击右上角「注册技能」添加。',
+    noMatchHint: '没有匹配的技能',
+    updatedAt: '更新于',
+    unassigned: '未分配空间',
+    browseFiles: '查看技能文件',
+    assignmentDriftHint: '技能有更新未推送',
+    assignmentInSync: '已是最新推送的定义',
+    pushAction: '推送更新',
+    pushResultTitle: '推送结果',
+    pushBlockedCount: '被阻止',
+    pushStatus: {
+      updated: '已更新',
+      healed: '已重建',
+      blockedNameConflict: '名称被自建技能占用，已阻止',
+      error: '失败',
+    },
+    deleteConfirmBody: '确定删除技能「{name}」吗？删除前需先取消全部分配。',
+    blockedAssignmentsExist: '该技能仍被分配给空间，请先在编辑抽屉中取消全部分配。',
+    // ---- 注册 / 编辑抽屉 ----
+    registerTitle: '注册平台技能',
+    editTitle: '编辑平台技能',
+    registerDescription: '从源链接或 zip 注册一次，之后可分配给多个空间。',
+    editDescription: '重新注册技能包（名称不可改）；编辑后需手动「推送更新」传播。',
+    nameSectionTitle: '技能名称',
+    nameImmutableHint: '技能名称不可修改；如需改名请注册新技能。',
+    assignmentsSection: '空间分配',
+    assignmentsSectionDesc: '分配会在每个空间物化一份独立的技能定义（空间可自行安装到沙箱）；编辑技能后需手动「推送更新」传播。',
+    noPlatformTenants: '暂无可分配的空间',
+    assignSwitchLabel: '分配到该空间',
+    assignmentSkillsHint: '已装 {count} 个沙箱，取消分配前需先在空间内卸载',
+    assignmentBlockedTitle: '以下空间的操作被拒绝：',
+    outcomeNameConflict: '该空间已有同名自建技能',
+    outcomeSkillsInstalled: '已装技能：{skills}',
+    outcomeFailed: '操作失败',
+    toasts: {
+      loadFailed: '加载技能库失败',
+      registerFailed: '注册技能失败',
+      registered: '技能已注册',
+      updated: '已保存',
+      pushFailed: '推送更新失败',
+      deleted: '已删除',
+      deleteFailed: '删除失败',
+    },
+  },
   mcpServiceDialog: {
     addTitle: '添加 MCP 服务',
     editTitle: '编辑 MCP 服务',
@@ -1927,8 +2024,13 @@ export default {
       updated: 'MCP 服务已更新',
       createFailed: '创建 MCP 服务失败',
       updateFailed: '更新 MCP 服务失败',
+      assignmentsSaveFailed: '保存空间分配失败，请重试',
       oauthRequired: '该服务需要 OAuth 授权，已自动切换为 OAuth 2.0，请保存后点击「去授权」。'
     },
+    assignmentsSection: '空间分配',
+    assignmentsSectionDesc: '勾选可使用该服务的空间；未勾选的空间及其成员不可见。',
+    assignmentsBuiltinHint: '内置服务对所有空间可见，无需分配。',
+    oauthSystemModeHint: 'OAuth 授权按「空间 + 用户」存储：服务分配到空间后，由成员在对话中完成首次授权；此处仅维护 OAuth 配置。',
     rules: {
       nameRequired: '请输入服务名称',
       transportRequired: '请选择传输类型',
@@ -1980,7 +2082,6 @@ export default {
   modelSettings: {
     title: '模型配置',
     description: '管理不同类型的 AI 模型，支持 Ollama 本地模型和远程 API',
-    movedToConsole: '模型、Ollama 与 WeKnoraCloud 配置已迁移至系统管理后台，请联系系统管理员。',
     copySuffix: ' 副本',
     builtinTag: '内置',
     confirmDelete: '确定删除模型「{name}」吗？',
@@ -2103,10 +2204,13 @@ export default {
     description: '管理外部 MCP (Model Context Protocol) 服务，在 Agent 模式下调用外部工具和资源',
     enabled: '已启用',
     disabled: '已禁用',
-    configuredServices: '已配置的服务',
-    manageAndTest: '管理和测试 MCP 服务连接',
+    refresh: '刷新',
     addService: '添加服务',
-    empty: '暂无 MCP 服务',
+    searchPlaceholder: '搜索服务名称 / URL',
+    filterTypeAll: '全部类型',
+    emptyHint: '暂无 MCP 服务，点击右上角「添加服务」新建',
+    noMatchHint: '没有符合条件的服务',
+    unassigned: '未分配空间',
     deleteConfirmBody: '确定要删除 MCP 服务"{name}"吗？此操作无法撤销。',
     unnamed: '未命名',
     builtin: '内置',
@@ -2223,8 +2327,10 @@ export default {
     pinned: '已置顶'
   },
   platform: {
-    subtitle: '大模型驱动的企业级知识框架',
-    description: 'RAG 检索、智能体推理、Wiki 知识库，让文档真正被理解和运用',
+    subtitle: '知识和技能的AI智能体系统',
+    description: '让知识与技能沉淀为智能体能力，可检索、可复用、可进化',
+    brandName: '知枢',
+    brandNameEn: 'zhishu',
     rag: 'RAG 增强生成',
     agent: 'ReAct 智能体',
     wiki: 'Wiki 知识库',
@@ -2548,6 +2654,7 @@ export default {
     unsupportedFileType: '不支持的文件类型！',
     invalidFileType: '文件类型错误！',
     invalidImageLink: '无效的图片链接',
+    imageUnavailable: '图片不可用（链接无效或已失效）',
     missingKbId: '缺少知识库ID',
     tokenNotFound: '未找到登录令牌，请重新登录',
     streamFailed: '流式连接失败',
@@ -4277,7 +4384,7 @@ export default {
     }
   },
   createChat: {
-    title: 'Hi，我是 WeKnora，让你的知识触手可及',
+    title: 'Hi，我是知枢，让你的知识和技能触手可及',
     newSessionTitle: '新会话',
     messages: {
       createFailed: '创建会话失败',
@@ -4442,8 +4549,8 @@ export default {
     noCompatibleKbForAgent: '当前智能体的工具与作用域内知识库的能力不匹配，暂无可引用的知识库。'
   },
   systemConsole: {
-    title: '系统管理后台',
-    subtitle: '企业级全局管理空间',
+    title: '知枢管理后台',
+    subtitle: '知识和技能的AI智能体系统',
     retry: '重试',
     enterWorkspace: '进入工作台',
     messages: {
@@ -4460,6 +4567,20 @@ export default {
       tenants: '工作空间',
       models: '模型管理',
       ollama: 'Ollama 运行时',
+    },
+    // 左侧菜单分组标题：原工作空间 Settings 的「数据与扩展」等分组随
+    // 000095 收权整体迁入控制台。
+    menuGroups: {
+      workspace: '空间与用户',
+      runtime: '模型与运行时',
+      dataExtensions: '数据与扩展',
+    },
+    // 「按空间代管」目标空间选择条：七个基础设施面板共用的顶部工具栏。
+    workspace: {
+      label: '目标工作空间',
+      placeholder: '选择要管理的空间',
+      emptyHint: '请先在上方选择要管理的工作空间',
+      managingHint: '正在管理「{name}」的配置',
     },
     models: {
       title: '模型管理',
@@ -4670,11 +4791,11 @@ export default {
     haveAccount: '已有账户？',
     backToLogin: '返回登录',
     loginHint: '登录以继续使用；首次使用请在下方创建账户。',
-    firstTime: '首次使用 WeKnora？',
+    firstTime: '首次使用知枢？',
     registerSuccess: '注册成功，请登录',
     registerFailed: '注册失败',
-    subtitle: 'RAG 问答、ReAct 智能体与 Wiki 知识库，大模型驱动的企业级知识框架',
-    registerSubtitle: '创建账户并开始使用 WeKnora',
+    subtitle: '知识和技能的AI智能体系统',
+    registerSubtitle: '创建账户并开始使用知枢',
     emailPlaceholder: '输入邮箱地址',
     passwordPlaceholder: '输入密码',
     confirmPasswordPlaceholder: '再次输入密码',
@@ -4703,6 +4824,8 @@ export default {
     employeeIdPlaceholder: '输入工号',
     employeeIdRequired: '请输入工号',
     loginErrorEmployeeId: '登录错误，请检查工号或密码',
+    accountDisabled: '账号已被禁用，请联系管理员',
+    testModeNote: '系统是测试模式，好几个开源系统凑起来的。如需体验，联系刘征。',
     // 管理员开户/重置密码后的首登强制改密卡片
     mustChangePassword: {
       title: '首次登录请修改密码',
@@ -5073,8 +5196,12 @@ export default {
     basicSection: '基本信息',
     credentialsSection: '连接配置',
     optionsSection: '选项',
-    providersTitle: '搜索引擎配置',
+    refresh: '刷新',
     addProvider: '添加搜索引擎',
+    searchPlaceholder: '搜索服务名称',
+    filterTypeAll: '全部搜索源',
+    emptyHint: '暂无搜索服务，点击右上角「添加搜索引擎」新建',
+    noMatchHint: '没有符合条件的服务',
     editProvider: '编辑搜索引擎',
     deleteConfirm: '确定要删除此搜索引擎配置吗？',
     providerNameLabel: '名称',
@@ -5083,12 +5210,9 @@ export default {
     providerDescLabel: '备注',
     providerDescPlaceholder: '可选，如：测试环境用',
     engineIdLabel: '搜索引擎 ID',
-    setAsDefault: '设为默认',
     testConnection: '测试连接',
     testing: '测试中...',
     viewDocs: '查看文档获取密钥',
-    noProvidersDesc: '添加一个网络搜索引擎，为您的智能体提供实时的互联网信息检索能力。',
-    setAsDefaultDesc: '当智能体没有指定特定的搜索引擎时，将默认使用此配置',
     proxyUrlLabel: 'HTTP 代理',
     proxyUrlPlaceholder: '例如 http://proxy.example.com:3128（可选，仅支持 http/https）',
     proxyUrlHelp: '若环境访问搜索 API 需代理，在此填写；留空则使用系统环境变量 HTTP(S)_PROXY。',
@@ -5097,16 +5221,29 @@ export default {
     baseUrlLabel: '实例地址',
     baseUrlPlaceholder: 'https://searxng.example.com',
     apiKeyPlaceholder: '请输入 API 密钥',
+    // ---- 空间分配（000095 平台化：服务配置一次，按空间分配）----
+    assignmentsSection: '空间分配',
+    assignmentsSectionDesc: '将此搜索服务分配给需要它的工作空间；每个空间可标记一个默认服务（未标记时使用最早分配的服务），标记默认会自动接替该空间原有的默认。',
+    assignSwitchLabel: '分配',
+    defaultSwitchLabel: '默认',
+    defaultTag: '默认',
+    unassigned: '未分配空间',
+    otherDefaultHint: '当前默认：{name}',
+    noPlatformTenants: '暂无工作空间',
     toasts: {
       providerCreated: '搜索引擎配置已创建',
       providerUpdated: '搜索引擎配置已更新',
       providerDeleted: '搜索引擎配置已删除',
       testSuccess: '连接测试成功',
-      testFailed: '连接测试失败'
+      testFailed: '连接测试失败',
+      assignmentsSaveFailed: '空间分配保存失败，请重试'
     }
   },
   settings: {
     webSearchConfig: '网络搜索',
+    // 000094 模型平台化 / 000095 基础设施收权：旧入口被空间角色点开时
+    // 的统一提示（对应 Settings.vue 的 LEGACY_CONSOLE_SECTIONS 改道）。
+    movedToConsole: '该配置已迁移至系统管理后台，请联系系统管理员。',
     autoCheckUpdate: '自动下载更新',
     autoCheckUpdateDesc: '开启后自动检查并在后台下载最新版本安装包。',
     vectorStoreEngine: '向量数据库引擎',
@@ -5157,6 +5294,8 @@ export default {
       configDescriptionPlaceholder: '选填，用于区分多份同类型配置',
       createTitle: '添加沙箱',
       editTitle: '编辑沙箱',
+      systemCreateTitle: '新建沙箱连接',
+      systemEditTitle: '编辑沙箱连接',
       sectionBasic: '基本信息',
       sectionConnection: '集群连接',
       sectionRuntimeEnvironment: '运行环境',
@@ -5200,6 +5339,7 @@ export default {
       scriptsEnabled: '已恢复本空间沙箱执行',
       policySaveFailed: '更新沙箱执行策略失败',
       legacyConfig: '已废弃',
+      fromPlatformConnection: '来自平台连接',
       namedBackendHint: '空间配置是唯一运行时来源；智能体没有选择配置时不会执行技能脚本。',
       weknoraTemplateTitle: 'WeKnora 标准模板',
       weknoraDockerImage: 'WeKnora 标准镜像',
@@ -5459,10 +5599,14 @@ export default {
       },
     },
     skills: {
-      title: '技能管理',
+      title: '技能目录',
       description: '技能属于空间目录，可以只登记，也可以装到一份或多份沙箱。智能体只能启用当前沙箱里已就绪的技能。',
       helpTooltip: '目录里的技能可以不装任何沙箱。脚本要跑起来，必须装进智能体所用的那份沙箱镜像。Docker、Cube、E2B 互不通用，装到几份就要装几次。',
+      // 000099 空间侧只读：目录由系统管理员维护，空间管理员只看不动
+      readonlyHint: '技能目录由系统管理员统一维护，此处仅查看。每个沙箱下方的状态表示该技能是否已写入其镜像。',
       goSandboxSettings: '去配置沙箱',
+      // 000098 溯源 pill：目录行由平台「技能库」分配物化而来
+      fromLibrary: '来自技能库',
       noConfigsDesc: '还没有沙箱，技能需要先有一份可写入的镜像。',
       addSkill: '添加技能',
       addDrawerDesc: '粘贴来源或上传 zip，登记到目录。可以选择现在装进哪些沙箱。',
@@ -5476,6 +5620,7 @@ export default {
       addFileSelected: '已选择 {name}',
       addClearFile: '清除',
       emptyDesc: '还没有技能。添加后可以装到一份或多份沙箱。',
+      emptyDescReadonly: '本空间还没有技能。技能由系统管理员在技能目录中登记并安装到沙箱。',
       emptyNoSandboxHint: '当前没有沙箱。带脚本的技能登记后无法运行，可先去配置沙箱。',
       installSkill: '添加技能',
       installDrawerDesc: '安装到「{name}」的镜像。',
@@ -5507,6 +5652,8 @@ export default {
       loadFailed: '加载失败',
     },
     mcpService: 'MCP服务',
+    sandboxConnections: '沙箱连接',
+    skillLibrary: '技能库',
     versionInfo: '版本信息',
     taskQueue: '任务队列',
     tenantInfo: '空间信息',
@@ -5705,10 +5852,10 @@ export default {
       desc: '你当前的角色无权访问此设置项。请联系本空间的管理员获取所需角色。'
     },
     capabilityUnavailable: '当前部署不支持此功能，已返回可用页面。',
+    // dataExtensions 分组随 000095 基础设施收权迁入系统管理控制台后删除。
     navGroups: {
       account: '账户',
       workspace: '空间',
-      dataExtensions: '数据与扩展',
       systemAdministration: '系统管理',
       platform: '平台'
     }
@@ -5867,22 +6014,24 @@ export default {
       fallbackResponsePlaceholder: '抱歉，我无法回答这个问题。',
       fallbackPrompt: '兜底提示词',
       fallbackPromptPlaceholder: '留空使用系统默认提示词',
-      skillsConfig: '技能',
-      skillsConfigDesc: '先选择运行沙箱，再从下面列表选用技能。没装到该沙箱的会显示「安装」，装好后才能勾选。',
+      skillsConfig: 'Skills技能',
+      // 000100：安装动作收归系统管理员，面向普通成员的文案不再引导「点安装」。
+      skillsConfigDesc: '先选择运行沙箱，再从下面列表选用技能。',
       skillsSelection: '技能列表',
-      skillsSelectionDesc: '这里列出空间目录中的技能。已装到当前沙箱的可以直接用；没装的请先点「安装」。',
+      skillsSelectionDesc: '这里列出空间目录中的技能。',
       skillsAll: '全部',
       skillsSelected: '指定',
       skillsNone: '禁用',
       selectSkills: '选择技能',
-      selectSkillsDesc: '勾选要给这个智能体用的技能。没装到当前沙箱的不能勾选，请先点右侧「安装」。',
-      skillsAllListHint: '「全部」只包含已装到此沙箱的技能。没装的不会自动带上，点「安装」装好后才会算进去。',
+      selectSkillsDesc: '勾选要给这个智能体用的技能。',
+      skillsAllListHint: '「全部」只包含已装到此沙箱的技能。',
       skillsGroupAvailable: '可用',
       skillsGroupUnavailable: '不可用',
       noSkillsAvailable: '空间目录里还没有技能。',
       skillsNeedSandbox: '请先选择运行沙箱。',
       goSandboxSettings: '管理沙箱',
       goSkillSettings: '管理技能',
+      sandboxManagedHint: '沙箱与技能由系统管理员统一配置，如有需要请联系系统管理员。',
       installToThisSandbox: '安装到此沙箱',
       installShort: '安装',
       viewInstallProgress: '查看进度',
@@ -6715,10 +6864,10 @@ export default {
       },
       knowledge: {
         title: '创建你的知识库',
-        desc: '知识库是一切的起点：上传文档、网页或 FAQ，WeKnora 会自动解析并建立索引。点击这里进入知识库。'
+        desc: '知识库是一切的起点：上传文档、网页或 FAQ，知枢会自动解析并建立索引。点击这里进入知识库。'
       },
       welcome: {
-        title: '欢迎使用 WeKnora',
+        title: '欢迎使用知枢',
         desc: '只需几步，带你快速了解知识库、对话与智能体的核心用法。点击「下一步」开始。'
       }
     }

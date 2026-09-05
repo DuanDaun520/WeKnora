@@ -15,6 +15,10 @@ import (
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
+// ErrMCPServiceNotFound is returned when a platform MCP service ID does not
+// resolve; handlers map it to 404.
+var ErrMCPServiceNotFound = errors.New("MCP service not found")
+
 // mcpServiceService implements MCPServiceService interface
 type mcpServiceService struct {
 	mcpServiceRepo interfaces.MCPServiceRepository
@@ -35,7 +39,12 @@ func NewMCPServiceService(
 	}
 }
 
-// CreateMCPService creates a new MCP service
+// CreateMCPService creates a new MCP service.
+//
+// Since the 000096 platform rework rows are platform-owned (tenant_id = 0);
+// workspaces receive the service through assignments. The TenantID on the
+// incoming struct is whatever the calling surface had in context and is
+// always reset here.
 func (s *mcpServiceService) CreateMCPService(ctx context.Context, service *types.MCPService) error {
 	// Stdio transport is disabled for security reasons
 	if service.TransportType == types.MCPTransportStdio {
@@ -49,6 +58,10 @@ func (s *mcpServiceService) CreateMCPService(ctx context.Context, service *types
 	if service.AdvancedConfig == nil {
 		service.AdvancedConfig = types.GetDefaultAdvancedConfig()
 	}
+
+	// Platform-owned row: workspaces see it through assignments, never
+	// through tenant ownership.
+	service.TenantID = 0
 
 	// Set timestamps
 	service.CreatedAt = time.Now()
@@ -320,7 +333,9 @@ func (s *mcpServiceService) UpdateMCPService(
 	return nil
 }
 
-// DeleteMCPService deletes an MCP service
+// DeleteMCPService deletes an MCP service. tenantID scopes the visibility
+// check (0 = platform scope); assignments are purged with the row so no
+// workspace keeps seeing a deleted service.
 func (s *mcpServiceService) DeleteMCPService(ctx context.Context, tenantID uint64, id string) error {
 	// Check if service exists
 	existing, err := s.mcpServiceRepo.GetByID(ctx, tenantID, id)
@@ -328,7 +343,7 @@ func (s *mcpServiceService) DeleteMCPService(ctx context.Context, tenantID uint6
 		return fmt.Errorf("failed to get MCP service: %w", err)
 	}
 	if existing == nil {
-		return fmt.Errorf("MCP service not found")
+		return ErrMCPServiceNotFound
 	}
 
 	// Builtin MCP services cannot be deleted
@@ -342,6 +357,12 @@ func (s *mcpServiceService) DeleteMCPService(ctx context.Context, tenantID uint6
 	if err := s.mcpServiceRepo.Delete(ctx, tenantID, id); err != nil {
 		logger.GetLogger(ctx).Errorf("Failed to delete MCP service: %v", err)
 		return fmt.Errorf("failed to delete MCP service: %w", err)
+	}
+
+	if err := s.mcpServiceRepo.DeleteAssignmentsByServiceID(ctx, id); err != nil {
+		// The row is gone; dangling assignments would just hide, so a purge
+		// failure is logged, not surfaced as a failed delete.
+		logger.GetLogger(ctx).Warnf("Failed to purge assignments of deleted MCP service %s: %v", id, err)
 	}
 
 	logger.GetLogger(ctx).Infof("MCP service deleted: %s (ID: %s)", secutils.SanitizeForLog(existing.Name), id)
@@ -612,4 +633,44 @@ func (s *mcpServiceService) GetMCPServiceResources(
 	}
 
 	return resources, nil
+}
+
+// ListServiceAssignments returns a service's assignments with workspace names.
+func (s *mcpServiceService) ListServiceAssignments(
+	ctx context.Context, serviceID string,
+) ([]types.MCPServiceAssignmentInfo, error) {
+	return s.mcpServiceRepo.ListAssignmentInfos(ctx, serviceID)
+}
+
+// SetServiceAssignments replaces the full assignment list of a service.
+// Tenant existence is validated by the handler (tenantSvc). Builtin services
+// are visible to every workspace by design and reject assignment management.
+func (s *mcpServiceService) SetServiceAssignments(
+	ctx context.Context, serviceID string,
+	rows []types.TenantMCPServiceAssignment, assignedBy string,
+) error {
+	existing, err := s.mcpServiceRepo.GetByIDAnyTenant(ctx, serviceID)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrMCPServiceNotFound
+	}
+	if existing.IsBuiltin {
+		return fmt.Errorf("builtin MCP services are visible to every workspace and cannot be assigned")
+	}
+
+	seen := make(map[uint64]bool, len(rows))
+	deduped := make([]types.TenantMCPServiceAssignment, 0, len(rows))
+	for _, row := range rows {
+		if row.TenantID == 0 || seen[row.TenantID] {
+			continue
+		}
+		seen[row.TenantID] = true
+		row.ServiceID = serviceID
+		deduped = append(deduped, row)
+	}
+
+	logger.Infof(ctx, "Setting MCP service assignments: service=%s, workspaces=%d", serviceID, len(deduped))
+	return s.mcpServiceRepo.ReplaceServiceAssignments(ctx, serviceID, deduped, assignedBy)
 }

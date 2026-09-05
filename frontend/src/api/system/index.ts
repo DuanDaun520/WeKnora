@@ -1073,6 +1073,12 @@ export interface SandboxConfigRecord {
   config: SandboxConfig
   created_at: string
   updated_at: string
+  /**
+   * Set when this row was materialized from a platform sandbox connection
+   * (000097); absent for a workspace-built config. Purely informational in
+   * the workspace panel — the row behaves like any other config either way.
+   */
+  source_connection_id?: string
 }
 
 /** Create/update payload. */

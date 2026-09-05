@@ -2,7 +2,7 @@
   <SettingDrawer
     class="sandbox-config-drawer"
     :visible="visible"
-    :title="record ? $t('settings.sandbox.editTitle') : $t('settings.sandbox.createTitle')"
+    :title="drawerTitle"
     :description="stepDescription"
     icon="code"
     width="680px"
@@ -127,6 +127,13 @@
           :message="$t('settings.sandbox.connectionLockedByInFlight')" />
         <t-alert v-else-if="record" theme="info" class="identity-hint compact-alert"
           :message="$t('settings.sandbox.identityFieldHint')" />
+        <!--
+          System mode has no single row to freeze (each materialized row owns
+          its own skill state), so an identity edit stays editable — but every
+          assigned workspace with a skill snapshot will refuse the push.
+        -->
+        <t-alert v-else-if="systemMode && systemIdentityChanged" theme="warning" class="identity-hint compact-alert"
+          :message="$t('sandboxConnections.identityRotationHint')" />
 
         <template v-if="backend === 'cube'">
           <t-form-item :label="requiredLabel('apiUrl')" :status="fieldStatus('api_url')" :tips="fieldTip('api_url')">
@@ -457,6 +464,54 @@
           <t-radio value="new_session">{{ $t('settings.sandbox.skillRolloutNewSession') }}</t-radio>
         </t-radio-group>
       </section>
+
+      <!-- 空间分配（000097 平台化）：仅平台模式编辑已保存连接时出现。保存是两
+           个请求 —— 连接 PUT 先落地，分配 replace-all 跟上；被阻止的取消分配
+           是逐空间结果，抽屉保留并把原因列在下方。 -->
+      <section
+        v-if="systemMode && effectiveConnection && currentStepKey === 'runtime'"
+        class="setting-drawer__section"
+      >
+        <h4 class="setting-drawer__section-title">{{ $t('sandboxConnections.assignmentsSection') }}</h4>
+        <p class="section-help section-help--under-title">
+          {{ $t('sandboxConnections.assignmentsSectionDesc') }}
+        </p>
+        <div v-if="!assignmentRows.length" class="env-empty">
+          {{ $t('sandboxConnections.noPlatformTenants') }}
+        </div>
+        <template v-else>
+          <div v-for="row in assignmentRows" :key="row.tenantId" class="assignment-row">
+            <div class="assignment-row__main">
+              <span class="assignment-row__name" :title="row.tenantName">{{ row.tenantName }}</span>
+              <!-- 已分配行的状态提示：漂移（连接有更新未推送）优先于技能提示 -->
+              <span v-if="row.assigned && row.drift" class="assignment-row__hint">
+                {{ $t('sandboxConnections.assignmentDriftHint') }}
+              </span>
+              <span v-else-if="row.assigned && row.skillCount > 0" class="assignment-row__hint">
+                {{ $t('sandboxConnections.assignmentSkillsHint', { count: row.skillCount }) }}
+              </span>
+            </div>
+            <t-switch
+              v-model="row.assigned"
+              size="small"
+              :aria-label="$t('sandboxConnections.assignSwitchLabel')"
+            />
+          </div>
+        </template>
+        <div v-if="blockedAssignmentOutcomes.length" class="assignment-outcomes">
+          <p class="section-help">{{ $t('sandboxConnections.assignmentBlockedTitle') }}</p>
+          <div
+            v-for="outcome in blockedAssignmentOutcomes"
+            :key="outcome.tenant_id"
+            class="assignment-outcome"
+          >
+            <t-tag theme="warning" variant="light" size="small">
+              {{ outcome.tenant_name || `#${outcome.tenant_id}` }}
+            </t-tag>
+            <span class="assignment-outcome__reason">{{ assignmentOutcomeLabel(outcome) }}</span>
+          </div>
+        </div>
+      </section>
     </t-form>
 
     <div
@@ -504,6 +559,8 @@ import {
   updateSandboxConfigById,
   querySandboxTemplates,
   listConfigSkills,
+  listPlatformTenants,
+  type PlatformTenant,
   type SandboxCheckItem,
   type SandboxCheckResult,
   type SandboxConfig,
@@ -516,6 +573,16 @@ import {
   isNamedSandboxBackend,
   NAMED_SANDBOX_BACKEND_TYPES,
 } from '@/api/system'
+import {
+  checkSystemSandboxConnection,
+  createSystemSandboxConnection,
+  querySystemSandboxTemplates,
+  updateSystemSandboxConnection,
+  updateSandboxConnectionTenantAssignments,
+  type AssignmentOutcome,
+  type SandboxConnectionAssignment,
+  type SystemSandboxConnection,
+} from '@/api/sandbox-connection'
 
 type SandboxStepKey = 'connection' | 'template' | 'runtime'
 
@@ -523,6 +590,15 @@ const props = defineProps<{
   visible: boolean
   record: SandboxConfigRecord | null
   presetType?: string
+  /**
+   * Platform-console mode (000097): the drawer edits a platform sandbox
+   * connection instead of a workspace config. Save/check/template queries all
+   * switch to the /system/admin endpoints; existing callers (workspace
+   * settings) pass nothing and keep byte-identical behavior.
+   */
+  systemMode?: boolean
+  /** The platform connection being edited; null in system create mode. */
+  sourceConnection?: SystemSandboxConnection | null
 }>()
 
 const emit = defineEmits<{
@@ -646,6 +722,130 @@ const hasSkillSnapshot = computed(() => (
 const hasInFlightSkill = computed(() => inFlightFromSkills.value)
 const retargetFrozen = computed(() => hasSkillSnapshot.value || hasInFlightSkill.value)
 
+// ---- System mode (000097): the same wizard editing a platform connection ----
+
+// The connection this drawer is editing, including one it just created.
+const savedConnection = ref<SystemSandboxConnection | null>(null)
+const effectiveConnection = computed(() => savedConnection.value || props.sourceConnection || null)
+const drawerTitle = computed(() => {
+  if (props.systemMode) {
+    return effectiveConnection.value
+      ? t('settings.sandbox.systemEditTitle')
+      : t('settings.sandbox.systemCreateTitle')
+  }
+  return props.record ? t('settings.sandbox.editTitle') : t('settings.sandbox.createTitle')
+})
+
+// Workspace catalog for the assignment section (system edit mode only); one
+// row per workspace, the switch expressing the replace-all target state.
+const platformTenants = ref<PlatformTenant[]>([])
+const assignmentRows = ref<Array<{
+  tenantId: number
+  tenantName: string
+  assigned: boolean
+  drift: boolean
+  skillCount: number
+}>>([])
+// Outcomes of the last assignment save; only the blocked/failed ones render.
+const assignmentOutcomes = ref<AssignmentOutcome[]>([])
+const blockedAssignmentOutcomes = computed(() =>
+  assignmentOutcomes.value.filter((r) => r.status === 'blocked' || r.status === 'error'))
+
+function assignmentOutcomeLabel(outcome: AssignmentOutcome): string {
+  switch (outcome.code) {
+    case 'skills_installed':
+      return t('sandboxConnections.outcomeSkillsInstalled', {
+        skills: (outcome.skill_names || []).join('、'),
+      })
+    case 'sandboxes_still_live':
+      return t('sandboxConnections.outcomeSandboxesStillLive', {
+        count: outcome.inventory?.sandbox_count ?? 0,
+      })
+    case 'sandbox_inventory_unverifiable':
+      return t('sandboxConnections.outcomeInventoryUnverifiable')
+    case 'skill_snapshot_release_failed':
+      return t('sandboxConnections.outcomeSnapshotReleaseFailed')
+    default:
+      return outcome.message || t('sandboxConnections.outcomeFailed')
+  }
+}
+
+async function loadPlatformTenantsOnce() {
+  if (platformTenants.value.length) return
+  try {
+    const res = await listPlatformTenants()
+    platformTenants.value = res.tenants || []
+  } catch {
+    // The section renders its own empty hint; there is nothing to retry into.
+  }
+}
+
+// Seeds the switches from the connection's materialized rows: assigned flags
+// plus the per-row drift marker and skill count the hints are built from.
+function seedAssignmentRows() {
+  if (!props.systemMode) return
+  const byTenant = new Map(
+    (effectiveConnection.value?.assignments || []).map((a) => [a.tenant_id, a]),
+  )
+  assignmentRows.value = platformTenants.value.map((tenant) => {
+    const assignment = byTenant.get(tenant.id)
+    return {
+      tenantId: tenant.id,
+      tenantName: tenant.name,
+      assigned: !!assignment,
+      drift: !!assignment?.drift,
+      skillCount: assignment?.skill_count ?? 0,
+    }
+  })
+}
+
+// Re-applies what the server reports after a replace-all: a blocked unassign
+// keeps that workspace assigned, so its switch has to snap back on.
+function reseedAssignmentRows(assignments: SandboxConnectionAssignment[]) {
+  const byTenant = new Map(assignments.map((a) => [a.tenant_id, a]))
+  assignmentRows.value = assignmentRows.value.map((row) => {
+    const assignment = byTenant.get(row.tenantId)
+    return {
+      ...row,
+      assigned: !!assignment,
+      drift: !!assignment?.drift,
+      skillCount: assignment?.skill_count ?? row.skillCount,
+    }
+  })
+}
+
+// Frontend mirror of the server's identity comparison (sandbox/config_identity.go):
+// the fields whose change strands live sandboxes. Secrets compare masked against
+// masked — collectPayload re-attaches the placeholder for an untouched key, so
+// "left alone" reads as equal and a freshly typed key reads as a rotation.
+// Only drives the system-mode warning; Push re-checks per materialized row.
+const systemIdentityChanged = computed(() => {
+  if (!props.systemMode) return false
+  const saved = props.sourceConnection?.config
+  if (!saved) return false
+  const current = collectPayload()
+  const norm = (v?: string) => (v || '').trim()
+  if ((current.sandbox_type || '') !== (saved.sandbox_type || '')) return true
+  if ((current.allow_private_endpoints === true) !== (saved.allow_private_endpoints === true)) return true
+  switch (current.sandbox_type) {
+    case 'cube':
+      return norm(current.cube?.api_url) !== norm(saved.cube?.api_url)
+        || norm(current.cube?.api_key) !== norm(saved.cube?.api_key)
+        || norm(current.cube?.sandbox_domain) !== norm(saved.cube?.sandbox_domain)
+        || norm(current.cube?.proxy_url) !== norm(saved.cube?.proxy_url)
+    case 'e2b':
+      return norm(current.e2b?.api_url) !== norm(saved.e2b?.api_url)
+        || norm(current.e2b?.api_key) !== norm(saved.e2b?.api_key)
+        || norm(current.e2b?.sandbox_domain) !== norm(saved.e2b?.sandbox_domain)
+        || norm(current.e2b?.proxy_url) !== norm(saved.e2b?.proxy_url)
+    case 'docker':
+      return norm(current.docker?.host) !== norm(saved.docker?.host)
+        || norm(current.docker?.tls_cert_path) !== norm(saved.docker?.tls_cert_path)
+    default:
+      return false
+  }
+})
+
 // Jumping is what separates editing from creating. A config that does not exist
 // yet has to be built in order — its connection has to check out before there
 // are templates to choose from. Once it exists, every step is just a page of
@@ -653,7 +853,7 @@ const retargetFrozen = computed(() => hasSkillSnapshot.value || hasInFlightSkill
 // clickable during creation so the rail works as a way back.
 function canJumpTo(index: number): boolean {
   if (index === wizardStep.value) return false
-  return Boolean(effectiveRecord.value) || index < wizardStep.value
+  return Boolean(effectiveRecord.value || effectiveConnection.value) || index < wizardStep.value
 }
 
 function goToStep(index: number) {
@@ -754,16 +954,36 @@ function validateRequiredFields(includeTemplate = true): boolean {
 const affectedSessionCount = computed(() => conflict.value?.inventory?.session_ids?.length || 0)
 
 function defaultBackendType(): string {
-  const fromRecord = props.record?.config?.sandbox_type || props.presetType || ''
+  const fromRecord = (props.systemMode
+    ? props.sourceConnection?.config?.sandbox_type
+    : props.record?.config?.sandbox_type) || props.presetType || ''
   if (isNamedSandboxBackend(fromRecord)) return fromRecord
   return 'cube'
 }
 
+// What the drawer opens against: a workspace config by default, or — in system
+// mode — the platform connection being edited (absent in system create mode).
+function openedSource(): { name: string; description: string; config: SandboxConfig } {
+  if (props.systemMode) {
+    return {
+      name: props.sourceConnection?.name || '',
+      description: props.sourceConnection?.description || '',
+      config: props.sourceConnection?.config || {},
+    }
+  }
+  return {
+    name: props.record?.name || '',
+    description: props.record?.description || '',
+    config: props.record?.config || {},
+  }
+}
+
 function reset() {
   stopTemplatePolling()
-  const cfg: SandboxConfig = props.record?.config || {}
-  name.value = props.record?.name || ''
-  description.value = props.record?.description || ''
+  const source = openedSource()
+  const cfg: SandboxConfig = source.config
+  name.value = source.name
+  description.value = source.description
   backend.value = isNamedSandboxBackend(cfg.sandbox_type || '')
     ? cfg.sandbox_type!
     : defaultBackendType()
@@ -797,6 +1017,9 @@ function reset() {
   templatesLoaded.value = false
   templatesError.value = ''
   savedRecord.value = null
+  savedConnection.value = null
+  assignmentOutcomes.value = []
+  seedAssignmentRows()
   wizardStep.value = 0
 }
 
@@ -810,6 +1033,12 @@ function selectBackend(value: string) {
 }
 
 async function refreshInFlightSkill() {
+  // System mode has no tenant config row to list skills against; a connection
+  // payload never carries a snapshot, so the freeze simply does not apply.
+  if (props.systemMode) {
+    inFlightFromSkills.value = false
+    return
+  }
   const id = props.record?.id
   if (!id) {
     inFlightFromSkills.value = false
@@ -829,7 +1058,12 @@ watch(() => props.visible, (open) => {
   if (open) {
     void deploymentCapabilities.ensureLoaded()
     reset()
-    void refreshInFlightSkill()
+    if (props.systemMode) {
+      // Tenants must land before the switches can be seeded from assignments.
+      void loadPlatformTenantsOnce().then(seedAssignmentRows)
+    } else {
+      void refreshInFlightSkill()
+    }
   } else {
     stopTemplatePolling()
     inFlightFromSkills.value = false
@@ -997,15 +1231,25 @@ async function loadTemplates(ensureStandard = false, silent = false, replaceStan
   if (!silent) templatesLoading.value = true
   templatesError.value = ''
   try {
-    const res = await querySandboxTemplates({
-      config: collectPayload(),
-      config_id: effectiveRecord.value?.id,
-      ensure_standard: ensureStandard,
-      replace_standard: replaceStandard,
-    })
-    templates.value = res.data?.templates || []
+    // System mode queries the platform mirror: connection_id resolves masked
+    // credentials against the saved connection, and a rebuilt standard
+    // template persists onto it rather than a workspace config row.
+    const catalog = props.systemMode
+      ? await querySystemSandboxTemplates({
+        config: collectPayload(),
+        connection_id: effectiveConnection.value?.id,
+        ensure_standard: ensureStandard,
+        replace_standard: replaceStandard,
+      })
+      : (await querySandboxTemplates({
+        config: collectPayload(),
+        config_id: effectiveRecord.value?.id,
+        ensure_standard: ensureStandard,
+        replace_standard: replaceStandard,
+      })).data
+    templates.value = catalog?.templates || []
     templatesLoaded.value = true
-    const standardID = res.data?.standard_template_id
+    const standardID = catalog?.standard_template_id
     const current = templates.value.find((item) => item.id === currentTemplateId.value)
     if (replaceStandard && standardID) {
       selectTemplate(standardID)
@@ -1028,7 +1272,7 @@ async function loadTemplates(ensureStandard = false, silent = false, replaceStan
     const readyStandard = templates.value.find((item) => item.id === standardID && isTemplateSelectable(item))
       || templates.value.find((item) => item.standard && isTemplateSelectable(item))
     if (!currentTemplateId.value && readyStandard) selectTemplate(readyStandard.id)
-    if (res.data?.provisioned && !silent) {
+    if (catalog?.provisioned && !silent) {
       MessagePlugin.info(replaceStandard
         ? t('settings.sandbox.standardTemplateReplaced')
         : t('settings.sandbox.standardTemplateProvisioning'))
@@ -1146,6 +1390,42 @@ async function save() {
   conflict.value = null
   try {
     const payload = { name: trimmed, description: description.value, config: collectPayload() }
+
+    if (props.systemMode) {
+      const existing = effectiveConnection.value
+      const saved = existing
+        ? await updateSystemSandboxConnection(existing.id, payload)
+        : await createSystemSandboxConnection(payload)
+      savedConnection.value = saved
+      // Second request of the system save: replace the assignment set. Create
+      // mode skips it — a fresh connection starts unassigned and the section
+      // is not shown until one exists.
+      if (existing) {
+        const { assignments, results } = await updateSandboxConnectionTenantAssignments(
+          existing.id,
+          assignmentRows.value
+            .filter((row) => row.assigned)
+            .map((row) => ({ tenant_id: row.tenantId })),
+        )
+        reseedAssignmentRows(assignments)
+        const failed = results.filter((r) => r.status === 'blocked' || r.status === 'error')
+        if (failed.length) {
+          // The connection saved; the assignment set only partially applied.
+          // Keep the drawer open with the switches showing what stuck and the
+          // per-workspace refusal reasons listed below them.
+          assignmentOutcomes.value = results
+          MessagePlugin.warning(t('sandboxConnections.assignmentPartialHint'))
+          emit('saved')
+          return
+        }
+        assignmentOutcomes.value = []
+      }
+      MessagePlugin.success(t('common.saveSuccess'))
+      emit('saved')
+      close()
+      return
+    }
+
     const existing = effectiveRecord.value
     const res = existing
       ? await updateSandboxConfigById(existing.id, payload)
@@ -1180,14 +1460,21 @@ async function runCheck(deep: boolean): Promise<boolean> {
   checking.value = true
   checkResult.value = null
   try {
-    // config_id lets the backend resolve masked secrets against the stored row,
-    // so an edited form can be probed without retyping the API key.
-    const res = await checkSandboxConfig({
-      config: collectPayload(),
-      config_id: effectiveRecord.value?.id,
-      deep,
-    })
-    checkResult.value = res?.data || null
+    // config_id / connection_id let the backend resolve masked secrets against
+    // the stored entity, so an edited form can be probed without retyping the
+    // API key. System mode probes the platform mirror endpoints.
+    const result = props.systemMode
+      ? await checkSystemSandboxConnection({
+        config: collectPayload(),
+        connection_id: effectiveConnection.value?.id,
+        deep,
+      })
+      : (await checkSandboxConfig({
+        config: collectPayload(),
+        config_id: effectiveRecord.value?.id,
+        deep,
+      })).data
+    checkResult.value = result || null
     lastCheckWasDeep.value = deep
     if (checkResult.value) {
       await nextTick()
@@ -1757,6 +2044,58 @@ onUnmounted(stopTemplatePolling)
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
+}
+
+// ---- 空间分配区（系统模式）：每空间一行，开关表达 replace-all 目标态 ----
+.assignment-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+
+  & + .assignment-row {
+    border-top: 1px solid var(--td-component-stroke);
+  }
+}
+
+.assignment-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.assignment-row__name {
+  font-size: 13px;
+  color: var(--td-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assignment-row__hint {
+  font-size: 11px;
+  color: var(--td-warning-color);
+}
+
+// 上次保存中被逐空间拒绝的取消分配：原因跟着空间名列在开关列表下。
+.assignment-outcomes {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--td-component-stroke);
+}
+
+.assignment-outcome {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+
+  &__reason {
+    font-size: 12px;
+    color: var(--td-text-color-secondary);
+  }
 }
 
 .section-help {
