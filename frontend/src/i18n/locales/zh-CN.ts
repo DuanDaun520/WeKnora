@@ -7061,15 +7061,13 @@ export default {
   },
   usageStats: {
     title: 'AI 使用统计',
-    personalDesc: '统计您在当前空间的 AI 调用与 Token 消耗（含知识库后台解析任务）。金额按当前单价估算，仅供内部核算参考，不产生任何扣费。',
-    tenantTitle: '空间用量统计',
-    tenantDesc: '空间管理员查看本人与全空间的 AI 用量；金额为按当前单价的估算值。',
-    tenantMenu: '空间用量统计',
+    personalDesc: '统计您在当前空间的 AI 调用与 Token 消耗（含知识库后台解析任务等），费用仅是估算。',
+    tenantTitle: '空间AI用量统计',
+    tenantDesc: '空间管理员查看全空间的 AI 调用与 Token 消耗（含知识库后台解析任务等），费用仅是估算。',
+    tenantMenu: '空间AI用量统计',
     adminTitle: '用量看板',
     adminDesc: '平台总览、按空间、按用户的 Token 用量与估算金额，以及原始用量台账。',
     adminMenu: '用量看板',
-    scopeMe: '我的用量',
-    scopeTenant: '全空间',
     tabs: {
       dashboard: '统计看板',
       records: '用量明细',
@@ -7140,6 +7138,12 @@ export default {
     },
     approxNote: '* 该行为估算值：供应商未返回用量时按内容长度近似折算。',
     empty: '所选条件下暂无用量记录',
+    chart: {
+      input: '输入',
+      output: '输出',
+      cached: '命中缓存',
+      totalTokens: '总 Tokens',
+    },
     prices: {
       title: '模型单价配置',
       desc: '配置各模型的计费单价。报表金额 = 当前单价 × 全部历史用量，修改单价立即对所有统计生效；未配置单价的模型金额按 0 折算。',
