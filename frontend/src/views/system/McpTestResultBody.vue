@@ -29,6 +29,18 @@
               <t-icon name="tools" class="mtr-item-icon" />
               <span class="mtr-item-name">{{ tool.name }}</span>
               <div class="mtr-item-actions" @click.stop>
+                <t-tooltip v-if="serviceId" :content="$t('mcp.testResult.toolEnabledTip')" placement="top">
+                  <span class="mtr-approval">
+                    <span class="mtr-approval-label">{{ $t('mcp.testResult.toolEnabled') }}</span>
+                    <t-switch
+                      :value="tool.enabled !== false"
+                      :loading="toolLoading[tool.name]"
+                      :disabled="isToolPolicyBusy(tool.name)"
+                      size="small"
+                      @change="(v: boolean) => onToolEnabledChange(tool.name, v)"
+                    />
+                  </span>
+                </t-tooltip>
                 <t-tooltip v-if="serviceId" :content="$t('mcp.testResult.requireApprovalTip')" placement="top">
                   <span class="mtr-approval">
                     <t-icon name="error-circle-filled" class="mtr-approval-icon" />
@@ -36,6 +48,7 @@
                     <t-switch
                       :value="tool.require_approval"
                       :loading="approvalLoading[tool.name]"
+                      :disabled="isToolPolicyBusy(tool.name)"
                       size="small"
                       @change="(v: boolean) => onRequireApprovalChange(tool.name, v)"
                     />
@@ -102,8 +115,10 @@ import type { MCPTestResult, MCPTool } from '@/api/mcp-service'
 import {
   getMCPToolApprovals,
   setMCPToolApproval,
+  setMCPToolEnabled,
   getSystemMCPToolApprovals,
   setSystemMCPToolApproval,
+  setSystemMCPToolEnabled,
 } from '@/api/mcp-service'
 import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
@@ -126,6 +141,10 @@ const expandedToolIndex = ref<number | null>(null)
 const { t } = useI18n()
 const displayTools = ref<MCPTool[]>([])
 const approvalLoading = ref<Record<string, boolean>>({})
+const toolLoading = ref<Record<string, boolean>>({})
+
+const isToolPolicyBusy = (toolName: string) =>
+  Boolean(toolLoading.value[toolName] || approvalLoading.value[toolName])
 
 const mergeApprovals = async () => {
   const tools = props.result?.tools
@@ -141,13 +160,32 @@ const mergeApprovals = async () => {
     const rows = await (props.systemMode
       ? getSystemMCPToolApprovals(props.serviceId)
       : getMCPToolApprovals(props.serviceId))
-    const map = new Map(rows.map((r) => [r.tool_name, r.require_approval]))
+    const map = new Map(rows.map((r) => [r.tool_name, r]))
     displayTools.value = tools.map((tool) => ({
       ...tool,
-      require_approval: map.get(tool.name) || false,
+      require_approval: map.get(tool.name)?.require_approval || false,
+      enabled: map.get(tool.name)?.enabled !== false,
     }))
   } catch {
     displayTools.value = tools.map((x) => ({ ...x }))
+  }
+}
+
+const onToolEnabledChange = async (toolName: string, value: boolean) => {
+  if (!props.serviceId) return
+  toolLoading.value = { ...toolLoading.value, [toolName]: true }
+  try {
+    await (props.systemMode
+      ? setSystemMCPToolEnabled(props.serviceId, toolName, value)
+      : setMCPToolEnabled(props.serviceId, toolName, value))
+    displayTools.value = displayTools.value.map((x) =>
+      x.name === toolName ? { ...x, enabled: value } : x
+    )
+  } catch (e) {
+    console.error(e)
+    MessagePlugin.error(t('mcp.testResult.toolEnabledSaveFailed'))
+  } finally {
+    toolLoading.value = { ...toolLoading.value, [toolName]: false }
   }
 }
 

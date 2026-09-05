@@ -14,8 +14,8 @@ MCP（Model Context Protocol）服务管理接口，提供 MCP 服务的 CRUD、
 | POST   | `/mcp-services/:id/test`                          | 测试 MCP 服务连通性                           |
 | GET    | `/mcp-services/:id/tools`                         | 获取 MCP 服务工具列表                         |
 | GET    | `/mcp-services/:id/resources`                     | 获取 MCP 服务资源列表                         |
-| GET    | `/mcp-services/:id/tool-approvals`                | 列出该服务下各工具的人工审批策略 |
-| PUT    | `/mcp-services/:id/tool-approvals/:tool_name`     | 设置/更新某工具的人工审批策略  |
+| GET    | `/mcp-services/:id/tool-approvals`                | 列出该服务下各工具的策略（审批/启用） |
+| PUT    | `/mcp-services/:id/tool-approvals/:tool_name`     | 设置/更新某工具的审批或启用策略  |
 | POST   | `/agent/tool-approvals/:pending_id`               | 处理 Agent 工具调用待审批请求  |
 
 ## POST `/mcp-services` - 创建 MCP 服务
@@ -420,9 +420,9 @@ curl --location 'http://localhost:8080/api/v1/mcp-services/mcp-00000001/resource
 }
 ```
 
-## GET `/mcp-services/:id/tool-approvals` - 列出工具人工审批策略
+## GET `/mcp-services/:id/tool-approvals` - 列出工具策略
 
-返回该 MCP 服务下各工具持久化的 `require_approval` 标记。仅返回数据库中已显式配置过的工具记录；未出现在列表中的工具默认无需审批。
+返回该 MCP 服务下各工具持久化的策略标记（`require_approval` 与 `enabled`）。仅返回数据库中已显式配置过的工具记录；未出现在列表中的工具默认无需审批且启用。
 
 **路径参数**:
 
@@ -445,11 +445,13 @@ curl --location 'http://localhost:8080/api/v1/mcp-services/mcp-00000001/tool-app
         {
             "tool_name": "delete_file",
             "require_approval": true,
+            "enabled": true,
             "updated_at": "2025-09-20T15:30:00+08:00"
         },
         {
             "tool_name": "get_weather",
             "require_approval": false,
+            "enabled": false,
             "updated_at": "2025-09-20T15:31:00+08:00"
         }
     ],
@@ -457,9 +459,13 @@ curl --location 'http://localhost:8080/api/v1/mcp-services/mcp-00000001/tool-app
 }
 ```
 
-## PUT `/mcp-services/:id/tool-approvals/:tool_name` - 设置工具人工审批策略
+## PUT `/mcp-services/:id/tool-approvals/:tool_name` - 设置工具策略
 
-为指定 MCP 服务下的某个工具设置/更新人工审批要求。当 `require_approval` 为 `true` 时，Agent 在调用该工具前会阻塞并产生一条待审批记录，需要前端调用 `POST /agent/tool-approvals/:pending_id` 完成审批。
+为指定 MCP 服务下的某个工具更新策略。支持两个可独立设置的字段：`require_approval`（人工审批）与 `enabled`（工具开关）。`enabled` 为 `false` 时，Agent 在工具注册阶段与执行阶段都会跳过该工具（关闭后对下一次会话即刻生效，无需重启）。两者至少提供一个，省略的字段保持原值。
+
+策略与审批标记一样遵循两层解析：工作空间自身的策略行优先，未设置时回退到平台默认策略行（管理后台经 `/system/admin/mcp-services/:id/tool-approvals` 写入）。
+
+当 `require_approval` 为 `true` 时，Agent 在调用该工具前会阻塞并产生一条待审批记录，需要前端调用 `POST /agent/tool-approvals/:pending_id` 完成审批。
 
 **路径参数**:
 
@@ -472,7 +478,8 @@ curl --location 'http://localhost:8080/api/v1/mcp-services/mcp-00000001/tool-app
 
 | 字段              | 类型    | 必填 | 说明                                |
 | ----------------- | ------- | ---- | ----------------------------------- |
-| require_approval  | boolean | 是   | 是否要求人工审批后才能执行该工具    |
+| require_approval  | boolean | 否   | 是否要求人工审批后才能执行该工具（与 enabled 至少提供一个） |
+| enabled           | boolean | 否   | 是否启用该工具；关闭后 Agent 不可见且不可调用（与 require_approval 至少提供一个） |
 
 **请求**:
 

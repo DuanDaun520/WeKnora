@@ -36,9 +36,10 @@ var versionedSQLiteColumns = map[string][]string{
 	"embed_channels":     {"allow_memory"},                                  // 000060
 	"mcp_oauth_tokens":   {"principal_type", "principal_id"},                // 000064
 	"tenant_sandbox_configs": {"source_connection_id", "source_pushed_at"}, // 000097
+	"mcp_tool_approvals": {"enabled"},                                       // 000102
 }
 
-const expectedSQLiteMigrationVersion = 20 // 000020 usage metering
+const expectedSQLiteMigrationVersion = 21 // 000021 mcp tool enabled
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

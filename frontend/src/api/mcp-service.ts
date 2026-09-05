@@ -53,6 +53,7 @@ export interface MCPTool {
   description: string
   inputSchema: Record<string, any>
   require_approval?: boolean
+  enabled?: boolean
 }
 
 export interface MCPToolApprovalRow {
@@ -61,6 +62,7 @@ export interface MCPToolApprovalRow {
   service_id: string
   tool_name: string
   require_approval: boolean
+  enabled: boolean
 }
 
 export interface MCPResource {
@@ -213,6 +215,10 @@ export async function setMCPToolApproval(serviceId: string, toolName: string, re
   })
 }
 
+export async function setMCPToolEnabled(serviceId: string, toolName: string, enabled: boolean): Promise<void> {
+  await put(`/api/v1/mcp-services/${serviceId}/tool-approvals/${encodeURIComponent(toolName)}`, { enabled })
+}
+
 // ----------------------------------------------------------------------------
 // Credential subresource (issue #988 follow-up).
 //
@@ -280,6 +286,10 @@ export async function setSystemMCPToolApproval(serviceId: string, toolName: stri
   await put(`/api/v1/system/admin/mcp-services/${serviceId}/tool-approvals/${encodeURIComponent(toolName)}`, {
     require_approval: requireApproval
   })
+}
+
+export async function setSystemMCPToolEnabled(serviceId: string, toolName: string, enabled: boolean): Promise<void> {
+  await put(`/api/v1/system/admin/mcp-services/${serviceId}/tool-approvals/${encodeURIComponent(toolName)}`, { enabled })
 }
 
 // ----------------------------------------------------------------------------
