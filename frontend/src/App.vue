@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { NotifyPlugin } from 'tdesign-vue-next'
+import { MessagePlugin, NotifyPlugin } from 'tdesign-vue-next'
+import ProtectedResourcePreview from '@/components/ProtectedResourcePreview.vue'
 import ManualKnowledgeEditor from '@/components/manual-knowledge-editor.vue'
 import UploadConfirmHost from '@/components/UploadConfirmHost.vue'
 import { useSettingsStore } from '@/stores/settings'
@@ -96,6 +97,7 @@ onUnmounted(() => {
     <div id="app">
       <RouterView />
       <ManualKnowledgeEditor />
+      <ProtectedResourcePreview />
       <UploadConfirmHost />
     </div>
   </t-config-provider>
