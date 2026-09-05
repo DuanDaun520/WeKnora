@@ -27,6 +27,14 @@ export const SETTINGS_SECTION_MIN_ROLE: Record<string, SettingsRoleKey> = {
   // 技能目录（000099）：空间管理员只读可见；系统管理员经 auth store 的
   // currentTenantRole='admin' 旁路天然可见并可操作。
   'skill-catalog': 'admin',
+  // 空间 MCP（000096 平台化）：只读列出管理后台分配给本空间生效的 MCP
+  // 服务，读接口 GET /mcp-services 本身就是 Viewer+，全员可见。
+  'tenant-mcp': 'viewer',
+  // 个人 AI 使用统计（Token统计与计费设计.md §5.1）：当前空间内本人
+  // 的用量，GET /me/usage/summary 对所有登录用户开放。
+  'usage-stats': 'viewer',
+  // 空间用量统计（§5.2）：本人 + 全空间两页签，路由 g.Admin()。
+  'tenant-usage': 'admin',
 }
 
 /**

@@ -3216,6 +3216,14 @@ func (s *knowledgeService) ProcessDocument(ctx context.Context, t *asynq.Task) e
 		return nil
 	}
 
+	// Attribute this ingestion's model usage (embedding/VLM/summary) to the
+	// uploader so the personal-level usage report covers knowledge processing
+	// (docs/Token统计与计费设计.md). Empty creator = system/legacy row: the
+	// usage aggregates under the space only.
+	if knowledge.CreatorID != "" {
+		ctx = context.WithValue(ctx, types.UserIDContextKey, knowledge.CreatorID)
+	}
+
 	// 检查是否正在删除 / 已被用户取消 - 如果是则直接退出
 	if knowledge.ParseStatus == types.ParseStatusDeleting {
 		logger.Infof(ctx, "Knowledge is being deleted, aborting processing: %s", payload.KnowledgeID)

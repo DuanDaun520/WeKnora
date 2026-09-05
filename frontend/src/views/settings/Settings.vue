@@ -14,7 +14,7 @@
             <!-- 左侧导航 -->
             <div class="settings-sidebar">
               <div class="sidebar-header">
-                <h2 class="sidebar-title">{{ $t('general.settings') }}</h2>
+                <h2 class="sidebar-title">{{ $t('settings.personalWorkspaceSettings') }}</h2>
               </div>
               <div class="settings-nav">
                 <template v-for="group in navGroups" :key="group.key">
@@ -95,6 +95,12 @@
                     <SkillCatalogSettings />
                   </div>
 
+                  <!-- 空间 MCP（000096 平台化后的空间只读视图）：列出管理后台
+                       分配给本空间生效的 MCP 服务，不提供写入口。 -->
+                  <div v-if="currentSection === 'tenant-mcp'" class="section">
+                    <TenantMcpSettings />
+                  </div>
+
                   <!-- 系统信息 -->
                   <div v-if="currentSection === 'system'" class="section">
                     <SystemInfo />
@@ -124,6 +130,12 @@
                     <UserProfile />
                   </div>
 
+                  <!-- 个人 AI 使用统计（Token统计与计费设计.md §5.1）：
+                       当前空间内本人的调用量与 Token 消耗。 -->
+                  <div v-if="currentSection === 'usage-stats'" class="section">
+                    <UsageStatsSettings />
+                  </div>
+
                   <!-- 空间信息 -->
                   <div v-if="currentSection === 'tenant'" class="section">
                     <TenantInfo />
@@ -132,6 +144,12 @@
                   <!-- 成员管理 (#1303 PR 3) -->
                   <div v-if="currentSection === 'members'" class="section">
                     <TenantMembers />
+                  </div>
+
+                  <!-- 空间用量统计（Token统计与计费设计.md §5.2）：
+                       空间管理员的「我的 + 全空间」双页签看板。 -->
+                  <div v-if="currentSection === 'tenant-usage'" class="section">
+                    <TenantUsagePanel />
                   </div>
 
                   <!-- 发布集成 -->
@@ -165,8 +183,11 @@ import ChatHistorySettings from './ChatHistorySettings.vue'
 import MemorySettings from './MemorySettings.vue'
 import EnvVarSettings from './EnvVarSettings.vue'
 import SkillCatalogSettings from './SkillCatalogSettings.vue'
+import TenantMcpSettings from './TenantMcpSettings.vue'
 import MemoryWorkspaceSettings from './MemoryWorkspaceSettings.vue'
 import TenantMembers from './TenantMembers.vue'
+import UsageStatsSettings from './UsageStatsSettings.vue'
+import TenantUsagePanel from './TenantUsagePanel.vue'
 import SystemSettings from '@/views/system/SystemSettings.vue'
 import RuntimeQueues from '@/views/system/RuntimeQueues.vue'
 import PlatformAPIKeys from '@/views/system/PlatformAPIKeys.vue'
@@ -326,27 +347,35 @@ const navItems = computed(() => {
   // 一律走 SETTINGS_SECTION_MIN_ROLE 表，避免 ad-hoc isAdmin/isOwner 散落在多处。
   // 服务端在每条路由上仍以 g.Viewer/Admin/Owner 为准，这里只决定 UI 是
   // 否露入口；改动入口规则请同步更新 settingsAccess.ts 和对应后端路由。
-  const integrationItems: NavItem[] = INTEGRATION_PREVIEW_ITEMS.map((item) => ({
-    key: integrationSectionKey(item.key),
-    icon: item.icon.type === 'icon' ? item.icon.name : 'integration',
-    emoji: item.icon.type === 'emoji' ? item.icon.value : undefined,
-    label: t(`integrations.tabs.${item.key}`),
-  }))
+  // 发布集成暂时收敛：IM 集成 / 网页嵌入 / Claw Skill 入口隐藏（路由保留，
+  // 恢复时从这里去掉过滤即可）；Chrome 插件挪到「个人」组展示。
+  const hiddenIntegrationTabs = new Set(['im', 'embed', 'claw'])
+  const integrationItems: NavItem[] = INTEGRATION_PREVIEW_ITEMS
+    .filter((item) => !hiddenIntegrationTabs.has(item.key))
+    .map((item) => ({
+      key: integrationSectionKey(item.key),
+      icon: item.icon.type === 'icon' ? item.icon.name : 'integration',
+      emoji: item.icon.type === 'emoji' ? item.icon.value : undefined,
+      label: t(`integrations.tabs.${item.key}`),
+    }))
   const all: NavItem[] = [
     { key: 'general', icon: 'setting', label: t('general.title') },
     { key: 'chathistory', icon: 'chat', label: t('chatHistorySettings.title') },
     { key: 'memory', icon: 'bulletpoint', label: t('memoryWorkspaceSettings.title') },
-    { key: 'system', icon: 'info-circle', label: t('settings.versionInfo') },
+    // 沙箱密钥（envvars）/ 版本信息（system）入口暂时隐藏：深链 ?section=
+    // 会被 watch(navItems) 兜底回第一个可见项，渲染分支保留不影响。
     { key: 'system-global', icon: 'server', label: t('settings.system') },
     { key: 'runtime-queues', icon: 'queue', label: t('settings.taskQueue') },
     { key: 'platform-api-keys', icon: 'secured', label: t('platformApiKeys.title') },
     { key: 'system-audit-log', icon: 'history', label: t('system.globalSettings.audit.tabLabel') },
     { key: 'userprofile', icon: 'user', label: t('userProfile.title') },
+    { key: 'usage-stats', icon: 'chart-bar', label: t('usageStats.title') },
     { key: 'mymemory', icon: 'bookmark', label: t('memorySettings.title') },
-    { key: 'envvars', icon: 'key', label: t('envVarSettings.title') },
     { key: 'skill-catalog', icon: 'rocket', label: t('settings.skills.title') },
+    { key: 'tenant-mcp', icon: 'tools', label: t('settings.tenantMcp') },
     { key: 'tenant', icon: 'user-circle', label: t('settings.tenantInfo') },
     { key: 'members', icon: 'usergroup', label: t('tenantMember.title') },
+    { key: 'tenant-usage', icon: 'chart-pie', label: t('usageStats.tenantMenu') },
     ...integrationItems,
   ]
   // currentTenantRole 为空表示「membership 还没加载」—— 比起渲染整套
@@ -369,22 +398,20 @@ const navGroups = computed<NavGroup[]>(() => {
     {
       key: 'account',
       label: t('settings.navGroups.account'),
-      items: pickItems(['general', 'userprofile', 'mymemory', 'envvars']),
+      // Chrome 插件与个人相关，挪到「个人」组、放在「我的记忆」下面。
+      items: pickItems(['general', 'userprofile', 'usage-stats', 'mymemory', integrationSectionKey('chrome')]),
     },
     {
       key: 'workspace',
       label: t('settings.navGroups.workspace'),
-      items: pickItems(['tenant', 'members', 'chathistory', 'memory', 'skill-catalog']),
+      items: pickItems(['tenant', 'members', 'tenant-usage', 'chathistory', 'memory', 'skill-catalog', 'tenant-mcp']),
     },
     {
+      // IM / 网页嵌入 / Claw / Chrome 已隐藏或迁组，发布集成只剩 API。
       key: 'integrations',
       label: t('integrations.title'),
       items: pickItems([
-        integrationSectionKey('im'),
-        integrationSectionKey('embed'),
         integrationSectionKey('api'),
-        integrationSectionKey('chrome'),
-        integrationSectionKey('claw'),
       ]),
     },
     {
@@ -393,6 +420,7 @@ const navGroups = computed<NavGroup[]>(() => {
       items: pickItems(['system-global', 'runtime-queues', 'platform-api-keys', 'system-audit-log']),
     },
     {
+      // 版本信息（system）入口暂时隐藏，组内为空自动不渲染。
       key: 'platform',
       label: t('settings.navGroups.platform'),
       items: pickItems(['system']),

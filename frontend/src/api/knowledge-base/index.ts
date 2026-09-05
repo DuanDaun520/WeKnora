@@ -84,6 +84,9 @@ export function createKnowledgeBase(data: {
   name: string;
   description?: string;
   type?: 'document' | 'faq';
+  // 000099 共同维护：是否允许空间成员向该知识库添加知识并维护自己
+  // 添加的条目。仅空间管理员可创建知识库（后端 Admin 守卫）。
+  allow_member_contribute?: boolean;
   chunking_config?: any;
   embedding_model_id?: string;
   summary_model_id?: string;
@@ -139,6 +142,8 @@ export function getKnowledgeBaseById(id: string, options?: { agent_id?: string; 
 export function updateKnowledgeBase(id: string, data: {
   name: string;
   description?: string;
+  // 000099 共同维护开关；undefined = 保持不变。
+  allow_member_contribute?: boolean;
   config?: {
     chunking_config?: any;
     image_processing_config?: any;

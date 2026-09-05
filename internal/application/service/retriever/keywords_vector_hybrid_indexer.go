@@ -129,6 +129,8 @@ func (v *KeywordsVectorHybridRetrieveEngineService) BatchIndex(ctx context.Conte
 // transient failures (200 / 400 / 800 / 1600 / 3200 ms). It returns the last
 // embedding result on success or the last error if every attempt failed.
 func batchEmbedWithBackoff(ctx context.Context, embedder embedding.Embedder, contentList []string) ([][]float32, error) {
+	// Label the call for the usage ledger (docs/Token统计与计费设计.md).
+	ctx = types.WithLLMCallMetadata(ctx, "knowledge_ingest", "")
 	delay := embedRetryBaseDelay
 	var (
 		embeddings [][]float32

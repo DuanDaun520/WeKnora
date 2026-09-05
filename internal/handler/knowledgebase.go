@@ -812,6 +812,45 @@ func enrichKBCreatorNames(ctx context.Context, userSvc interfaces.UserService, k
 	}
 }
 
+// enrichKnowledgeCreatorNames 把知识（文档）列表里的 CreatorID 批量解析成
+// 展示名，供前端在更新时间下方展示「上传人」。行为与 enrichKBCreatorNames
+// 对齐：失败吞掉，creator_name 缺失只影响展示不影响可用性。data 是
+// ListPagedKnowledgeByKnowledgeBaseID 返回的 PageResult.Data（[]*types.Knowledge）。
+func enrichKnowledgeCreatorNames(ctx context.Context, userSvc interfaces.UserService, data interface{}) {
+	knowledges, ok := data.([]*types.Knowledge)
+	if !ok || userSvc == nil || len(knowledges) == 0 {
+		return
+	}
+	idSet := make(map[string]struct{}, len(knowledges))
+	for _, k := range knowledges {
+		if k != nil && k.CreatorID != "" {
+			idSet[k.CreatorID] = struct{}{}
+		}
+	}
+	if len(idSet) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	users, err := userSvc.GetUsersByIDs(ctx, ids)
+	if err != nil {
+		logger.Warnf(ctx, "Failed to resolve knowledge creator names: %v", err)
+		return
+	}
+	for _, k := range knowledges {
+		if k == nil || k.CreatorID == "" {
+			continue
+		}
+		u, ok := users[k.CreatorID]
+		if !ok || u == nil {
+			continue
+		}
+		k.CreatorName = pickUserDisplayName(u)
+	}
+}
+
 // pickUserDisplayName picks the field most users will recognise: Username
 // if present (it's required at registration), Email as a fallback. Used by
 // both KB and Agent list enrichment so the badge text stays consistent.
@@ -868,6 +907,10 @@ type UpdateKnowledgeBaseRequest struct {
 	Name        string                     `json:"name"        binding:"required"`
 	Description string                     `json:"description"`
 	Config      *types.KnowledgeBaseConfig `json:"config"`
+	// AllowMemberContribute toggles the co-maintain flag (是否允许空间成员
+	// 共同维护知识). Pointer so an omitted field keeps the current value;
+	// only the KB creator and Admin+ reach this handler (route guard).
+	AllowMemberContribute *bool `json:"allow_member_contribute"`
 }
 
 // UpdateKnowledgeBase godoc
@@ -923,7 +966,7 @@ func (h *KnowledgeBaseHandler) UpdateKnowledgeBase(c *gin.Context) {
 		secutils.SanitizeForLog(id), secutils.SanitizeForLog(req.Name))
 
 	// Update the knowledge base
-	kb, err := h.service.UpdateKnowledgeBase(ctx, id, req.Name, req.Description, req.Config)
+	kb, err := h.service.UpdateKnowledgeBase(ctx, id, req.Name, req.Description, req.Config, req.AllowMemberContribute)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(apperrors.NewInternalServerError(err.Error()))

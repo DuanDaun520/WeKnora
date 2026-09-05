@@ -175,6 +175,20 @@
                         />
                       </div>
 
+                      <!-- 000099 共同维护：仅 KB 创建者/空间管理员可见可改
+                           （后端 OwnedKBOrAdmin 守卫同一矩阵）。 -->
+                      <div v-if="editorMode === 'edit' ? canShareKB : true" class="form-item">
+                        <label class="form-label">{{ $t('knowledgeEditor.basic.allowMemberContributeLabel') }}</label>
+                        <div class="co-maintain-switch">
+                          <t-switch v-model="formData.allowMemberContribute" />
+                          <span class="co-maintain-hint">{{
+                            formData.allowMemberContribute
+                              ? $t('knowledgeEditor.basic.allowMemberContributeOn')
+                              : $t('knowledgeEditor.basic.allowMemberContributeOff')
+                          }}</span>
+                        </div>
+                      </div>
+
                       <!-- Wiki 合成模型移至模型配置页 -->
                     </div>
                   </div>
@@ -713,6 +727,8 @@ const initFormData = (type: 'document' | 'faq' = 'document') => {
     type,
     name: '',
     description: '',
+    // 000099 共同维护：默认关闭，由空间管理员在基本信息里显式打开。
+    allowMemberContribute: false,
     faqConfig: {
       indexMode: 'question_only',
       questionIndexMode: 'separate'
@@ -842,6 +858,7 @@ const loadKBData = async (kbIdOverride?: string) => {
       type: kbType,
       name: kb.name || '',
       description: kb.description || '',
+      allowMemberContribute: !!(kb as any).allow_member_contribute,
       faqConfig: {
         indexMode: kb.faq_config?.index_mode || 'question_only',
         questionIndexMode: kb.faq_config?.question_index_mode || 'separate'
@@ -1178,6 +1195,9 @@ const buildSubmitData = () => {
     name: formData.value.name,
     description: formData.value.description,
     type: formData.value.type,
+    // 000099 共同维护标志：创建走 types.KnowledgeBase 绑定，更新走
+    // UpdateKnowledgeBaseRequest 的指针字段（始终携带当前开关状态）。
+    allow_member_contribute: !!formData.value.allowMemberContribute,
     chunking_config: {
       chunk_size: formData.value.chunkingConfig.chunkSize,
       chunk_overlap: formData.value.chunkingConfig.chunkOverlap,
@@ -1401,6 +1421,7 @@ const doSubmit = async () => {
       await updateKnowledgeBase(kbId, {
         name: data.name,
         description: data.description,
+        allow_member_contribute: data.allow_member_contribute,
         config: updateConfig
       })
 
@@ -1810,6 +1831,19 @@ watch(
   margin-top: 6px;
   font-size: 12px;
   color: var(--td-text-color-placeholder);
+}
+
+// 000099 共同维护开关行：开关 + 当前状态说明并排。
+.co-maintain-switch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  .co-maintain-hint {
+    font-size: 13px;
+    color: var(--td-text-color-secondary);
+    line-height: 1.5;
+  }
 }
 
 .kb-id-field {

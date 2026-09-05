@@ -129,25 +129,72 @@ test('skills and sandbox share one editor section', () => {
 })
 
 test('nav groups follow the basic / capability / advanced taxonomy', () => {
-  // 左侧菜单三类：基础配置（含问题推荐）、能力扩展（知识库/Skills/MCP/
-  // 搜索/附件）、高级配置（多轮对话/检索策略/工具）。检索策略挂在知识库
-  // 上才出现，归高级配置组；发布保持独立末组。
+  // 左侧菜单三类：基础配置（含问题推荐与多轮对话）、能力扩展（知识库/
+  // Skills/MCP/搜索/附件）、高级配置（检索策略/工具）。检索策略挂在
+  // 知识库上才出现，归高级配置组；发布保持独立末组。
   const groups = source.match(/const navGroups = computed\(\(\) => \{([\s\S]*?)^\}\);/m)?.[1]
   assert.ok(groups, 'expected to find the nav groups computed')
-  assert.match(groups, /pickItems\(\['basic', 'prompts', 'model', 'suggestions'\]\)/)
+  assert.match(groups, /pickItems\(\['basic', 'prompts', 'model', 'suggestions', 'conversation'\]\)/)
   assert.match(groups, /pickItems\(\['knowledge', 'skills', 'mcp', 'websearch', 'multimodal'\]\)/)
-  assert.match(groups, /pickItems\(\['conversation', 'retrieval', 'tools'\]\)/)
+  assert.match(groups, /pickItems\(\['retrieval', 'tools'\]\)/)
   assert.match(groups, /pickItems\(\['share'\]\)/)
   assert.doesNotMatch(groups, /navGroups\.knowledge/)
   assert.match(groups, /navGroups\.advanced/)
 })
 
-test('skill install actions follow the backend system-admin gate', () => {
-  // 000099：登记/安装后端是 g.SystemAdmin()，编辑器内直装按钮与「管理技能」
+test('the publish-channel row is hidden from basic info', () => {
+  // 000101：基本信息里的「发布渠道」（IM/嵌入渠道计数）不再渲染——
+  // 集成入口收敛到集成中心；计数加载函数保留在脚本侧备用。
+  assert.doesNotMatch(source, /integrations\.agentEditor\.label/)
+  assert.doesNotMatch(source, /integration-inline__stat/)
+  assert.match(source, /loadAgentIntegrationCounts/)
+})
+
+test('skill install actions follow the backend system-admin gate', () => {  // 000099：登记/安装后端是 g.SystemAdmin()，编辑器内直装按钮与「管理技能」
   // 深链同步收紧——canInstallSkills 只认 isSystemAdmin，openSkillSettings
   // 直指空间 Settings 的 skill-catalog 并带沙箱预选。
   assert.match(source, /canInstallSkills = computed\(\(\) => authStore\.isSystemAdmin\)/)
   assert.match(source, /openSettings\('skill-catalog'/)
+})
+
+test('read-only viewers get a view title and a non-operable form', () => {
+  // 000102：普通用户打开他人智能体——标题切「查看智能体」，内容区加
+  // is-readonly。禁的是所有后代而非容器本身（容器是滚动容器，挂自己会
+  // 连滚轮一起废掉）；prompts 内层滚动容器单独恢复命中。
+  assert.match(
+    source,
+    /props\.readOnly \? \$t\('agent\.editor\.viewTitle'\) : \$t\('agent\.editor\.editTitle'\)/,
+  )
+  assert.match(source, /'is-readonly': props\.readOnly/)
+  assert.match(source, /:deep\(\*\) \{\s*pointer-events: none !important;/)
+  assert.match(source, /:deep\(\.prompts-panel__body\) \{\s*pointer-events: auto !important;/)
+})
+
+test('editor dependencies load independently instead of failing together', () => {
+  // 000102：原先是单个 Promise.all——任何一路 403 都会让模型/KB/搜索
+  // 引擎列表全部保持空，查看态下拉只剩 UUID。改 allSettled 互不连坐。
+  // （设置弹窗关闭后的 watch 里那个 Promise.all 是局部刷新，已 try/catch，
+  // 不在约束范围内。）
+  const loadDeps = source.match(/const loadDependencies = async \(\) => \{([\s\S]*?)^\};/m)?.[1]
+  assert.ok(loadDeps, 'expected the loadDependencies body')
+  assert.match(loadDeps, /await Promise\.allSettled\(/)
+  assert.doesNotMatch(loadDeps, /Promise\.all\(/)
+})
+
+test('referenced entities fall back to names instead of raw ids', () => {
+  // 000102：普通用户要看到名称而不是 UUID——
+  //  1) KB：agent 引用但被权限过滤掉的库，经 agent 维度 KB 接口补齐，
+  //     单独分组「智能体引用的知识库」，仍缺失的落占位文案；
+  //  2) 搜索引擎：选中 provider 不在列表时补占位选项；
+  //  3) 模型：ModelSelector 从未过滤源里补回被类型过滤剔除的选中项。
+  assert.match(source, /async function hydrateAgentReferencedKbs\(agentId: string\)/)
+  assert.match(source, /chatResources\.ensureAgentKnowledgeBases\(agentId/)
+  assert.match(source, /unknownKnowledgeBase/)
+  assert.match(source, /referencedKnowledgeBases/)
+  assert.match(source, /filteredHydratedKbOptions/)
+  assert.match(source, /const webSearchProviderOptions = computed/)
+  assert.match(source, /v-for="p in webSearchProviderOptions"/)
+  assert.match(source, /webSearchProvidersLoaded/)
 })
 
 test('sandbox management links are system-admin only', () => {

@@ -10,14 +10,22 @@ interface KnowledgeItem {
   parse_status?: string;
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   item: KnowledgeItem;
   canDownload: boolean;
   canMutateKnowledge: boolean;
+  /**
+   * 000099 共同维护：该条目是否允许当前用户修改/删除。
+   * KB 管理者恒为 true；成员仅在开放维护的 KB 中对自己创建的条目为 true。
+   * 缺省 true 以兼容未传该 prop 的调用方。
+   */
+  canMutateItem?: boolean;
   traceVisible: boolean;
   /** Whether the knowledge base has a folder structure to file documents into. */
   foldersAvailable?: boolean;
-}>();
+}>(), {
+  canMutateItem: true,
+});
 
 const emit = defineEmits<{
   (e: 'download'): void;
@@ -53,8 +61,8 @@ const fileName = computed(() => props.item.file_name || props.item.title || prop
     <span>{{ $t('common.download') }}</span>
   </div>
 
-  <!-- 编辑文档 -->
-  <div v-if="item.type === 'manual'" class="doc-action-menu-item" @click.stop="emit('edit')">
+  <!-- 编辑文档（000099：仅对该条目有修改权的用户可见） -->
+  <div v-if="canMutateItem && item.type === 'manual'" class="doc-action-menu-item" @click.stop="emit('edit')">
     <t-icon class="icon" name="edit" />
     <span>{{ $t('knowledgeBase.editDocument') }}</span>
   </div>
@@ -65,14 +73,14 @@ const fileName = computed(() => props.item.file_name || props.item.title || prop
     <span>{{ $t('knowledgeStages.viewTrace') }}</span>
   </div>
 
-  <!-- 重建知识 (in-flight: no popconfirm, just emits) -->
-  <div v-if="isParseInFlight" class="doc-action-menu-item" @click.stop="emit('reparse')">
+  <!-- 重建知识 (in-flight: no popconfirm, just emits)（000099：需条目修改权） -->
+  <div v-if="canMutateItem && isParseInFlight" class="doc-action-menu-item" @click.stop="emit('reparse')">
     <t-icon class="icon" name="refresh" />
     <span>{{ $t('knowledgeBase.rebuildDocument') }}</span>
   </div>
 
   <!-- 重建知识 (normal: with popconfirm) -->
-  <t-popconfirm v-else theme="warning"
+  <t-popconfirm v-else-if="canMutateItem" theme="warning"
     :content="$t('knowledgeBase.rebuildConfirm', { fileName })"
     :confirm-btn="{ content: $t('common.confirm'), theme: 'primary' }"
     :cancel-btn="{ content: $t('common.cancel') }" placement="left"
@@ -83,8 +91,8 @@ const fileName = computed(() => props.item.file_name || props.item.title || prop
     </div>
   </t-popconfirm>
 
-  <!-- 取消解析 -->
-  <t-popconfirm v-if="isParseInFlight" theme="warning"
+  <!-- 取消解析（000099：需条目修改权） -->
+  <t-popconfirm v-if="canMutateItem && isParseInFlight" theme="warning"
     :content="$t('knowledgeBase.cancelParseConfirmBody', { title: fileName })"
     :confirm-btn="{ content: $t('knowledgeBase.cancelParse'), theme: 'danger' }"
     :cancel-btn="{ content: $t('common.cancel') }" placement="left"
@@ -113,8 +121,8 @@ const fileName = computed(() => props.item.file_name || props.item.title || prop
     <span>{{ $t('menu.batchManage') }}</span>
   </div>
 
-  <!-- 删除文档 -->
-  <t-popconfirm theme="warning"
+  <!-- 删除文档（000099：需条目修改权） -->
+  <t-popconfirm v-if="canMutateItem" theme="warning"
     :content="$t('knowledgeBase.confirmDeleteDocument', { fileName })"
     :confirm-btn="{ content: $t('knowledgeBase.confirmDelete'), theme: 'danger' }"
     :cancel-btn="{ content: $t('common.cancel') }" placement="left"

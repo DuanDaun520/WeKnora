@@ -130,6 +130,13 @@ type rbacGuards struct {
 	chunkKBCreator       middleware.CreatorLookup
 	chunkKBCreatorFromID middleware.CreatorLookup // chunk routes that address chunks by :id (no knowledge id in URL)
 	wikiKBCreator        middleware.CreatorLookup
+	// Co-maintain lookups (migration 000099): extend the ownership match
+	// with the KB's allow_member_contribute flag so ordinary members can
+	// add knowledge into — and manage their own items of — a KB the
+	// creator explicitly opened up. See the guard methods
+	// KBCoMaintainOrAdmin / OwnedKnowledgeItemOrAdmin below.
+	kbCoMaintainCreator middleware.CreatorLookup
+	knowledgeItemOwner  middleware.CreatorLookup
 
 	// Services for the KB-access guard (own / org-shared / via shared
 	// agent). Captured here so route lines can reference g.KBAccess()
@@ -167,12 +174,14 @@ func newRBACGuards(
 	if kbHandler != nil {
 		g.kbCreator = kbHandler.KBCreatorLookup
 		g.kbCreatorFromKbIDParam = kbHandler.KBCreatorLookupFromKbIDParam
+		g.kbCoMaintainCreator = kbHandler.KBCoMaintainCreatorLookup
 	}
 	if agentHandler != nil {
 		g.agentCreator = agentHandler.AgentCreatorLookup
 	}
 	if knowledgeHandler != nil {
 		g.knowledgeKBCreator = knowledgeHandler.KBCreatorLookupFromKnowledgeID
+		g.knowledgeItemOwner = knowledgeHandler.KnowledgeItemCreatorLookup
 	}
 	if chunkHandler != nil {
 		g.chunkKBCreator = chunkHandler.KBCreatorLookupFromKnowledgeIDParam
@@ -499,6 +508,30 @@ func (g *rbacGuards) OwnedChunkKBOrAdminFromChunkID() gin.HandlerFunc {
 // service — no knowledge chain. Same matrix as OwnedKBOrAdmin.
 func (g *rbacGuards) OwnedWikiKBOrAdmin() gin.HandlerFunc {
 	return middleware.RequireOwnershipOrRole(types.TenantRoleAdmin, g.wikiKBCreator, g.cfg)
+}
+
+// KBCoMaintainOrAdmin: adding content into a KB (POST
+// /knowledge-bases/:id/knowledge/{file,url,manual}). Same matrix as
+// OwnedKBOrAdmin (KB creator OR Admin+) extended with the co-maintain
+// flag (migration 000099): when the KB is flagged
+// allow_member_contribute, Contributor+ members of the KB's tenant pass
+// as well — the lookup returns the caller's uid for those. Used ONLY
+// for the three content-add routes; KB-level settings and destructive
+// ops (clear contents, rename folder) stay OwnedKBOrAdmin / Admin.
+func (g *rbacGuards) KBCoMaintainOrAdmin() gin.HandlerFunc {
+	return middleware.RequireOwnershipOrRole(types.TenantRoleAdmin, g.kbCoMaintainCreator, g.cfg)
+}
+
+// OwnedKnowledgeItemOrAdmin: per-knowledge mutations (delete / update /
+// reparse / cancel-parse / regenerate-summary / manual edit / image
+// edit) under the co-maintain model. Allowed: owning-KB creator, Admin+,
+// or — when the KB allows member contribution — the member who created
+// this specific knowledge item (knowledges.creator_id). Everyone else
+// 403s. Replaces OwnedKnowledgeKBOrAdmin on the /knowledge/:id write
+// routes; the plainer guard stays on read-shaped and chunk-level
+// surfaces that don't carry per-item ownership.
+func (g *rbacGuards) OwnedKnowledgeItemOrAdmin() gin.HandlerFunc {
+	return middleware.RequireOwnershipOrRole(types.TenantRoleAdmin, g.knowledgeItemOwner, g.cfg)
 }
 
 // Tenant-access guards. Distinct from the role guards above: these

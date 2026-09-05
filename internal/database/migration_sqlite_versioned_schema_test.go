@@ -38,7 +38,7 @@ var versionedSQLiteColumns = map[string][]string{
 	"tenant_sandbox_configs": {"source_connection_id", "source_pushed_at"}, // 000097
 }
 
-const expectedSQLiteMigrationVersion = 19
+const expectedSQLiteMigrationVersion = 20 // 000020 usage metering
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

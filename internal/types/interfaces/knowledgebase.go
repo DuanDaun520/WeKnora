@@ -67,11 +67,15 @@ type KnowledgeBaseService interface {
 	//   - name: New knowledge base name
 	//   - description: New knowledge base description
 	//   - config: Knowledge base configuration, including chunking strategy, vectorization settings, etc.
+	//   - allowMemberContribute: optional new value for the co-maintain flag
+	//     (nil = leave unchanged); only the KB creator and Admin+ reach this
+	//     far (route guard), so no extra check happens here.
 	// Returns:
 	//   - Updated knowledge base object
 	//   - Possible errors such as not existing, insufficient permissions, etc.
 	UpdateKnowledgeBase(ctx context.Context,
 		id string, name string, description string, config *types.KnowledgeBaseConfig,
+		allowMemberContribute *bool,
 	) (*types.KnowledgeBase, error)
 
 	// DeleteKnowledgeBase deletes a knowledge base

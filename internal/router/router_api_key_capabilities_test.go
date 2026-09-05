@@ -87,6 +87,7 @@ func TestPlatformTenantLifecycleRoutesDeclarePlatformCapabilities(t *testing.T) 
 		&handler.TenantHandler{},
 		&handler.TenantMemberHandler{},
 		nil,
+		nil,
 		g,
 	)
 
@@ -333,7 +334,7 @@ func TestTenantInfrastructureRoutesDeclareSpecificCapabilities(t *testing.T) {
 	g := &rbacGuards{}
 	v1 := gin.New().Group("/api/v1")
 
-	RegisterTenantRoutes(v1, &handler.TenantHandler{}, nil, nil, g)
+	RegisterTenantRoutes(v1, &handler.TenantHandler{}, nil, nil, nil, g)
 	RegisterModelRoutes(v1, &handler.ModelHandler{}, &handler.ModelCredentialsHandler{}, g)
 	RegisterEvaluationRoutes(v1, &handler.EvaluationHandler{}, g)
 	RegisterSystemRoutes(v1, &handler.SystemHandler{}, g)
@@ -466,7 +467,7 @@ func TestTenantMemberRoutesDeclareManageMembersCapability(t *testing.T) {
 
 	// Enterprise rework: the member roster is read-only and invitation
 	// routes are gone, so manage_members now covers only the listing.
-	RegisterTenantRoutes(v1, &handler.TenantHandler{}, &handler.TenantMemberHandler{}, nil, g)
+	RegisterTenantRoutes(v1, &handler.TenantHandler{}, &handler.TenantMemberHandler{}, nil, nil, g)
 
 	cases := []struct {
 		method string

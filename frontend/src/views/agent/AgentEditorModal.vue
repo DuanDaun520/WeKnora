@@ -14,8 +14,9 @@
             <!-- 左侧导航 -->
             <div class="settings-sidebar">
               <div class="sidebar-header">
+                <!-- 000102：readOnly（普通用户查看他人智能体）时标题切换为「查看智能体」 -->
                 <h2 class="sidebar-title">{{ editorMode === 'create' ? $t('agent.editor.createTitle') :
-                  $t('agent.editor.editTitle') }}</h2>
+                  props.readOnly ? $t('agent.editor.viewTitle') : $t('agent.editor.editTitle') }}</h2>
               </div>
               <div class="settings-nav" data-guide="agent-editor-sidebar">
                 <template v-for="group in navGroups" :key="group.key">
@@ -35,7 +36,7 @@
 
             <!-- 右侧内容区域 -->
             <div class="settings-content">
-              <div ref="contentWrapperRef" class="content-wrapper" :class="{ 'content-wrapper--prompts': currentSection === 'prompts' }">
+              <div ref="contentWrapperRef" class="content-wrapper" :class="{ 'content-wrapper--prompts': currentSection === 'prompts', 'is-readonly': props.readOnly }">
                 <!-- 基础设置 -->
                 <div v-show="currentSection === 'basic'" class="section">
                   <div class="section-header">
@@ -71,26 +72,9 @@
                       </div>
                     </div>
 
-                    <!-- 集成渠道状态（编辑模式，配置在集成中心） -->
-                    <div v-if="editorMode === 'edit' && editorAgent?.id" class="setting-row">
-                      <div class="setting-info">
-                        <label>{{ $t('integrations.agentEditor.label') }}</label>
-                        <p class="desc">{{ isPostCreateSession ? $t('agent.editor.postCreateHint.integrationDesc') : $t('integrations.agentEditor.desc') }}</p>
-                      </div>
-                      <div class="setting-control">
-                        <div class="integration-inline">
-                          <button type="button" class="integration-inline__stat integration-inline__link" @click="gotoIntegrations('im')">
-                            <span>{{ $t('integrations.tabs.im') }} · {{ agentIMChannelCount }}</span>
-                            <t-icon name="chevron-right" size="14px" />
-                          </button>
-                          <span class="integration-inline__sep" aria-hidden="true">|</span>
-                          <button type="button" class="integration-inline__stat integration-inline__link" @click="gotoIntegrations('embed')">
-                            <span>{{ $t('integrations.tabs.embed') }} · {{ agentEmbedChannelCount }}</span>
-                            <t-icon name="chevron-right" size="14px" />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
+                    <!-- 000101：发布渠道（IM/嵌入）行已隐藏——集成入口收敛到集成中心，
+                         基本信息不再展示渠道计数。脚本侧 loadAgentIntegrationCounts/
+                         gotoIntegrations 保留备用。 -->
 
                     <!-- 运行模式（首先选择） -->
                     <div class="setting-row">
@@ -1511,6 +1495,23 @@
                               </div>
                             </t-option>
                           </t-option-group>
+                          <!-- 000102：agent 引用但当前用户无权看到的库——只补名称展示 -->
+                          <t-option-group v-if="filteredHydratedKbOptions.length"
+                            :label="$t('agent.editor.referencedKnowledgeBases')">
+                            <t-option v-for="kb in filteredHydratedKbOptions" :key="kb.value" :value="kb.value"
+                              :label="kb.label" :disabled="kb.disabled">
+                              <div class="kb-option-item" :title="kb.disabled ? kb.disabledReason : ''">
+                                <span class="kb-option-icon" :class="kb.type === 'faq' ? 'faq-icon' : 'doc-icon'">
+                                  <t-icon :name="kb.type === 'faq' ? 'chat-bubble-help' : 'folder'" />
+                                </span>
+                                <span class="kb-option-label">{{ kb.label }}</span>
+                                <span v-if="kb.ragEnabled" class="kb-option-tag tag-rag">RAG</span>
+                                <span v-if="kb.wikiEnabled" class="kb-option-tag tag-wiki">Wiki</span>
+                                <span class="kb-option-count">{{ kb.count || 0 }}</span>
+                                <span v-if="kb.disabled" class="kb-option-disabled-hint">{{ kb.disabledReason }}</span>
+                              </div>
+                            </t-option>
+                          </t-option-group>
                         </t-select>
                       </div>
                     </div>
@@ -1572,7 +1573,7 @@
                       <div class="setting-control">
                         <t-select v-model="formData.config.web_search_provider_id" clearable
                           :placeholder="$t('agent.editor.webSearchProviderPlaceholder')" style="width: 240px;">
-                          <t-option v-for="p in webSearchProviderList" :key="p.id" :value="p.id" :label="p.name">
+                          <t-option v-for="p in webSearchProviderOptions" :key="p.id" :value="p.id" :label="p.name">
                             <span>{{ p.name }}</span>
                             <t-tag v-if="p.is_default" theme="primary" size="small" style="margin-left: 6px;">{{
                               $t('common.default')
@@ -2018,7 +2019,7 @@ onBeforeUnmount(() => {
 
 const saving = ref(false);
 const allModels = ref<ModelConfig[]>([]);
-const kbOptions = ref<{ label: string; value: string; type?: 'document' | 'faq'; count?: number; shared?: boolean; orgName?: string; ragEnabled?: boolean; wikiEnabled?: boolean; capabilities?: KBCapabilities }[]>([]);
+const kbOptions = ref<{ label: string; value: string; type?: 'document' | 'faq'; count?: number; shared?: boolean; orgName?: string; ragEnabled?: boolean; wikiEnabled?: boolean; capabilities?: KBCapabilities; hydrated?: boolean }[]>([]);
 
 // 智能体类型预设（仅 smart-reasoning 模式下展示）
 const agentTypePresets = ref<AgentTypePreset[]>([]);
@@ -2418,8 +2419,10 @@ const toolGroups = computed(() => [
   { key: 'data', label: t('agentEditor.tools.groupData') },
 ]);
 
-// 知识库分组：我的 vs 共享的
-const myKbOptions = computed(() => kbOptions.value.filter(kb => !kb.shared));
+// 知识库分组：我的 vs 共享的；hydrated 是 000102 补齐的「智能体引用但当前
+// 用户列表里看不到」的库（普通用户查看态 / 管理员代管同事智能体时出现），
+// 单独分组展示，不冒充「我的」。
+const myKbOptions = computed(() => kbOptions.value.filter(kb => !kb.shared && !kb.hydrated));
 const sharedKbOptions = computed(() => kbOptions.value.filter(kb => kb.shared));
 
 // 根据知识库配置动态计算是否有知识库能力
@@ -2687,7 +2690,8 @@ const navItems = computed(() => {
 });
 
 // 左侧导航分组：基础配置 → 能力扩展 → 高级配置 → 发布（仅编辑模式）。
-// retrieval（检索策略）挂在知识库上才出现，归入高级配置组。
+// 多轮对话放基础配置（问题推荐之后）；retrieval（检索策略）挂在知识库上
+// 才出现，与工具配置同归高级配置组。
 const navGroups = computed(() => {
   const itemMap = new Map(navItems.value.map((item) => [item.key, item]));
   const pickItems = (keys: string[]) =>
@@ -2696,7 +2700,7 @@ const navGroups = computed(() => {
     {
       key: 'basic',
       label: t('agentEditor.navGroups.basic'),
-      items: pickItems(['basic', 'prompts', 'model', 'suggestions']),
+      items: pickItems(['basic', 'prompts', 'model', 'suggestions', 'conversation']),
     },
     {
       key: 'capability',
@@ -2706,7 +2710,7 @@ const navGroups = computed(() => {
     {
       key: 'advanced',
       label: t('agentEditor.navGroups.advanced'),
-      items: pickItems(['conversation', 'retrieval', 'tools']),
+      items: pickItems(['retrieval', 'tools']),
     },
     {
       key: 'integration',
@@ -3256,8 +3260,10 @@ const filteredKbOptionsForPreset = computed(() => {
     return { ...kb, disabled: !ok, disabledReason: reason };
   });
 });
-const filteredMyKbOptions = computed(() => filteredKbOptionsForPreset.value.filter(kb => !kb.shared));
+const filteredMyKbOptions = computed(() => filteredKbOptionsForPreset.value.filter(kb => !kb.shared && !kb.hydrated));
 const filteredSharedKbOptions = computed(() => filteredKbOptionsForPreset.value.filter(kb => kb.shared));
+// 000102：补齐组——agent 引用但不在当前用户可见列表里的 KB，只读展示名称。
+const filteredHydratedKbOptions = computed(() => filteredKbOptionsForPreset.value.filter(kb => kb.hydrated));
 
 // 当前选中的 KB 中，有多少个在新预设 / 模式下会被禁用（用于保存前提示）。
 // quick-answer 模式下 preset 恒为 null，但 wiki-only KB 仍属"被禁用"，
@@ -3450,6 +3456,8 @@ watch(() => props.visible, async (val) => {
         fillBuiltinAgentDefaults();
       }
       void loadAgentIntegrationCounts(agentData.id);
+      // 000102：补齐 agent 引用但当前用户列表里看不到的 KB 名称。
+      void hydrateAgentReferencedKbs(agentData.id);
     } else {
       // 创建新智能体，使用系统默认值
       const newFormData = JSON.parse(JSON.stringify(defaultFormData));
@@ -3835,16 +3843,33 @@ const applyPromptTemplateDefaults = (cfg: PromptTemplatesConfig | null) => {
 };
 
 // 加载依赖数据（复用空间级缓存，避免重复请求）
-const loadDependencies = async () => {
-  try {
-    await Promise.all([
-      chatResources.ensureModels(),
-      chatResources.ensureKnowledgeBases(),
-      chatResources.ensureWebSearchProviders(),
-      chatResources.ensureSandboxConfigs(),
-      editorResources.prefetchAgentEditorDeps(),
-    ]);
+// 000102：搜索引擎下拉兜底——agent 选中的 provider 不在当前可见列表
+// （已删除 / 未分配到本空间）时补一个占位选项，绝不裸显 provider UUID。
+// webSearchProvidersLoaded：列表加载完成前不占位，避免加载中闪「未知」。
+const webSearchProvidersLoaded = ref(false);
+const webSearchProviderOptions = computed<WebSearchProviderEntity[]>(() => {
+  const list = webSearchProviderList.value;
+  const id = formData.value.config.web_search_provider_id;
+  if (!id || !webSearchProvidersLoaded.value) return list;
+  if (list.some(p => p.id === id)) return list;
+  return [...list, { id, name: t('agent.editor.unknownWebSearchProvider'), provider: 'bing', parameters: {} } as WebSearchProviderEntity];
+});
 
+const loadDependencies = async () => {
+  // 000102：各组依赖互不连坐。此前是一个 Promise.all——任何一路 403/网络
+  // 抖动都会让 allModels / kbOptions / webSearchProviderList 的赋值整段跳过，
+  // 普通用户打开「查看智能体」时所有下拉只剩 UUID 代号。
+  const settled = await Promise.allSettled([
+    chatResources.ensureModels(),
+    chatResources.ensureKnowledgeBases(),
+    chatResources.ensureWebSearchProviders(),
+    chatResources.ensureSandboxConfigs(),
+    editorResources.prefetchAgentEditorDeps(),
+  ]);
+  settled.forEach((r) => {
+    if (r.status === 'rejected') console.error('Failed to load agent editor dependency', r.reason);
+  });
+  try {
     if (chatResources.allModels.length > 0) {
       allModels.value = chatResources.allModels;
     }
@@ -3862,6 +3887,7 @@ const loadDependencies = async () => {
     storageEngineStatus.value = editorResources.storageStatus;
 
     webSearchProviderList.value = chatResources.webSearchProviders as WebSearchProviderEntity[];
+    webSearchProvidersLoaded.value = true;
 
     if (editorResources.placeholders) {
       placeholderData.value = editorResources.placeholders;
@@ -3874,9 +3900,46 @@ const loadDependencies = async () => {
     if (rc?.rerank_top_k) defaultRerankTopK.value = rc.rerank_top_k;
     if (rc?.rerank_threshold !== undefined) defaultRerankThreshold.value = rc.rerank_threshold;
   } catch (e) {
-    console.error('Failed to load dependencies', e);
+    console.error('Failed to apply agent editor dependencies', e);
   }
 };
+
+// 000102：普通用户查看同事智能体（或管理员代管）时，KB 列表按读权限过滤，
+// agent 引用的库不在 kbOptions 里，多选框会退化成显示一串 KB id。agent
+// 维度 KB 接口（对话链路同款，GET /knowledge-bases?agent_id=…）按 agent
+// 配置返回，用它补齐名称；仍缺失（已删除）的落占位文案。
+const hydratedKbIds = new Set<string>();
+async function hydrateAgentReferencedKbs(agentId: string) {
+  const selected = formData.value.config.knowledge_bases || [];
+  const missing = selected.filter(
+    (id: string) => !hydratedKbIds.has(id) && !kbOptions.value.some(kb => kb.value === id),
+  );
+  if (!missing.length) return;
+  let rows: any[] = [];
+  try {
+    rows = await chatResources.ensureAgentKnowledgeBases(agentId, undefined, false);
+  } catch {
+    rows = [];
+  }
+  const byId = new Map(rows.map(kb => [kb.id, kb]));
+  const known = new Set(kbOptions.value.map(kb => kb.value));
+  const extras = missing
+    .filter((id: string) => !known.has(id))
+    .map((id: string) => {
+      hydratedKbIds.add(id);
+      const kb = byId.get(id);
+      if (kb) return mapKbToOption(kb, false);
+      return {
+        label: t('agent.editor.unknownKnowledgeBase'),
+        value: id,
+        type: 'document' as const,
+        count: 0,
+        shared: false,
+        hydrated: true,
+      };
+    });
+  if (extras.length) kbOptions.value = [...kbOptions.value, ...extras];
+}
 
 // 跳转到模型管理页面添加模型
 const handleAddModel = (subSection: string) => {
@@ -5079,6 +5142,22 @@ const handleSave = async () => {
     flex-direction: column;
     overflow: hidden;
     padding-bottom: 28px;
+  }
+
+  // 000102「查看智能体」：表单整体不可操作。禁的是所有后代元素而非容器
+  // 本身——容器同时是滚动容器，pointer-events:none 挂自己会把滚轮滚动
+  // 一起废掉；挂后代则命中测试落到容器上，滚动照常。左侧导航与底部
+  // 「关闭」在容器外，不受影响。
+  &.is-readonly {
+    :deep(*) {
+      pointer-events: none !important;
+    }
+
+    // prompts 面板有自己的内层滚动容器，保留它自身的滚轮命中；子元素仍
+    // 然全部禁操作（点击/悬停穿透到容器本身）。
+    :deep(.prompts-panel__body) {
+      pointer-events: auto !important;
+    }
   }
 }
 

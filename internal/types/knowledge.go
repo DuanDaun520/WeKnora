@@ -143,6 +143,17 @@ type Knowledge struct {
 	Source string `json:"source"             gorm:"type:varchar(2048)"`
 	// Channel indicates through which channel the knowledge was ingested (web, api, browser_extension, wechat, etc.)
 	Channel string `json:"channel"            gorm:"type:varchar(50);default:'web'"`
+	// CreatorID records the user who added this knowledge item. Used by
+	// the co-maintain permission model (migration 000099): in a KB with
+	// AllowMemberContribute the creator may update/delete their own items
+	// even as an ordinary space member. Empty for legacy rows = added by
+	// the KB admin path; members cannot manage those.
+	CreatorID string `json:"creator_id"        gorm:"type:varchar(36);index"`
+	// CreatorName is CreatorID resolved to a display name (username /
+	// email). Backfilled by list handlers only — same pattern as
+	// KnowledgeBase.CreatorName — so the frontend can render the uploader
+	// under the updated time. Never persisted (gorm:"-").
+	CreatorName string `json:"creator_name,omitempty" gorm:"-"`
 	// Parse status of the knowledge
 	ParseStatus string `json:"parse_status"`
 	// PendingSubtasksCount is the outstanding enrichment subtask count

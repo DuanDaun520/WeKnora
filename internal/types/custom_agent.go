@@ -574,10 +574,12 @@ var BuiltinAgentRegistry = map[string]func(uint64) *CustomAgent{}
 // upload flow — and should not clutter the tenant's agent picker. They remain
 // fully usable via GetAgentByID because the YAML entries still register them in
 // BuiltinAgentRegistry.
+//
+// BuiltinWikiResearcherID (维基问答) is likewise excluded from the user-facing
+// list (000102) — the product no longer surfaces it as a standalone entry.
 var builtinAgentIDsOrdered = []string{
 	BuiltinQuickAnswerID,
 	BuiltinSmartReasoningID,
-	BuiltinWikiResearcherID,
 	BuiltinDeepResearcherID,
 	BuiltinDataAnalystID,
 	BuiltinKnowledgeGraphExpertID,

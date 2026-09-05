@@ -2414,6 +2414,8 @@ export default {
     defaultTag: '默认',
     addModelInSettings: '前往全局设置添加模型',
     loadFailed: '加载模型列表失败',
+    // 000102：选中模型已删除/不可见时的占位名称
+    unknownModel: '未知模型',
     selectModelPlaceholder: '请选择模型',
     searchPlaceholder: '搜索模型...',
     builtinTag: '内置',
@@ -4022,7 +4024,11 @@ export default {
       nameLabel: '知识库名称',
       namePlaceholder: '请输入知识库名称',
       descriptionLabel: '知识库描述',
-      descriptionPlaceholder: '请输入知识库描述（可选）'
+      descriptionPlaceholder: '请输入知识库描述（可选）',
+      // 000099 共同维护开关（仅 KB 创建者/空间管理员可见）。
+      allowMemberContributeLabel: '允许空间成员共同维护知识',
+      allowMemberContributeOn: '成员可添加知识，并维护自己添加的内容',
+      allowMemberContributeOff: '仅空间管理员和创建者可维护'
     },
     errors: {
       vectorStoreBindingInvalid: '无法使用所选向量存储。请选择其他存储或使用系统默认值。',
@@ -4307,6 +4313,8 @@ export default {
   },
   knowledgeList: {
     create: '新建知识库',
+    // 000099 权限收口：仅空间管理员可新建知识库（普通用户按钮置灰时的提示）。
+    createAdminOnly: '只有空间管理员才可以新建知识库',
     subtitle: '管理和组织您的知识库，支持文档型和问答型知识库',
     sharedToOrgs: '已共享给 {count} 个空间',
     uninitializedBanner: '部分知识库尚未初始化，需要先在设置中配置模型信息才能添加知识文档',
@@ -4324,7 +4332,10 @@ export default {
       knowledgeGraph: '知识图谱',
       multimodal: '多模态',
       questionGeneration: '问题生成',
-      wiki: 'Wiki'
+      wiki: 'Wiki',
+      // 000099 共同维护：知识库卡片锁图标提示。
+      coMaintain: '允许空间成员共同维护知识',
+      adminOnlyLock: '仅空间管理员可添加知识'
     },
     detail: {
       title: '共享知识库',
@@ -4574,6 +4585,7 @@ export default {
       workspace: '空间与用户',
       runtime: '模型与运行时',
       dataExtensions: '数据与扩展',
+      billing: '统计与计费',
     },
     // 「按空间代管」目标空间选择条：七个基础设施面板共用的顶部工具栏。
     workspace: {
@@ -4709,6 +4721,8 @@ export default {
   common: {
     add: '添加',
     me: '我',
+    roleAdmin: '空间管理员',
+    roleMember: '空间成员',
     confirm: '确认',
     cancel: '取消',
     save: '保存',
@@ -5137,6 +5151,16 @@ export default {
       saveSuccess: '长期记忆配置已保存',
       saveFailed: '保存失败：{message}'
     }
+  },
+  tenantMcpSettings: {
+    title: '空间 MCP',
+    description: '系统管理员在管理后台为本空间分配的 MCP 服务，下列服务已在聊天与智能体中生效。',
+    loading: '正在加载 MCP 服务…',
+    loadFailed: 'MCP 服务加载失败。',
+    retry: '重试',
+    empty: '系统管理员尚未为本空间分配 MCP 服务。',
+    builtin: '内置',
+    readonlyHint: '此列表为只读。如需新增、启停或修改 MCP 服务，请联系系统管理员在管理后台操作。'
   },
   chatHistorySettings: {
     title: '消息管理',
@@ -5657,7 +5681,9 @@ export default {
     versionInfo: '版本信息',
     taskQueue: '任务队列',
     tenantInfo: '空间信息',
+    tenantMcp: '空间MCP',
     workspaceSettings: '空间设置',
+    personalWorkspaceSettings: '个人/空间设置',
     system: '系统设置',
     storage: {
       title: '存储引擎',
@@ -5854,7 +5880,7 @@ export default {
     capabilityUnavailable: '当前部署不支持此功能，已返回可用页面。',
     // dataExtensions 分组随 000095 基础设施收权迁入系统管理控制台后删除。
     navGroups: {
-      account: '账户',
+      account: '个人',
       workspace: '空间',
       systemAdministration: '系统管理',
       platform: '平台'
@@ -5888,6 +5914,9 @@ export default {
     title: '智能体',
     subtitle: '配置和管理您的智能体，自定义对话行为和能力',
     createAgent: '创建智能体',
+    // 000102：普通用户创建按钮置灰时的悬停提示（{admins} 为管理员名单）
+    createDeniedHint: '空间的普通用户无法创建智能体，你可以联系空间管理员来帮助创建，本空间管理员：{admins}',
+    createDeniedNoAdmin: '暂无',
     builtin: '内置',
     disabled: '已停用',
     disable: '停用',
@@ -5919,6 +5948,12 @@ export default {
     editor: {
       createTitle: '创建智能体',
       editTitle: '编辑智能体',
+      // 000102：普通用户打开他人智能体时的只读标题
+      viewTitle: '查看智能体',
+      // 000102：名称兜底——选中项已不在可见列表时展示占位而非 UUID
+      unknownWebSearchProvider: '未知搜索引擎',
+      unknownKnowledgeBase: '未知知识库',
+      referencedKnowledgeBases: '智能体引用的知识库',
       buttons: {
         create: '创建智能体',
         saveAndClose: '保存并关闭',
@@ -6111,6 +6146,7 @@ export default {
       webSearch: '支持网络搜索',
       knowledgeBase: '关联知识库',
       mcp: '支持MCP服务',
+      skills: '使用Skills技能',
       multiTurn: '多轮对话'
     },
     mode: {
@@ -6927,5 +6963,125 @@ export default {
     myChats: '我的对话',
     apiChats: 'API 会话',
     noSessions: '暂无对话'
+  },
+  usageStats: {
+    title: 'AI 使用统计',
+    personalDesc: '统计您在当前空间的 AI 调用与 Token 消耗（含知识库后台解析任务）。金额按当前单价估算，仅供内部核算参考，不产生任何扣费。',
+    tenantTitle: '空间用量统计',
+    tenantDesc: '空间管理员查看本人与全空间的 AI 用量；金额为按当前单价的估算值。',
+    tenantMenu: '空间用量统计',
+    adminTitle: '用量看板',
+    adminDesc: '平台总览、按空间、按用户的 Token 用量与估算金额，以及原始用量台账。',
+    adminMenu: '用量看板',
+    scopeMe: '我的用量',
+    scopeTenant: '全空间',
+    tabs: {
+      dashboard: '统计看板',
+      records: '用量明细',
+    },
+    level: {
+      platform: '平台总览',
+      tenant: '按空间',
+      user: '按用户',
+    },
+    filters: {
+      dimension: '统计维度',
+      category: '类型',
+      allCategories: '全部类型',
+      range: '时间范围',
+      from: '开始日期',
+      to: '结束日期',
+      refresh: '刷新',
+      level: '统计层级',
+      tenantId: '空间 ID',
+      tenantIdPlaceholder: '按空间 ID 过滤',
+      userId: '用户 ID',
+      userIdPlaceholder: '按用户 ID 过滤',
+      apply: '应用',
+    },
+    groupBy: {
+      category: '按类型',
+      model: '按模型',
+      day: '按天',
+      user: '按用户',
+      tenant: '按空间',
+      tenantUser: '空间 × 用户',
+    },
+    category: {
+      chat: '对话',
+      embedding: '向量化',
+      rerank: '重排',
+      vlm: '图像理解',
+      asr: '语音识别',
+    },
+    status: {
+      success: '成功',
+      failed: '失败',
+      interrupted: '已中断',
+    },
+    table: {
+      day: '日期',
+      tenant: '空间',
+      user: '用户',
+      model: '模型',
+      category: '类型',
+      calls: '调用次数',
+      inputTokens: '输入 Tokens',
+      outputTokens: '输出 Tokens',
+      cachedTokens: '缓存命中',
+      images: '图片(张)',
+      audioMinutes: '音频(分钟)',
+      amount: '估算金额',
+      unpricedHint: '该模型未配置单价，金额按 0 折算',
+      occurredAt: '时间',
+      purpose: '用途',
+      status: '状态',
+    },
+    totals: {
+      calls: '调用次数',
+      input: '输入 Tokens',
+      output: '输出 Tokens',
+      amount: '估算金额',
+    },
+    approxNote: '* 该行为估算值：供应商未返回用量时按内容长度近似折算。',
+    empty: '所选条件下暂无用量记录',
+    prices: {
+      title: '模型单价配置',
+      desc: '配置各模型的计费单价。报表金额 = 当前单价 × 全部历史用量，修改单价立即对所有统计生效；未配置单价的模型金额按 0 折算。',
+      menuLabel: '模型单价',
+      add: '新增单价',
+      empty: '尚未配置任何模型单价',
+      enabled: '启用',
+      disabled: '停用',
+      statusCol: '状态',
+      effectiveFrom: '生效时间',
+      actionsCol: '操作',
+      model: '模型',
+      modelPlaceholder: '选择或输入模型 ID',
+      modelRequired: '请先选择模型',
+      perMHint: 'Token 单价按「每百万 Tokens」填写；图像按张、语音按分钟计价。对话/图像理解用输入·输出·缓存三项，向量化和重排用统一单价，语音识别用音频单价。',
+      currency: '币种',
+      createTitle: '新增模型单价',
+      editTitle: '编辑单价：{model}',
+      deleteConfirm: '删除后该模型的历史用量金额将按 0 折算，确认删除？',
+      saved: '单价已保存',
+      deleted: '单价已删除',
+      field: {
+        price_input_per_m: '输入 / 百万',
+        price_output_per_m: '输出 / 百万',
+        price_cached_per_m: '缓存 / 百万',
+        price_per_m: '统一 / 百万',
+        price_per_image: '图片 / 张',
+        price_per_audio_min: '语音 / 分钟',
+      },
+      fieldHint: {
+        price_input_per_m: '对话 / 图像理解',
+        price_output_per_m: '对话 / 图像理解',
+        price_cached_per_m: '命中缓存的输入',
+        price_per_m: '向量化 / 重排',
+        price_per_image: '图像理解',
+        price_per_audio_min: '语音识别',
+      },
+    },
   }
 }

@@ -122,7 +122,9 @@ func NewReranker(config *RerankerConfig) (Reranker, error) {
 	if logger.LLMDebugEnabled() {
 		r = &debugReranker{inner: r}
 	}
-	return wrapRerankerLangfuse(r, nil)
+	r, _ = wrapRerankerLangfuse(r, nil)
+	// Billing ledger runs unconditionally (docs/Token统计与计费设计.md).
+	return wrapRerankerMeter(r, nil)
 }
 
 // customHeaderSetter 表示支持注入自定义 HTTP header 的 reranker 实现。

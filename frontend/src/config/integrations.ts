@@ -9,11 +9,14 @@ export type IntegrationTab = 'im' | 'embed' | 'api' | 'chrome' | 'claw'
 
 export const INTEGRATION_TABS: IntegrationTab[] = ['im', 'embed', 'api', 'chrome', 'claw']
 
-/** Aligns with Settings.vue SECTION_MIN_ROLE.api and router.go g.Owner() on /api-principal-config. */
+/** Aligns with routes_auth_tenant.go g.AdminOrSystemAdmin() on /tenants/:id/api-keys & api-principal-config. */
 export type IntegrationTabRole = 'viewer' | 'contributor' | 'admin' | 'owner'
 
 export const INTEGRATION_TAB_MIN_ROLE: Partial<Record<IntegrationTab, IntegrationTabRole>> = {
-  api: 'owner',
+  // API Key / API 主端点信息对齐后端（routes_auth_tenant.go 对
+  // /tenants/:id/api-keys 与 api-principal-config 均为 AdminOrSystemAdmin），
+  // 空间管理员即可见；此前 owner 收得过紧，成员管理员会看不到自己的入口。
+  api: 'admin',
   // 企业版两级角色：IM 集成 / 网页嵌入 / Claw Skill 仅空间管理员可见；
   // Chrome 插件与所有用户相关，保持全员可见。
   im: 'admin',

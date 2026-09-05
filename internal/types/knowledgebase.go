@@ -75,6 +75,12 @@ type KnowledgeBase struct {
 	// Nullable for backward compatibility with rows created before the
 	// RBAC migration backfilled the column to the workspace Owner.
 	CreatorID string `yaml:"creator_id"              json:"creator_id"              gorm:"type:varchar(36);index"`
+	// AllowMemberContribute marks the KB as co-maintainable: ordinary
+	// space members (Contributor+) may ADD knowledge into it and manage
+	// the items they created themselves. Only the KB creator and Admin+
+	// may flip this flag. Default false — a KB is admin/creator-only
+	// until explicitly opened up (migration 000099).
+	AllowMemberContribute bool `yaml:"allow_member_contribute" json:"allow_member_contribute" gorm:"column:allow_member_contribute;not null;default:false"`
 	// Chunking configuration
 	ChunkingConfig ChunkingConfig `yaml:"chunking_config"         json:"chunking_config"         gorm:"type:json"`
 	// Image processing configuration

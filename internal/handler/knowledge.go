@@ -36,8 +36,11 @@ type KnowledgeHandler struct {
 	kbService         interfaces.KnowledgeBaseService
 	kbShareService    interfaces.KBShareService
 	agentShareService interfaces.AgentShareService
-	asynqClient       interfaces.TaskEnqueuer
-	spanRepo          repository.KnowledgeSpanRepository
+	// userService 仅在 ListKnowledge 里批量回填 creator_name（上传人
+	// 展示名），作用同 KB 列表的 enrichKBCreatorNames。
+	userService interfaces.UserService
+	asynqClient interfaces.TaskEnqueuer
+	spanRepo    repository.KnowledgeSpanRepository
 }
 
 // NewKnowledgeHandler creates a new knowledge handler instance
@@ -47,6 +50,7 @@ func NewKnowledgeHandler(
 	kbService interfaces.KnowledgeBaseService,
 	kbShareService interfaces.KBShareService,
 	agentShareService interfaces.AgentShareService,
+	userService interfaces.UserService,
 	asynqClient interfaces.TaskEnqueuer,
 	spanRepo repository.KnowledgeSpanRepository,
 ) *KnowledgeHandler {
@@ -56,6 +60,7 @@ func NewKnowledgeHandler(
 		kbService:         kbService,
 		kbShareService:    kbShareService,
 		agentShareService: agentShareService,
+		userService:       userService,
 		asynqClient:       asynqClient,
 		spanRepo:          spanRepo,
 	}
@@ -1024,6 +1029,10 @@ func (h *KnowledgeHandler) ListKnowledge(c *gin.Context) {
 		c.Error(errors.NewInternalServerError(err.Error()))
 		return
 	}
+
+	// 批量回填 creator_name：前端在更新时间下方展示上传人。失败吞掉，
+	// 缺失时前端按空值隐藏该行，不影响列表本身（同 enrichKBCreatorNames）。
+	enrichKnowledgeCreatorNames(ctx, h.userService, result.Data)
 
 	logger.Infof(
 		ctx,
@@ -2137,6 +2146,15 @@ func (h *KnowledgeHandler) UpdateKnowledgeTagBatch(c *gin.Context) {
 			ctx = effCtx
 		}
 	}
+	// Same "KB creator OR Admin+" matrix as the other batch writes: tag
+	// batches reshape a KB's taxonomy, so a non-creator Contributor must
+	// not run them against a colleague's KB.
+	if authorizedKBID != "" {
+		if err := h.requireKBOwnershipOrAdmin(c, authorizedKBID); err != nil {
+			c.Error(err)
+			return
+		}
+	}
 	if err := h.kgService.UpdateKnowledgeTagBatch(ctx, authorizedKBID, req.Updates); err != nil {
 		logger.ErrorWithFields(ctx, err, nil)
 		c.Error(err)
@@ -2770,6 +2788,12 @@ func (h *KnowledgeHandler) BatchReparseKnowledge(c *gin.Context) {
 	}
 	if permission != types.OrgRoleAdmin && permission != types.OrgRoleEditor {
 		c.Error(errors.NewForbiddenError("no permission to reparse knowledge in this kb"))
+		return
+	}
+	// Same "KB creator OR Admin+" matrix as the other batch writes: a
+	// non-creator Contributor must not bulk-reparse a colleague's KB.
+	if err := h.requireKBOwnershipOrAdmin(c, kbID); err != nil {
+		c.Error(err)
 		return
 	}
 	ctx = context.WithValue(ctx, types.TenantIDContextKey, effectiveTenantID)

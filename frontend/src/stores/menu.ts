@@ -74,6 +74,11 @@ export const useMenuStore = defineStore('menuStore', () => {
       if (authStore.isLiteMode && liteHiddenPaths.has(item.path)) {
         return false
       }
+      // 共享空间入口暂时隐藏（产品决定）；恢复时删除这个判断即可，
+      // 下方的角色 / 能力门控原样保留。
+      if (item.path === 'organizations') {
+        return false
+      }
       if (item.path === 'organizations' && !authStore.hasRole('admin')) {
         return false
       }

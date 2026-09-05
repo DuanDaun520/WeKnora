@@ -23,6 +23,8 @@ interface KnowledgeItem {
   parse_status?: string;
   summary_status?: string;
   updated_at?: string;
+  /** 上传人展示名（后端 ListKnowledge 回填，历史条目可能为空）。 */
+  creator_name?: string;
   source?: string;
   description?: string;
   channel?: string;
@@ -35,6 +37,11 @@ const props = defineProps<{
   canEdit: boolean;
   canDownload: boolean;
   canMutateKnowledge: boolean;
+  /**
+   * 000099 共同维护：按条目判断当前用户是否有修改/删除权。
+   * KB 管理者恒 true；成员仅对开放维护 KB 中自己创建的条目为 true。
+   */
+  canMutateItem?: (item: KnowledgeItem) => boolean;
   traceVisibleIds: Record<string, boolean>;
   tagList: Tag[];
   loading?: boolean;
@@ -75,6 +82,15 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+
+// 000099 共同维护：单条目修改/删除权。未传 canMutateItem 时退化为仅 KB 管理者。
+const canMutateThisItem = (item: KnowledgeItem): boolean =>
+  props.canMutateItem ? props.canMutateItem(item) : props.canEdit;
+
+// 操作列在「KB 管理者」或「任一行有修改权」时展示，保证表头/文件夹行占位对齐。
+const showActionsColumn = computed(() =>
+  props.canEdit || props.items.some((item) => canMutateThisItem(item))
+);
 
 const {
   setupTagChipsObserver,
@@ -268,7 +284,7 @@ const handleAction = (action: 'download' | 'edit' | 'reparse' | 'cancel-parse' |
       <div class="cell cell-size" role="columnheader">{{ t('knowledgeBase.columnSize') }}</div>
       <div class="cell cell-status" role="columnheader">{{ t('knowledgeBase.columnStatus') }}</div>
       <div class="cell cell-time" role="columnheader">{{ t('knowledgeBase.columnUpdatedAt') }}</div>
-      <div class="cell cell-actions" role="columnheader" v-if="canEdit"></div>
+      <div class="cell cell-actions" role="columnheader" v-if="showActionsColumn"></div>
     </div>
 
     <div class="doc-list-body">
@@ -298,7 +314,7 @@ const handleAction = (action: 'download' | 'edit' | 'reparse' | 'cancel-parse' |
         <div class="cell cell-size"></div>
         <div class="cell cell-status"></div>
         <div class="cell cell-time"></div>
-        <div v-if="canEdit" class="cell cell-actions" aria-hidden="true"></div>
+        <div v-if="showActionsColumn" class="cell cell-actions" aria-hidden="true"></div>
       </div>
 
       <div v-for="item in items" :key="item.id" class="doc-list-row"
@@ -375,10 +391,15 @@ const handleAction = (action: 'download' | 'edit' | 'reparse' | 'cancel-parse' |
         </div>
 
         <div class="cell cell-time">
-          <span class="row-mono">{{ formatTime(item.updated_at) }}</span>
+          <div class="cell-time-stack">
+            <span class="row-mono">{{ formatTime(item.updated_at) }}</span>
+            <!-- 上传人：更新时间下方灰色小字，与更新时间左对齐。 -->
+            <span v-if="item.creator_name" class="row-uploader" :title="item.creator_name">{{
+              item.creator_name }}</span>
+          </div>
         </div>
 
-        <div class="cell cell-actions" v-if="canEdit" @click.stop>
+        <div class="cell cell-actions" v-if="canEdit || canMutateThisItem(item)" @click.stop>
           <t-popup placement="bottom-right" trigger="click" destroy-on-close overlay-class-name="card-more"
             :on-visible-change="(v: boolean) => onMoreVisible(item.id, v)">
             <button class="row-more-btn" :class="{ active: moreOpen === item.id }" type="button"
@@ -403,6 +424,7 @@ const handleAction = (action: 'download' | 'edit' | 'reparse' | 'cancel-parse' |
                   :item="item"
                   :can-download="canDownload"
                   :can-mutate-knowledge="canMutateKnowledge"
+                  :can-mutate-item="canMutateThisItem(item)"
                   :trace-visible="!!traceVisibleIds[item.id] || (item.parse_status === 'pending' || item.parse_status === 'processing' || item.parse_status === 'finalizing')"
                   @download="handleAction('download', item)"
                   @edit="handleAction('edit', item)"
@@ -829,6 +851,28 @@ const handleAction = (action: 'download' | 'edit' | 'reparse' | 'cancel-parse' |
   font-size: 12px;
   font-family: var(--app-font-family);
   color: var(--td-text-color-secondary);
+}
+
+// 更新时间 + 上传人两行堆叠：外层 cell-time 保持右贴边（时间位置不变），
+// 栈内两行与更新时间左对齐。
+.cell-time-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.row-uploader {
+  max-width: 100%;
+  font-size: 12px;
+  line-height: 16px;
+  font-family: var(--app-font-family);
+  color: var(--td-text-color-placeholder);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .row-status-tag :deep(.t-icon) {

@@ -48,6 +48,7 @@ type RouterParams struct {
 	TenantMemberService            interfaces.TenantMemberService
 	TenantMemberHandler            *handler.TenantMemberHandler
 	AuditLogHandler                *handler.AuditLogHandler
+	UsageReportHandler             *handler.UsageReportHandler
 	AuditLogService                interfaces.AuditLogService
 	ChunkHandler                   *handler.ChunkHandler
 	SessionHandler                 *session.Handler
@@ -233,7 +234,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		v1.Use(rbacGuards.apiKeyAuthorizer.Middleware())
 
 		RegisterAuthRoutes(v1, params.AuthHandler, rbacGuards)
-		RegisterTenantRoutes(v1, params.TenantHandler, params.TenantMemberHandler, params.AuditLogHandler, rbacGuards)
+		RegisterTenantRoutes(v1, params.TenantHandler, params.TenantMemberHandler, params.AuditLogHandler, params.UsageReportHandler, rbacGuards)
 		RegisterKnowledgeBaseRoutes(v1, params.KBHandler, rbacGuards)
 		RegisterKnowledgeBaseActivityRoutes(v1, params.AuditLogHandler, rbacGuards)
 		// KB-scoped image proxy: lets tenants render images embedded in
@@ -271,6 +272,8 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterModelRoutes(v1, params.ModelHandler, params.ModelCredentialsHandler, rbacGuards)
 		RegisterSandboxConfigRoutes(v1, params.SandboxConfigHandler, params.SandboxSkillHandler, rbacGuards)
 		RegisterMyEnvVarRoutes(v1, params.MeEnvVarHandler)
+		// Usage metering reports + price config (docs/Token统计与计费设计.md).
+		RegisterUsageRoutes(v1, params.UsageReportHandler, rbacGuards)
 		RegisterEvaluationRoutes(v1, params.EvaluationHandler, rbacGuards)
 		RegisterInitializationRoutes(v1, params.InitializationHandler, rbacGuards)
 		params.SystemHandler.BindDeploymentCapabilities(deploymentCapabilitiesFromRouter(params))

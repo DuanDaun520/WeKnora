@@ -80,6 +80,7 @@ import (
 	infra_web_search "github.com/Tencent/WeKnora/internal/infrastructure/web_search"
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/mcp"
+	"github.com/Tencent/WeKnora/internal/metering"
 	"github.com/Tencent/WeKnora/internal/models/chat"
 	"github.com/Tencent/WeKnora/internal/models/embedding"
 	"github.com/Tencent/WeKnora/internal/models/limiter"
@@ -120,8 +121,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(initFileService))
 	must(container.Provide(initRedisClient))
 	must(container.Provide(initAntsPool))
+	must(container.Provide(initMetering))
 
 	must(container.Invoke(registerLangfuseCleanup))
+	must(container.Invoke(registerMeteringCleanup))
 
 	// Register goroutine pool cleanup handler
 	must(container.Invoke(registerPoolCleanup))
@@ -182,6 +185,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewMemoryRepository))
 	must(container.Provide(repository.NewTaskPendingOpsRepository))
 	must(container.Provide(repository.NewTaskDeadLetterRepository))
+	must(container.Provide(repository.NewUsageRecordRepository))
 
 	// MCP manager for managing MCP client connections
 	logger.Debugf(ctx, "[Container] Registering MCP manager...")
@@ -264,6 +268,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(service.NewKnowledgeAutoTagService, dig.Name("knowledgeAutoTag")))
 
 	must(container.Provide(service.NewMessageService))
+	must(container.Provide(service.NewUsageReportService))
 	must(container.Provide(service.NewMessageSuggestionService))
 	must(container.Provide(service.NewMCPServiceService))
 	must(container.Provide(service.NewMCPToolApprovalService))
@@ -419,6 +424,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewTenantHandler))
 	must(container.Provide(handler.NewTenantMemberHandler))
 	must(container.Provide(handler.NewAuditLogHandler))
+	must(container.Provide(handler.NewUsageReportHandler))
 	must(container.Provide(handler.NewKnowledgeBaseHandler))
 	must(container.Provide(handler.NewKnowledgeHandler))
 	must(container.Provide(handler.NewChunkHandler))
@@ -1530,6 +1536,28 @@ func registerLangfuseCleanup(mgr *langfuse.Manager, cleaner interfaces.ResourceC
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		return mgr.Shutdown(ctx)
+	})
+}
+
+// initMetering installs the usage-ledger singleton — the billing data
+// source of docs/Token统计与计费设计.md. It never returns an error: with a
+// nil DB every meter wrapper stays a no-op, which keeps the ledger strictly
+// additive to startup.
+func initMetering(db *gorm.DB) *metering.Manager {
+	return metering.Init(db)
+}
+
+// registerMeteringCleanup drains the ledger queue on shutdown so buffered
+// usage records survive a graceful restart. Same 5-second budget as the
+// Langfuse cleanup.
+func registerMeteringCleanup(m *metering.Manager, cleaner interfaces.ResourceCleaner) {
+	if m == nil {
+		return
+	}
+	cleaner.RegisterWithName("Metering", func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return m.Shutdown(ctx)
 	})
 }
 

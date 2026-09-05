@@ -61,5 +61,7 @@ func ConfigFromModel(m *types.Model) *Config {
 // All ASR vendors use the OpenAI-compatible /v1/audio/transcriptions API.
 func NewASR(config *Config) (ASR, error) {
 	a, err := NewOpenAIASR(config)
-	return wrapASRLangfuse(a, err)
+	wrapped, err := wrapASRLangfuse(a, err)
+	// Billing ledger runs unconditionally (docs/Token统计与计费设计.md).
+	return wrapASRMeter(wrapped, err)
 }

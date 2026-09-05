@@ -492,6 +492,7 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 	name string,
 	description string,
 	config *types.KnowledgeBaseConfig,
+	allowMemberContribute *bool,
 ) (*types.KnowledgeBase, error) {
 	if id == "" {
 		logger.Error(ctx, "Knowledge base ID is empty")
@@ -519,10 +520,16 @@ func (s *knowledgeBaseService) UpdateKnowledgeBase(ctx context.Context,
 	if config != nil {
 		changedFields = append(changedFields, "config")
 	}
+	if allowMemberContribute != nil && *allowMemberContribute != kb.AllowMemberContribute {
+		changedFields = append(changedFields, "allow_member_contribute")
+	}
 
 	// Update the knowledge base properties
 	kb.Name = name
 	kb.Description = description
+	if allowMemberContribute != nil {
+		kb.AllowMemberContribute = *allowMemberContribute
+	}
 	if config != nil {
 		kb.ChunkingConfig = config.ChunkingConfig
 		kb.ImageProcessingConfig = config.ImageProcessingConfig

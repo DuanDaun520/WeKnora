@@ -52,6 +52,7 @@ func RegisterTenantRoutes(
 	handler *handler.TenantHandler,
 	memberHandler *handler.TenantMemberHandler,
 	auditLogHandler *handler.AuditLogHandler,
+	usageReportHandler *handler.UsageReportHandler,
 	g *rbacGuards,
 ) {
 	// Cross-tenant superuser endpoints — promoted from handler if-blocks
@@ -127,6 +128,11 @@ func RegisterTenantRoutes(
 			if auditLogHandler != nil {
 				tenantByID.GET("/audit-log", g.Admin(), auditLogHandler.ListTenantAuditLog)
 			}
+
+			// Space-level usage report (space-admin panel,
+			// docs/Token统计与计费设计.md §5.2). PathTenantMatch above
+			// already pins the caller to their own space.
+			registerTenantUsageRoute(tenantByID, usageReportHandler, g)
 		}
 	}
 }

@@ -104,6 +104,8 @@ func NewEmbedder(config Config, pooler EmbedderPooler, ollamaService *ollama.Oll
 	if langfuse.GetManager().Enabled() {
 		e = &langfuseEmbedder{inner: e}
 	}
+	// Billing ledger runs unconditionally (docs/Token统计与计费设计.md).
+	e = wrapEmbedderMeter(e)
 	return e, nil
 }
 

@@ -13,7 +13,7 @@
     >
       <!-- 已有的模型选项 -->
       <t-option
-        v-for="model in models"
+        v-for="model in optionModels"
         :key="model.id"
         :value="model.id"
         :label="modelDisplayName(model)"
@@ -75,12 +75,30 @@ const emit = defineEmits<{
 }>()
 
 const models = ref<ModelConfig[]>([])
+// 未过滤的模型源（allModels 或自行拉取的全量）——选中的模型被类型过滤
+// 剔除时，从这里把名字补回选项（000102）。
+const rawModels = ref<ModelConfig[]>([])
 const loading = ref(false)
 const { t } = useI18n()
 const authStore = useAuthStore()
 
 const placeholderText = computed(() => {
   return props.placeholder || t('model.selectModelPlaceholder')
+})
+
+// 000102：选中模型不在过滤后的选项里时（类型过滤剔除了它 / 列表异步
+// 未就绪后又到位），t-select 会把 UUID 当文案显示——普通用户查看智能体
+// 看到的就是一串代号。从原始列表补回选中项；原始列表已到齐仍找不到的
+// （模型已删除），落占位文案而不是裸 id。
+const optionModels = computed<ModelConfig[]>(() => {
+  const id = props.selectedModelId
+  if (!id || models.value.some(m => m.id === id)) return models.value
+  const found = rawModels.value.find(m => m.id === id)
+  if (found) return [...models.value, found]
+  if (rawModels.value.length > 0) {
+    return [...models.value, { id, name: t('model.unknownModel') } as ModelConfig]
+  }
+  return models.value
 })
 
 const modelDisplayName = (model: ModelConfig) => {
@@ -91,6 +109,7 @@ const modelDisplayName = (model: ModelConfig) => {
 // 监听 allModels / modelType 变化，自动过滤当前类型的模型
 watch(() => [props.allModels, props.modelType] as const, ([newModels]) => {
   if (newModels && Array.isArray(newModels)) {
+    rawModels.value = newModels
     models.value = filterModelsByType(newModels, props.modelType)
   }
 }, { immediate: true })
@@ -112,8 +131,10 @@ const loadModels = async () => {
     const result = await listModels()
     // 前端按类型筛选模型
     if (result && Array.isArray(result)) {
+      rawModels.value = result
       models.value = filterModelsByType(result, props.modelType)
     } else {
+      rawModels.value = []
       models.value = []
     }
   } catch (error) {

@@ -8,21 +8,9 @@
       </div>
       <template v-if="!uiStore.sidebarCollapsed">
         <div class="user-info">
-          <!-- 多空间 / superuser：首行空间名，次行 username · 角色。单空间：昵称 + 邮箱。 -->
-          <template v-if="showTenantIdentityLine">
-            <div class="user-tenant-name" :title="activeTenantName">{{ activeTenantName }}</div>
-            <div class="user-tenant-meta">
-              <span v-if="userName && userName !== activeTenantName" class="user-tenant-meta-name">{{ userName }}</span>
-              <span v-if="(userName && userName !== activeTenantName) && currentRoleLabel"
-                class="user-tenant-meta-sep">·</span>
-              <t-icon v-if="currentRoleIcon" :name="currentRoleIcon" size="12px" class="user-tenant-meta-icon" />
-              <span v-if="currentRoleLabel" class="user-tenant-meta-role">{{ currentRoleLabel }}</span>
-            </div>
-          </template>
-          <template v-else>
-            <div class="user-name">{{ userName }}</div>
-            <div class="user-email">{{ userEmail }}</div>
-          </template>
+          <!-- 首行：姓名（空间管理员/空间成员）；次行：工号@空间名称。不再展示邮箱。 -->
+          <div class="user-name">{{ userName }}<span v-if="roleBadgeLabel" class="user-name-role">（{{ roleBadgeLabel }}）</span></div>
+          <div class="user-sub" :title="userEmployeeAtTenant">{{ userEmployeeAtTenant }}</div>
         </div>
         <t-icon :name="menuVisible ? 'chevron-up' : 'chevron-down'" class="dropdown-icon" />
       </template>
@@ -31,7 +19,8 @@
     <!-- 下拉菜单 -->
     <Transition name="dropdown">
       <div v-if="menuVisible" class="user-dropdown" @click.stop>
-        <!-- 弹出菜单：账号（头像+昵称）／当前空间（名称+权限）；底部侧栏样式不改。 -->
+        <!-- 弹出菜单：账号区展示 3 条用户信息（姓名 / 工号@空间名称 / 角色），
+             不再展示邮箱与新手引导入口；底部侧栏样式不改。 -->
         <div v-if="userName" class="dropdown-user-header is-clickable" role="button" tabindex="0"
           @click="handleQuickNav('userprofile')" @keydown.enter.prevent="handleQuickNav('userprofile')"
           @keydown.space.prevent="handleQuickNav('userprofile')">
@@ -42,14 +31,9 @@
           <div class="dropdown-user-meta">
             <div class="dropdown-user-name-row">
               <span class="dropdown-user-name">{{ userName }}</span>
-              <t-tooltip :content="$t('newUserGuide.reopen')" placement="top">
-                <button type="button" class="dropdown-guide-btn" :aria-label="$t('newUserGuide.reopen')"
-                  @click.stop="reopenGuide">
-                  <t-icon name="help-circle" size="14px" />
-                </button>
-              </t-tooltip>
             </div>
-            <span v-if="userEmail" class="dropdown-user-email">{{ userEmail }}</span>
+            <span v-if="userEmployeeAtTenant" class="dropdown-user-line">{{ userEmployeeAtTenant }}</span>
+            <span v-if="roleBadgeLabel" class="dropdown-user-line">{{ roleBadgeLabel }}</span>
           </div>
         </div>
 
@@ -63,30 +47,17 @@
             <span class="dropdown-tenant-panel-name" :title="activeTenantName || userName">
               {{ activeTenantName || userName }}
             </span>
-            <div v-if="currentRoleLabel" class="dropdown-tenant-panel-role">
-              <t-icon v-if="currentRoleIcon" :name="currentRoleIcon" size="12px"
-                class="dropdown-tenant-panel-role-icon" />
-              <span>{{ currentRoleLabel }}</span>
-            </div>
           </div>
           <t-icon v-if="showTenantSwitcher" name="swap" class="dropdown-tenant-panel-trail"
             :title="$t('tenant.switcher.menuLabel')" />
         </div>
         <div class="menu-divider"></div>
         <!-- 账号与空间是头像菜单的核心上下文；企业版不再提供「全部设置」/
-             帮助文档 / GitHub 外链入口。 -->
+             帮助文档 / GitHub 外链入口。个人设置与空间设置合并为单一入口
+             （弹窗内「个人」「空间」分组仍分开列出），统一落到「常规设置」。 -->
         <div class="menu-item" @click="handleQuickNav('general')">
           <t-icon name="user" class="menu-icon" />
-          <span>{{ $t('general.personalSettings') }}</span>
-        </div>
-        <!-- 空间设置仅空间管理员可见；普通用户的入口由系统管理员在控制台维护。 -->
-        <div
-          v-if="!authStore.isLiteMode && authStore.hasRole('admin')"
-          class="menu-item"
-          @click="handleQuickNav('tenant')"
-        >
-          <t-icon name="user-circle" class="menu-icon" />
-          <span>{{ $t('settings.workspaceSettings') }}</span>
+          <span>{{ $t('settings.personalWorkspaceSettings') }}</span>
         </div>
         <!-- “管理”类快捷入口只对真正具备写权限的人展示。只读名册和模型列表
              仍可从「全部设置」进入，避免 viewer 看到名不副实的管理入口。 -->
@@ -192,7 +163,6 @@ import {
 import type { TenantInfo } from '@/api/tenant'
 import { useRoleLabel, useHomeTenant } from '@/composables/useRoleLabel'
 import { getRootZoom, rectToCssPx, cssViewportSize } from '@/utils/zoom'
-import { openNewUserGuide } from '@/config/contextualGuides'
 import { SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE } from '@/config/settingsAccess'
 import { SKILL_ICON } from '@/types/mention'
 
@@ -202,6 +172,7 @@ const router = useRouter()
 const uiStore = useUIStore()
 const authStore = useAuthStore()
 const { formatRole, roleIcon } = useRoleLabel()
+
 const { homeTenantId, isHomeTenantActive, isHomeTenant } = useHomeTenant()
 
 // 顶部用户卡片展示的空间名 / 当前角色：跟着 tenant 切换器实时变。
@@ -214,16 +185,25 @@ const activeTenantName = computed(() => {
     ''
   )
 })
-const currentRoleLabel = computed(() => formatRole(authStore.currentTenantRole))
-const currentRoleIcon = computed(() => roleIcon(authStore.currentTenantRole))
 
-// 单空间用户（memberships <= 1 且非 superuser）= 永远 home + owner，第三
-// 行就是 user-email 信息的重复，没必要占视觉空间；只对多空间 / superuser
-// 渲染。Lite 模式下没有 RBAC 概念，统一隐藏。
-const showTenantIdentityLine = computed(() => {
-  if (authStore.isLiteMode) return false
-  if (authStore.canAccessAllTenants) return true
-  return (authStore.memberships ?? []).length > 1
+// 面向用户的角色徽标只做二元区分：空间管理员（owner/admin）与空间成员
+// （其余角色）。RBAC 的完整四档角色仍保留在成员管理等页面，这里只服务
+// 侧栏 / 头像菜单的自我标识。Lite 模式没有 RBAC 概念，不显示。
+const roleBadgeLabel = computed(() => {
+  if (authStore.isLiteMode) return ''
+  const role = authStore.currentTenantRole
+  if (role === 'admin' || role === 'owner') return t('common.roleAdmin')
+  if (role) return t('common.roleMember')
+  return ''
+})
+
+// 次行「工号@空间名称」。employee_id 由 /auth/me 返回、经 userInfoFromApi
+// 进入 authStore.user；缺失时退化为只显示空间名。
+const userEmployeeAtTenant = computed(() => {
+  const employeeId = authStore.user?.employee_id || ''
+  const tenantName = activeTenantName.value
+  if (!employeeId) return tenantName
+  return `${employeeId}@${tenantName}`
 })
 
 // 快捷入口使用“管理能力”而不是页面最低可见角色：成员名册允许 viewer
@@ -247,12 +227,10 @@ let tenantSubmenuHideTimer: ReturnType<typeof setTimeout> | null = null
 // 用户信息
 const userInfo = ref({
   username: t('common.defaultUser'),
-  email: 'user@example.com',
   avatar: ''
 })
 
 const userName = computed(() => userInfo.value.username)
-const userEmail = computed(() => userInfo.value.email)
 const userAvatar = computed(() => userInfo.value.avatar)
 
 // 用户名首字母（用于无头像时显示）
@@ -461,11 +439,6 @@ const clampFloatingToViewport = (selector: string, target: { value: Record<strin
   })
 }
 
-const reopenGuide = () => {
-  menuVisible.value = false
-  openNewUserGuide()
-}
-
 // 注销
 const handleLogout = async () => {
   menuVisible.value = false
@@ -495,7 +468,6 @@ const loadUserInfo = async () => {
       const user = response.data.user
       userInfo.value = {
         username: user.username || t('common.info'),
-        email: user.email || 'user@example.com',
         avatar: user.avatar || ''
       }
       // 同时更新 authStore 中的用户信息，确保包含 can_access_all_tenants /
@@ -637,58 +609,19 @@ onUnmounted(() => {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+
+    .user-name-role {
+      font-weight: 400;
+      color: var(--td-text-color-secondary);
+    }
   }
 
-  .user-email {
+  .user-sub {
     font-size: 12px;
     color: var(--td-text-color-secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .user-tenant-name {
-    font-size: 14px;
-    font-weight: 600;
-    letter-spacing: -0.01em;
-    color: var(--td-text-color-primary);
-    line-height: 1.35;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .user-tenant-meta {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    margin-top: 0;
-    min-width: 0;
-    font-size: 12px;
-    line-height: 1.35;
-    color: var(--td-text-color-secondary);
-
-    .user-tenant-meta-name {
-      flex: 0 1 auto;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .user-tenant-meta-sep {
-      flex-shrink: 0;
-      color: var(--td-text-color-placeholder);
-    }
-
-    .user-tenant-meta-icon {
-      flex-shrink: 0;
-      color: inherit;
-    }
-
-    .user-tenant-meta-role {
-      flex-shrink: 0;
-    }
   }
 }
 
@@ -788,7 +721,7 @@ onUnmounted(() => {
     text-overflow: ellipsis;
   }
 
-  .dropdown-user-email {
+  .dropdown-user-line {
     min-width: 0;
     font-size: 12px;
     line-height: 1.35;
@@ -796,28 +729,6 @@ onUnmounted(() => {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-
-  .dropdown-guide-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-shrink: 0;
-    width: 20px;
-    height: 20px;
-    margin: 0;
-    padding: 0;
-    border: none;
-    border-radius: 4px;
-    background: transparent;
-    color: var(--td-text-color-placeholder);
-    cursor: pointer;
-    transition: background-color 0.2s ease, color 0.2s ease;
-
-    &:hover {
-      background: var(--td-bg-color-container-hover);
-      color: var(--td-text-color-secondary);
-    }
   }
 }
 
@@ -874,24 +785,6 @@ onUnmounted(() => {
     font-size: 16px;
     color: var(--td-text-color-placeholder);
     transition: color 0.15s ease;
-  }
-
-  .dropdown-tenant-panel-role {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 12px;
-    line-height: 1.35;
-    color: var(--td-text-color-secondary);
-    min-width: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-
-    .dropdown-tenant-panel-role-icon {
-      flex-shrink: 0;
-      color: inherit;
-    }
   }
 }
 

@@ -342,7 +342,9 @@ func (p *PluginRerank) rerank(ctx context.Context,
 	passages = cleanPassages
 	candidates = cleanCandidates
 
-	rerankResp, err := rerankModel.Rerank(ctx, query, passages)
+	// Label the call for the usage ledger (docs/Token统计与计费设计.md).
+	rerankCtx := types.WithLLMCallMetadata(ctx, "retrieval_rerank", "")
+	rerankResp, err := rerankModel.Rerank(rerankCtx, query, passages)
 	if err != nil {
 		pipelineError(ctx, "Rerank", "model_call", map[string]interface{}{
 			"query_variant": query,

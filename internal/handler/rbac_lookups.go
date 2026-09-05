@@ -134,13 +134,112 @@ func (h *CustomAgentHandler) AgentCreatorLookup(c *gin.Context) (string, error) 
 	return agent.CreatedBy, nil
 }
 
+// KBCoMaintainCreatorLookup extends KBCreatorLookup with the co-maintain
+// rule (migration 000099): when the KB is flagged AllowMemberContribute,
+// any Contributor+ member of the KB's tenant is treated as an owner for
+// this request (we return the CALLER's uid so the guard's ownership-match
+// step allows it). Admin+ callers never reach the lookup — the guard's
+// role fast path already let them through. Used by the KB content-add
+// routes (POST /knowledge-bases/:id/knowledge/{file,url,manual}): members
+// of a co-maintain KB may add knowledge; everyone else needs to be the
+// KB creator or Admin+.
+func (h *KnowledgeBaseHandler) KBCoMaintainCreatorLookup(c *gin.Context) (string, error) {
+	id := c.Param("id")
+	if id == "" {
+		return "", errors.New("missing :id param for KB co-maintain lookup")
+	}
+	ctx := c.Request.Context()
+	tenantID, ok := types.TenantIDFromContext(ctx)
+	if !ok {
+		return "", errors.New("workspace context missing")
+	}
+	kb, err := h.service.GetKnowledgeBaseByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, apprepo.ErrKnowledgeBaseNotFound) {
+			return "", middleware.ErrResourceNotFound
+		}
+		return "", err
+	}
+	if kb == nil || kb.TenantID != tenantID {
+		return "", middleware.ErrResourceNotFound
+	}
+	if kb.AllowMemberContribute {
+		if uid, uidOK := types.UserIDFromContext(ctx); uidOK && uid != "" {
+			role := types.TenantRoleFromContext(ctx)
+			if role.HasPermission(types.TenantRoleContributor) {
+				return uid, nil
+			}
+		}
+	}
+	return kb.CreatorID, nil
+}
+
+// KnowledgeItemCreatorLookup guards per-knowledge mutations (delete /
+// update / reparse / cancel-parse / regenerate-summary / manual edit /
+// image edit) under the co-maintain model (migration 000099). The URL
+// :id is a knowledge id. Decision, as an "effective owner" for the
+// guard's ownership-match step:
+//
+//  1. owning KB's CreatorID — the KB creator manages every item;
+//  2. otherwise, when the KB is flagged AllowMemberContribute AND the
+//     caller is Contributor+ AND the item's CreatorID equals the caller
+//     — members manage only the items they added themselves;
+//  3. otherwise fall back to the KB CreatorID (≠ caller → 403 for
+//     non-Admin callers).
+//
+// Admin+ never reaches the lookup (role fast path). Legacy items with an
+// empty item CreatorID never match rule 2 — members cannot manage
+// pre-tracking rows.
+func (h *KnowledgeHandler) KnowledgeItemCreatorLookup(c *gin.Context) (string, error) {
+	knowledgeID := c.Param("id")
+	if knowledgeID == "" {
+		return "", errors.New("missing :id param for knowledge item owner lookup")
+	}
+	ctx := c.Request.Context()
+	tenantID, ok := types.TenantIDFromContext(ctx)
+	if !ok {
+		return "", errors.New("workspace context missing")
+	}
+	knowledge, err := h.kgService.GetKnowledgeByIDOnly(ctx, knowledgeID)
+	if err != nil {
+		if errors.Is(err, apprepo.ErrKnowledgeNotFound) {
+			return "", middleware.ErrResourceNotFound
+		}
+		return "", err
+	}
+	if knowledge == nil || knowledge.TenantID != tenantID {
+		return "", middleware.ErrResourceNotFound
+	}
+	kb, err := h.kbService.GetKnowledgeBaseByID(ctx, knowledge.KnowledgeBaseID)
+	if err != nil {
+		if errors.Is(err, apprepo.ErrKnowledgeBaseNotFound) {
+			return "", middleware.ErrResourceNotFound
+		}
+		return "", err
+	}
+	if kb == nil || kb.TenantID != tenantID {
+		return "", middleware.ErrResourceNotFound
+	}
+	if kb.AllowMemberContribute && knowledge.CreatorID != "" {
+		if uid, uidOK := types.UserIDFromContext(ctx); uidOK && uid == knowledge.CreatorID {
+			role := types.TenantRoleFromContext(ctx)
+			if role.HasPermission(types.TenantRoleContributor) {
+				return uid, nil
+			}
+		}
+	}
+	return kb.CreatorID, nil
+}
+
 // Compile-time guards: the methods must satisfy middleware.CreatorLookup
 // so route wiring stays type-safe even if a signature drifts.
 var (
 	_ middleware.CreatorLookup = (*KnowledgeBaseHandler)(nil).KBCreatorLookup
 	_ middleware.CreatorLookup = (*KnowledgeBaseHandler)(nil).KBCreatorLookupFromKbIDParam
+	_ middleware.CreatorLookup = (*KnowledgeBaseHandler)(nil).KBCoMaintainCreatorLookup
 	_ middleware.CreatorLookup = (*CustomAgentHandler)(nil).AgentCreatorLookup
 	_ middleware.CreatorLookup = (*KnowledgeHandler)(nil).KBCreatorLookupFromKnowledgeID
+	_ middleware.CreatorLookup = (*KnowledgeHandler)(nil).KnowledgeItemCreatorLookup
 	_ middleware.CreatorLookup = (*ChunkHandler)(nil).KBCreatorLookupFromKnowledgeIDParam
 	_ middleware.CreatorLookup = (*ChunkHandler)(nil).KBCreatorLookupFromChunkIDParam
 	_ middleware.CreatorLookup = (*WikiPageHandler)(nil).KBCreatorLookupFromKBPath

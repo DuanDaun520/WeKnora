@@ -489,6 +489,17 @@ func TestSkillInstallerIsHiddenFromThePicker(t *testing.T) {
 		"it must not clutter the tenant's agent picker")
 }
 
+func TestWikiResearcherIsHiddenFromThePicker(t *testing.T) {
+	require.NoError(t, types.LoadBuiltinAgentsConfig(filepath.Join("..", "..", "..", "config")))
+
+	// 000102：维基问答不再作为独立内置智能体出现在列表里，但 YAML 注册
+	// 保留，已有会话/程序化调用仍可解析。
+	require.True(t, types.IsBuiltinAgentID(types.BuiltinWikiResearcherID),
+		"the server must still be able to resolve it by ID")
+	require.NotContains(t, types.GetBuiltinAgentIDs(), types.BuiltinWikiResearcherID,
+		"维基问答 must not appear in the tenant's agent picker")
+}
+
 func TestGetKnowledgeBaseInfos_SharedKnowledgeBaseUsesSourceTenant(t *testing.T) {
 	const (
 		receiverTenantID = uint64(7)

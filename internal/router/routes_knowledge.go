@@ -70,9 +70,13 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 	kb := g.apiKeyGroup(r.Group("/knowledge-bases/:id/knowledge"), apiKeyIngest(apiKeyFullAccess()))
 	kbRead := kb.With(apiKeyRetrieve(apiKeyFullAccess()))
 	{
-		kb.POST("/file", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateKnowledgeFromFile)
-		kb.POST("/url", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateKnowledgeFromURL)
-		kb.POST("/manual", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.CreateManualKnowledge)
+		// Content adds honour the co-maintain flag (000099): KB creator,
+		// Admin+, or Contributor+ members when the KB is flagged
+		// allow_member_contribute. Everything else KB-scoped below stays
+		// on the stricter OwnedKBOrAdmin / Admin matrix.
+		kb.POST("/file", g.KBCoMaintainOrAdmin(), g.KBAccessWrite("id"), handler.CreateKnowledgeFromFile)
+		kb.POST("/url", g.KBCoMaintainOrAdmin(), g.KBAccessWrite("id"), handler.CreateKnowledgeFromURL)
+		kb.POST("/manual", g.KBCoMaintainOrAdmin(), g.KBAccessWrite("id"), handler.CreateManualKnowledge)
 		kbRead.GET("", g.Viewer(), g.KBAccessRead("id"), handler.ListKnowledge)
 		kbRead.GET("/folders", g.Viewer(), g.KBAccessRead("id"), handler.ListKnowledgeFolders)
 		kb.PUT("/folders", g.OwnedKBOrAdmin(), g.KBAccessWrite("id"), handler.RenameKnowledgeFolder)
@@ -103,12 +107,16 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		kRead.GET("/:id", g.Viewer(), g.KBAccessReadFromKnowledgeIDParam("id"), handler.GetKnowledge)
 		kRead.GET("/:id/stages", g.Viewer(), g.KBAccessReadFromKnowledgeIDParam("id"), handler.GetKnowledgeSpans)
 		kRead.GET("/:id/spans", g.Viewer(), g.KBAccessReadFromKnowledgeIDParam("id"), handler.GetKnowledgeSpans)
-		k.DELETE("/:id", g.OwnedKnowledgeKBOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.DeleteKnowledge)
-		k.PUT("/:id", g.OwnedKnowledgeKBOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.UpdateKnowledge)
-		k.POST("/:id/regenerate-summary", g.OwnedKnowledgeKBOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.RegenerateKnowledgeSummary)
-		k.PUT("/manual/:id", g.OwnedKnowledgeKBOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.UpdateManualKnowledge)
-		k.POST("/:id/reparse", g.OwnedKnowledgeKBOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.ReparseKnowledge)
-		k.POST("/:id/cancel-parse", g.OwnedKnowledgeKBOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.CancelKnowledgeParse)
+		// Per-item mutations follow the co-maintain model (000099): KB
+		// creator OR Admin+ OR (KB allows member contribution AND the
+		// caller created this item — knowledges.creator_id). Members can
+		// therefore only delete/modify their own additions.
+		k.DELETE("/:id", g.OwnedKnowledgeItemOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.DeleteKnowledge)
+		k.PUT("/:id", g.OwnedKnowledgeItemOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.UpdateKnowledge)
+		k.POST("/:id/regenerate-summary", g.OwnedKnowledgeItemOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.RegenerateKnowledgeSummary)
+		k.PUT("/manual/:id", g.OwnedKnowledgeItemOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.UpdateManualKnowledge)
+		k.POST("/:id/reparse", g.OwnedKnowledgeItemOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.ReparseKnowledge)
+		k.POST("/:id/cancel-parse", g.OwnedKnowledgeItemOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.CancelKnowledgeParse)
 		// Downloading exposes the original source file, so it has a stricter
 		// boundary than viewing parsed content or previewing it: tenant Viewers
 		// cannot download from their own workspace, and org-shared Viewer access
@@ -117,7 +125,7 @@ func RegisterKnowledgeRoutes(r *gin.RouterGroup, handler *handler.KnowledgeHandl
 		// machine-principal authorization to the API-key gate.
 		kRead.GET("/:id/download", g.Contributor(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.DownloadKnowledgeFile)
 		kRead.GET("/:id/preview", g.Viewer(), g.KBAccessReadFromKnowledgeIDParam("id"), handler.PreviewKnowledgeFile)
-		k.PUT("/image/:id/:chunk_id", g.OwnedKnowledgeKBOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.UpdateImageInfo)
+		k.PUT("/image/:id/:chunk_id", g.OwnedKnowledgeItemOrAdmin(), g.KBAccessWriteFromKnowledgeIDParam("id"), handler.UpdateImageInfo)
 		kRead.GET("/search", g.Viewer(), handler.SearchKnowledge)
 		kRead.GET("/move/progress/:task_id", g.Viewer(), handler.GetKnowledgeMoveProgress)
 		// Batch / cross-KB content writes: JWT Contributor+, or an API key
@@ -198,8 +206,10 @@ func RegisterKnowledgeBaseRoutes(r *gin.RouterGroup, handler *handler.KnowledgeB
 	kb := g.apiKeyGroup(kbgrp, apiKeyRetrieve(apiKeyFullAccess()))
 	kbManagement := kb.With(apiKeyManageKnowledgeBases(apiKeyFullAccess()))
 	{
-		// 创建知识库 — JWT Contributor+；API key 需 manage_kbs 或 full-access。
-		kbManagement.POST("", g.Contributor(), handler.CreateKnowledgeBase)
+		// 创建知识库 — 000099 起仅空间管理员（JWT Admin+）；API key 需
+		// manage_kbs 或 full-access。普通成员不再自建知识库，只能在管理员
+		// 标记为「允许共同维护」的知识库里添加内容。
+		kbManagement.POST("", g.Admin(), handler.CreateKnowledgeBase)
 		// 获取知识库列表 — Viewer+ for JWT callers; retrieve-capable API keys pass via the gate.
 		kb.GET("", g.Viewer(), handler.ListKnowledgeBases)
 		// 获取知识库详情 — Viewer+ 且对 KB 有 read 权限
@@ -226,15 +236,15 @@ func RegisterKnowledgeBaseRoutes(r *gin.RouterGroup, handler *handler.KnowledgeB
 		// POST is preferred; GET with JSON body is kept for backward compatibility (#1727).
 		kb.POST("/:id/hybrid-search", g.Viewer(), g.KBAccessRead("id"), handler.HybridSearch)
 		kb.GET("/:id/hybrid-search", g.Viewer(), g.KBAccessRead("id"), handler.HybridSearch)
-		// 拷贝知识库 — 产出新 KB，与 create 同档：JWT Contributor+，API key 需 manage_kbs 或 full-access。
+		// 拷贝知识库 — 产出新 KB，与 create 同档（000099 起 JWT Admin+），API key 需 manage_kbs 或 full-access。
 		// 源 KB 通过 body 里的 source_id 传入（非 :id 路径参数），无法套用基于路径参数
 		// 的 KBAccessRead，故源/目标 KB 的租户归属与 allow-list 校验在 handler 内完成
 		// （requireTenantAPIKeyKnowledgeBases 会把 source_id/target_id 兜进 allow-list）。
 		// 副本归调用者所有，不需要原 KB 的所有权。
-		kbManagement.POST("/copy", g.Contributor(), handler.CopyKnowledgeBase)
-		// 创建知识库副本 — 产出新 KB，与 create 同档：JWT Contributor+，API key 需 manage_kbs 或 full-access；
+		kbManagement.POST("/copy", g.Admin(), handler.CopyKnowledgeBase)
+		// 创建知识库副本 — 产出新 KB，与 create 同档（000099 起 JWT Admin+），API key 需 manage_kbs 或 full-access；
 		// 且对源 KB 有 read 权限（KBAccessRead 会对限定 key 兜住源 KB）。只创建新的 KB 设置记录，不复制内容/索引/分享。
-		kbManagement.POST("/:id/duplicate", g.Contributor(), g.KBAccessRead("id"), handler.DuplicateKnowledgeBase)
+		kbManagement.POST("/:id/duplicate", g.Admin(), g.KBAccessRead("id"), handler.DuplicateKnowledgeBase)
 		// 获取知识库复制进度 — Viewer+；只读。manage_kbs（发起 copy 的 key）或
 		// retrieve 均可轮询；任务按租户隔离（requireTaskProgressTenant），key 只能
 		// 查本租户任务。

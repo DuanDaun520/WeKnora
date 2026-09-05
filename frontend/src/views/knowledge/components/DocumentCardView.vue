@@ -26,6 +26,8 @@ interface KnowledgeCard {
   title?: string;
   type?: string;
   updated_at?: string;
+  /** 上传人展示名（后端 ListKnowledge 回填，历史条目可能为空）。 */
+  creator_name?: string;
   file_type?: string;
   isMore?: boolean;
   metadata?: any;
@@ -44,6 +46,11 @@ const props = defineProps<{
   canEdit: boolean;
   canDownload: boolean;
   canMutateKnowledge: boolean;
+  /**
+   * 000099 共同维护：按条目判断当前用户是否有修改/删除权。
+   * KB 管理者恒 true；成员仅对开放维护 KB 中自己创建的条目为 true。
+   */
+  canMutateItem?: (item: KnowledgeCard) => boolean;
   traceAvailableById: Record<string, boolean>;
   tagList: Tag[];
   /** Sub-folders of the folder currently being browsed. */
@@ -111,9 +118,12 @@ const CANCELABLE_PARSE_STATUSES = new Set(['pending', 'processing', 'finalizing'
 const isParseInFlight = (status?: string): boolean =>
   CANCELABLE_PARSE_STATUSES.has(String(status ?? ''));
 
+// 000099 共同维护：单条目修改/删除权。未传 canMutateItem 时退化为仅 KB 管理者。
+const canMutateThisItem = (item: KnowledgeCard): boolean =>
+  props.canMutateItem ? props.canMutateItem(item) : props.canEdit;
+
 const isTraceMenuVisible = (item: KnowledgeCard): boolean => {
-  if (!item?.id) return false;
-  if (isParseInFlight(item.parse_status)) return true;
+  if (!item?.id) return false;  if (isParseInFlight(item.parse_status)) return true;
   return props.traceAvailableById[item.id] === true;
 };
 
@@ -358,7 +368,7 @@ const handleAction = (action: 'download' | 'edit' | 'view-trace' | 'reparse' | '
           </div>
           <span class="card-content-title" :title="item.file_name">{{ item.file_name }}</span>
           <t-popup
-            v-if="canEdit"
+            v-if="canEdit || canMutateThisItem(item)"
             v-model="item.isMore"
             overlayClassName="card-more"
             :on-visible-change="(v: boolean) => onMenuVisibleChange(v, item)"
@@ -392,6 +402,7 @@ const handleAction = (action: 'download' | 'edit' | 'view-trace' | 'reparse' | '
                   :item="item"
                   :can-download="canDownload"
                   :can-mutate-knowledge="canMutateKnowledge"
+                  :can-mutate-item="canMutateThisItem(item)"
                   :trace-visible="isTraceMenuVisible(item)"
                   @download="handleAction('download', item)"
                   @edit="handleAction('edit', item)"
@@ -543,7 +554,12 @@ const handleAction = (action: 'download' | 'edit' | 'view-trace' | 'reparse' | '
           <t-icon name="folder" />
           <span>{{ item.folder_path }}</span>
         </button>
-        <span v-else class="card-time">{{ formatDocTime(item.updated_at) }}</span>
+        <div v-else class="card-time-stack">
+          <span class="card-time">{{ formatDocTime(item.updated_at) }}</span>
+          <!-- 上传人：更新时间下方灰色小字，与更新时间左对齐。 -->
+          <span v-if="item.creator_name" class="card-uploader" :title="item.creator_name">{{
+            item.creator_name }}</span>
+        </div>
         <div class="card-bottom-right">
           <div v-if="tagList.length" class="card-tag-selector" @click.stop>
             <!-- Editable mode -->
@@ -941,7 +957,9 @@ const handleAction = (action: 'download' | 'edit' | 'view-trace' | 'reparse' | '
     margin-top: auto;
     padding: 0 14px;
     box-sizing: border-box;
-    height: 32px;
+    // 上传人行加入后允许增高；单行时 32px 最小高度维持原视觉不变。
+    min-height: 32px;
+    height: auto;
     width: 100%;
     display: flex;
     align-items: center;
@@ -957,6 +975,28 @@ const handleAction = (action: 'download' | 'edit' | 'view-trace' | 'reparse' | '
     font-size: 12px;
     font-weight: 400;
     white-space: nowrap;
+  }
+
+  // 更新时间 + 上传人两行堆叠，与更新时间左对齐。
+  .card-time-stack {
+    flex-shrink: 0;
+    min-width: 0;
+    max-width: 55%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1px;
+  }
+
+  .card-uploader {
+    max-width: 100%;
+    font-size: 12px;
+    line-height: 16px;
+    font-family: var(--app-font-family);
+    color: var(--td-text-color-placeholder);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .card-folder {

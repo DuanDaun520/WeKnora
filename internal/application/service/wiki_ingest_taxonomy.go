@@ -192,6 +192,8 @@ func (s *wikiIngestService) selectRelevantFolders(
 		itemTexts[i] = strings.TrimSpace(it.title + " " + previewText(it.about, 120))
 	}
 
+	// Label the calls for the usage ledger (docs/Token统计与计费设计.md).
+	ctx = types.WithLLMCallMetadata(ctx, "wiki_ingest", "")
 	folderVecs, err := embedder.BatchEmbed(ctx, folderTexts)
 	if err != nil {
 		logger.Warnf(ctx, "wiki ingest: taxonomy plan folder embed failed, feeding all folders: %v", err)

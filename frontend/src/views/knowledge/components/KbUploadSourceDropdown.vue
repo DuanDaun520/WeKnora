@@ -32,6 +32,8 @@
           size="small"
         >
           <template #icon><t-icon :name="triggerIcon" size="16px" /></template>
+          <!-- 000099：传入 label 时按钮从纯图标变为「图标+文字」形态。 -->
+          <span v-if="label" class="kb-upload-source-label">{{ label }}</span>
         </t-button>
       </t-dropdown>
     </t-tooltip>
@@ -74,6 +76,8 @@ const props = withDefaults(defineProps<{
   triggerClass?: string
   dataGuide?: string
   tooltip?: string
+  /** 000099：按钮文字。传入后触发器渲染为「图标+文字」。 */
+  label?: string
   placement?: 'top' | 'bottom' | 'bottom-right' | 'bottom-left'
 }>(), {
   acceptFileTypes: '',
@@ -83,6 +87,7 @@ const props = withDefaults(defineProps<{
   triggerClass: '',
   dataGuide: '',
   tooltip: '',
+  label: '',
   placement: 'bottom-right',
 })
 
@@ -231,6 +236,13 @@ defineExpose({ openUrlDialog })
   &:hover {
     color: var(--td-brand-color);
   }
+}
+
+// 图标+文字形态下给图标和文字留出间距（纯图标形态不受影响）。
+.kb-upload-source-label {
+  margin-left: 2px;
+  font-size: 13px;
+  line-height: 1;
 }
 
 .url-import-form {

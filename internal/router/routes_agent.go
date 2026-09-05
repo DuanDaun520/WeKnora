@@ -32,8 +32,10 @@ func RegisterCustomAgentRoutes(r *gin.RouterGroup, agentHandler *handler.CustomA
 		agentsRead.GET("/placeholders", g.Viewer(), agentHandler.GetPlaceholders)
 		// List smart-reasoning agent type presets (rag-qa / wiki-qa / hybrid / custom) — Viewer+
 		agentsRead.GET("/type-presets", g.Viewer(), agentHandler.GetAgentTypePresets)
-		// Create custom agent — Contributor+
-		agentsWrite.POST("", g.Contributor(), agentHandler.CreateAgent)
+		// Create custom agent — Admin+（000102：普通用户/contributor 不再
+		// 能创建智能体，由空间管理员统一创建；前端按钮同步置灰并提示
+		// 联系管理员）
+		agentsWrite.POST("", g.Admin(), agentHandler.CreateAgent)
 		// List all agents (including built-in) — Viewer+
 		agentsRead.GET("", g.Viewer(), agentHandler.ListAgents)
 		// Get agent by ID — Viewer+
@@ -42,8 +44,8 @@ func RegisterCustomAgentRoutes(r *gin.RouterGroup, agentHandler *handler.CustomA
 		agentsWrite.PUT("/:id", g.OwnedAgentOrAdmin(), agentHandler.UpdateAgent)
 		// Delete agent — creator OR Admin+
 		agentsWrite.DELETE("/:id", g.OwnedAgentOrAdmin(), agentHandler.DeleteAgent)
-		// Copy agent — Contributor+ (copy is owned by the caller)
-		agentsWrite.POST("/:id/copy", g.Contributor(), agentHandler.CopyAgent)
+		// Copy agent — Admin+（000102：复制也是创建，与 POST /agents 同档）
+		agentsWrite.POST("/:id/copy", g.Admin(), agentHandler.CopyAgent)
 	}
 	// Registered outside the group to avoid Gin route conflict with /agents/:id/shares in organization routes
 	g.apiKeyRoute(r, http.MethodGet, "/agents/:id/suggested-questions",

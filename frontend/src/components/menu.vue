@@ -1299,7 +1299,6 @@ const onDragHandleMouseDown = (e: MouseEvent) => {
             display: inline-block;
             font-size: 20px;
             font-weight: 700;
-            letter-spacing: 2px;
             line-height: 28px;
             color: var(--td-text-color-primary);
             font-family: var(--app-font-family);

@@ -8,8 +8,10 @@
         <div class="header-title" style="--wails-draggable: drag">
           <div class="title-row" style="--wails-draggable: drag">
             <h2 style="--wails-draggable: drag">{{ $t('knowledgeBase.title') }}</h2>
-            <t-tooltip v-if="authStore.hasRole('contributor')" :content="$t('knowledgeList.create')" placement="bottom">
-              <t-button variant="text" theme="default" size="small" class="header-action-btn"
+            <!-- 000099：按钮对全员可见；普通成员置灰并提示只有空间管理员可新建。 -->
+            <t-tooltip :content="canCreateKB ? $t('knowledgeList.create') : $t('knowledgeList.createAdminOnly')"
+              placement="bottom">
+              <t-button variant="text" theme="default" size="small" class="header-action-btn" :disabled="!canCreateKB"
                 data-guide="kb-list-create" style="--wails-draggable: no-drag" @click="handleCreateKnowledgeBase">
                 <template #icon><t-icon name="folder-add" size="16px" /></template>
               </t-button>
@@ -261,6 +263,15 @@
                         <t-icon v-if="kb.isProcessing" name="loading" size="12px" class="processing-icon" />
                       </div>
                     </t-tooltip>
+                    <!-- 000099 锁图标：开锁 = 允许空间成员共同维护；闭锁 =
+                         仅空间管理员/创建者可添加知识。 -->
+                    <t-tooltip
+                      :content="kb.allow_member_contribute ? $t('knowledgeList.features.coMaintain') : $t('knowledgeList.features.adminOnlyLock')"
+                      placement="top">
+                      <div class="feature-badge co-maintain" :class="{ open: kb.allow_member_contribute }">
+                        <t-icon :name="kb.allow_member_contribute ? 'lock-off' : 'lock-on'" size="14px" />
+                      </div>
+                    </t-tooltip>
                     <t-tooltip v-if="kb.extract_config?.enabled" :content="$t('knowledgeList.features.knowledgeGraph')"
                       placement="top">
                       <div class="feature-badge kg">
@@ -494,6 +505,14 @@
                         <t-icon v-if="kb.isProcessing" name="loading" size="12px" class="processing-icon" />
                       </div>
                     </t-tooltip>
+                    <!-- 000099 锁图标（同「全部」页卡片） -->
+                    <t-tooltip
+                      :content="kb.allow_member_contribute ? $t('knowledgeList.features.coMaintain') : $t('knowledgeList.features.adminOnlyLock')"
+                      placement="top">
+                      <div class="feature-badge co-maintain" :class="{ open: kb.allow_member_contribute }">
+                        <t-icon :name="kb.allow_member_contribute ? 'lock-off' : 'lock-on'" size="14px" />
+                      </div>
+                    </t-tooltip>
                     <t-tooltip v-if="kb.extract_config?.enabled" :content="$t('knowledgeList.features.knowledgeGraph')"
                       placement="top">
                       <div class="feature-badge kg">
@@ -630,16 +649,23 @@
           </template>
         </div>
 
-        <!-- 全部空状态：保留「新建知识库」CTA，因为是空间没有任何 KB 的真空场景 -->
+        <!-- 全部空状态：保留「新建知识库」CTA，因为是空间没有任何 KB 的真空场景。
+             000099：普通成员按钮置灰（外层 span 承接 hover，让 tooltip 在
+             disabled 按钮上仍可弹出）。 -->
         <div v-if="spaceSelection === 'all' && filteredKnowledgeBases.length === 0 && !loading" class="empty-state">
           <img class="empty-img" src="@/assets/img/upload.svg" alt="">
           <span class="empty-txt">{{ $t('knowledgeList.empty.title') }}</span>
           <span class="empty-desc">{{ $t('knowledgeList.empty.description') }}</span>
-          <t-button v-if="authStore.hasRole('contributor')" class="kb-create-btn empty-state-btn"
-            data-guide="kb-list-create" @click="handleCreateKnowledgeBase">
-            <template #icon><t-icon name="folder-add" /></template>
-            {{ $t('knowledgeList.create') }}
-          </t-button>
+          <t-tooltip :content="canCreateKB ? $t('knowledgeList.create') : $t('knowledgeList.createAdminOnly')"
+            placement="top">
+            <span class="empty-state-btn-wrap">
+              <t-button class="kb-create-btn empty-state-btn" :disabled="!canCreateKB" data-guide="kb-list-create"
+                @click="handleCreateKnowledgeBase">
+                <template #icon><t-icon name="folder-add" /></template>
+                {{ $t('knowledgeList.create') }}
+              </t-button>
+            </span>
+          </t-tooltip>
         </div>
 
         <!-- 收藏空状态：不放创建按钮——「没有收藏」 ≠ 「没有知识库」，
@@ -658,16 +684,21 @@
           <span class="empty-desc">{{ $t('knowledgeList.empty.recentsDescription') }}</span>
         </div>
 
-        <!-- 我的知识库空状态 -->
+        <!-- 我的知识库空状态（按钮置灰规则同上） -->
         <div v-if="spaceSelection === 'mine' && kbs.length === 0 && !loading" class="empty-state">
           <img class="empty-img" src="@/assets/img/upload.svg" alt="">
           <span class="empty-txt">{{ $t('knowledgeList.empty.title') }}</span>
           <span class="empty-desc">{{ $t('knowledgeList.empty.description') }}</span>
-          <t-button v-if="authStore.hasRole('contributor')" class="kb-create-btn empty-state-btn"
-            data-guide="kb-list-create" @click="handleCreateKnowledgeBase">
-            <template #icon><t-icon name="folder-add" /></template>
-            {{ $t('knowledgeList.create') }}
-          </t-button>
+          <t-tooltip :content="canCreateKB ? $t('knowledgeList.create') : $t('knowledgeList.createAdminOnly')"
+            placement="top">
+            <span class="empty-state-btn-wrap">
+              <t-button class="kb-create-btn empty-state-btn" :disabled="!canCreateKB" data-guide="kb-list-create"
+                @click="handleCreateKnowledgeBase">
+                <template #icon><t-icon name="folder-add" /></template>
+                {{ $t('knowledgeList.create') }}
+              </t-button>
+            </span>
+          </t-tooltip>
         </div>
 
         <!-- 空间下知识库空状态 -->
@@ -867,9 +898,19 @@ interface KB {
   creator_id?: string;
   // creator_name 由后端 list 接口回填，仅用于卡片右下角来源徽章的 tooltip。
   creator_name?: string;
+  // allow_member_contribute（000099 共同维护）：true = 空间成员可以往这个
+  // KB 里添加知识并维护自己添加的条目；false = 仅空间管理员/创建者可写。
+  // 卡片上的锁图标按这个标志切换。
+  allow_member_contribute?: boolean;
 }
 
 const kbs = ref<KB[]>([])
+
+// 000099 权限模型：只有空间管理员可以新建/复制知识库（后端路由同为
+// Admin）。普通成员的「新建知识库」按钮置灰并提示原因；lite 模式单用户
+// 天然全权。
+const canCreateKB = computed(() => authStore.isLiteMode || authStore.hasRole('admin'))
+
 const loading = ref(false)
 const deleteVisible = ref(false)
 const deletingKb = ref<KB | null>(null)
@@ -1358,7 +1399,8 @@ function canManageKBCard(kb: KB): boolean {
 }
 
 function canDuplicateKBCard(kb: any): boolean {
-  return authStore.hasRole('contributor') && kb.isMine !== false
+  // 000099：复制/创建副本与新建知识库同档，仅空间管理员（后端 g.Admin()）。
+  return canCreateKB.value && kb.isMine !== false
 }
 
 // isMyKb 仅用于卡片右下角徽章在「我创建」与「同空间其他成员创建」之间切换。
@@ -2672,6 +2714,25 @@ const handleUploadFinishedEvent = (event: Event) => {
     }
   }
 
+  // 000099 共同维护锁：闭锁走中性灰（受限），开锁用品牌绿（开放贡献）。
+  &.co-maintain {
+    background: rgba(117, 117, 117, 0.1);
+    color: var(--td-text-color-secondary);
+
+    &:hover {
+      background: rgba(117, 117, 117, 0.16);
+    }
+
+    &.open {
+      background: rgba(7, 192, 95, 0.08);
+      color: var(--td-brand-color-active);
+
+      &:hover {
+        background: rgba(7, 192, 95, 0.12);
+      }
+    }
+  }
+
   &.multimodal {
     background: rgba(255, 152, 0, 0.08);
     color: var(--td-warning-color);
@@ -2801,6 +2862,12 @@ const handleUploadFinishedEvent = (event: Event) => {
     font-weight: 400;
     line-height: 22px;
     margin-bottom: 0;
+  }
+
+  // disabled 按钮外包一层 span 承接 hover，tooltip 才能在置灰按钮上弹出。
+  .empty-state-btn-wrap {
+    margin-top: 20px;
+    display: inline-flex;
   }
 
   .empty-state-btn {

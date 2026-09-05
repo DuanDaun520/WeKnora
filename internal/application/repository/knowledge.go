@@ -55,6 +55,18 @@ func NewKnowledgeRepository(db *gorm.DB) interfaces.KnowledgeRepository {
 // CreateKnowledge creates knowledge
 func (r *knowledgeRepository) CreateKnowledge(ctx context.Context, knowledge *types.Knowledge) error {
 	knowledge.ErrorMessage = common.CleanInvalidUTF8(knowledge.ErrorMessage)
+	// Co-maintain model (000099): every knowledge row records who added it
+	// so members of a co-maintain KB can later manage their own items.
+	// Stamped here — the single funnel for all create paths (file / url /
+	// manual / FAQ import / clone / move) — unless the caller already set
+	// a creator (clone/move preserve the original owner's attribution).
+	// Rows with '' (legacy imports, API-key or channel principals without
+	// a user identity) are treated as admin-path items.
+	if knowledge.CreatorID == "" {
+		if uid, ok := types.UserIDFromContext(ctx); ok {
+			knowledge.CreatorID = uid
+		}
+	}
 	err := r.db.WithContext(ctx).Create(knowledge).Error
 	return err
 }

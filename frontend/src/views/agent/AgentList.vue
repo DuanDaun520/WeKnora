@@ -8,9 +8,15 @@
         <div class="header-title" style="--wails-draggable: drag">
           <div class="title-row" style="--wails-draggable: drag">
             <h2 style="--wails-draggable: drag">{{ $t('agent.title') }}</h2>
-            <t-tooltip v-if="authStore.hasRole('contributor')" :content="$t('agent.createAgent')" placement="bottom">
-              <t-button variant="text" theme="default" size="small" class="header-action-btn"
-                data-guide="agent-list-create" style="--wails-draggable: no-drag" @click="handleCreateAgent">
+            <!-- 000102：普通用户（viewer）不再隐藏创建按钮，改为置灰；悬停提示
+                 联系空间管理员并列出管理员名单。tooltip 挂在外层 span 上——原生
+                 disabled 按钮在部分浏览器不派发 hover 事件。 -->
+            <t-tooltip :content="canCreateAgent ? $t('agent.createAgent') : createDeniedTooltip" placement="bottom"
+              :disabled="canCreateAgent">
+              <span class="create-btn-wrap">
+                <t-button variant="text" theme="default" size="small" class="header-action-btn"
+                  :disabled="!canCreateAgent" data-guide="agent-list-create" style="--wails-draggable: no-drag"
+                  @click="handleCreateAgent">
                 <template #icon>
                   <span class="btn-icon-wrapper">
                     <svg class="sparkles-icon" width="19" height="19" viewBox="0 0 20 20" fill="none"
@@ -30,7 +36,9 @@
                     </svg>
                   </span>
                 </template>
+                {{ $t('agent.createAgent') }}
               </t-button>
+              </span>
             </t-tooltip>
           </div>
           <p class="header-subtitle" style="--wails-draggable: drag">{{ $t('agent.subtitle') }}</p>
@@ -195,7 +203,7 @@
                   <span class="card-title" :title="agent.name">{{ agent.name }}</span>
                 </div>
                 <t-popup
-                  v-if="agent.isMine && (canManageAgent(agent) || authStore.hasRole('contributor') || authStore.hasRole('admin'))"
+                  v-if="agent.isMine && canManageAgent(agent)"
                   :visible="openMoreAgentId === agent.id" trigger="hover" overlayClassName="card-more-popup"
                   destroy-on-close placement="bottom-right" @visible-change="onVisibleChange"
                   @update:visible="(v: boolean) => { if (!v) openMoreAgentId = null }">
@@ -207,7 +215,7 @@
                     <div class="popup-menu">
                       <div v-if="canManageAgent(agent)" class="popup-menu-item" @click="handleEdit(agent)"><t-icon
                           class="menu-icon" name="edit" /><span>{{ $t('common.edit') }}</span></div>
-                      <div v-if="authStore.hasRole('contributor')" class="popup-menu-item" @click="handleCopy(agent)">
+                      <div v-if="canCreateAgent" class="popup-menu-item" @click="handleCopy(agent)">
                         <t-icon class="menu-icon" name="file-copy" /><span>{{ $t('common.copy') }}</span>
                       </div>
                       <div v-if="authStore.hasRole('admin')" class="popup-menu-item"
@@ -281,6 +289,12 @@
                       :content="$t('agent.features.mcp')" placement="top">
                       <div class="feature-badge mcp">
                         <t-icon name="extension" size="16px" />
+                      </div>
+                    </t-tooltip>
+                    <t-tooltip v-if="agent.config?.selected_skills?.length || agent.config?.skills_selection_mode === 'all'"
+                      :content="$t('agent.features.skills')" placement="top">
+                      <div class="feature-badge skills">
+                        <t-icon :name="SKILL_ICON" size="16px" />
                       </div>
                     </t-tooltip>
                     <t-tooltip v-if="agent.config?.multi_turn_enabled" :content="$t('agent.features.multiTurn')"
@@ -396,7 +410,7 @@
                   <AgentAvatar v-else :name="agent.name" size="small" />
                   <span class="card-title" :title="agent.name">{{ agent.name }}</span>
                 </div>
-                <t-popup v-if="canManageAgent(agent) || authStore.hasRole('contributor') || authStore.hasRole('admin')"
+                <t-popup v-if="canManageAgent(agent)"
                   :visible="openMoreAgentId === agent.id" trigger="hover" overlayClassName="card-more-popup"
                   destroy-on-close placement="bottom-right" @visible-change="onVisibleChange"
                   @update:visible="(v: boolean) => { if (!v) openMoreAgentId = null }">
@@ -410,7 +424,7 @@
                         <t-icon class="menu-icon" name="edit" />
                         <span>{{ $t('common.edit') }}</span>
                       </div>
-                      <div v-if="authStore.hasRole('contributor')" class="popup-menu-item" @click="handleCopy(agent)">
+                      <div v-if="canCreateAgent" class="popup-menu-item" @click="handleCopy(agent)">
                         <t-icon class="menu-icon" name="file-copy" />
                         <span>{{ $t('common.copy') }}</span>
                       </div>
@@ -472,6 +486,12 @@
                       :content="$t('agent.features.mcp')" placement="top">
                       <div class="feature-badge mcp">
                         <t-icon name="extension" size="16px" />
+                      </div>
+                    </t-tooltip>
+                    <t-tooltip v-if="agent.config?.selected_skills?.length || agent.config?.skills_selection_mode === 'all'"
+                      :content="$t('agent.features.skills')" placement="top">
+                      <div class="feature-badge skills">
+                        <t-icon :name="SKILL_ICON" size="16px" />
                       </div>
                     </t-tooltip>
                     <t-tooltip v-if="agent.config?.multi_turn_enabled" :content="$t('agent.features.multiTurn')"
@@ -625,6 +645,11 @@
                       :content="$t('agent.features.mcp')" placement="top">
                       <div class="feature-badge mcp"><t-icon name="extension" size="16px" /></div>
                     </t-tooltip>
+                    <t-tooltip
+                      v-if="shared.agent?.config?.selected_skills?.length || shared.agent?.config?.skills_selection_mode === 'all'"
+                      :content="$t('agent.features.skills')" placement="top">
+                      <div class="feature-badge skills"><t-icon :name="SKILL_ICON" size="16px" /></div>
+                    </t-tooltip>
                     <t-tooltip v-if="shared.agent?.config?.multi_turn_enabled" :content="$t('agent.features.multiTurn')"
                       placement="top">
                       <div class="feature-badge multi-turn"><t-icon name="chat-bubble" size="16px" /></div>
@@ -641,8 +666,10 @@
           <img class="empty-img" src="@/assets/img/upload.svg" alt="">
           <span class="empty-txt">{{ $t('agent.empty.title') }}</span>
           <span class="empty-desc">{{ $t('agent.empty.description') }}</span>
-          <t-button v-if="authStore.hasRole('contributor')" class="agent-create-btn empty-state-btn"
-            data-guide="agent-list-create" @click="handleCreateAgent">
+          <t-tooltip :content="createDeniedTooltip" placement="top" :disabled="canCreateAgent">
+            <span class="create-btn-wrap">
+              <t-button class="agent-create-btn empty-state-btn" :disabled="!canCreateAgent"
+                data-guide="agent-list-create" @click="handleCreateAgent">
             <template #icon>
               <span class="btn-icon-wrapper">
                 <svg class="sparkles-icon" width="18" height="18" viewBox="0 0 20 20" fill="none"
@@ -663,7 +690,9 @@
               </span>
             </template>
             <span>{{ $t('agent.createAgent') }}</span>
-          </t-button>
+              </t-button>
+            </span>
+          </t-tooltip>
         </div>
 
         <!-- 空状态：收藏 / 最近 — 不放创建按钮，参见 KnowledgeBaseList 的同处理由 -->
@@ -682,8 +711,10 @@
           <img class="empty-img" src="@/assets/img/upload.svg" alt="">
           <span class="empty-txt">{{ $t('agent.empty.title') }}</span>
           <span class="empty-desc">{{ $t('agent.empty.description') }}</span>
-          <t-button v-if="authStore.hasRole('contributor')" class="agent-create-btn empty-state-btn"
-            @click="handleCreateAgent">
+          <t-tooltip :content="createDeniedTooltip" placement="top" :disabled="canCreateAgent">
+            <span class="create-btn-wrap">
+              <t-button class="agent-create-btn empty-state-btn" :disabled="!canCreateAgent"
+                @click="handleCreateAgent">
             <template #icon>
               <span class="btn-icon-wrapper">
                 <svg class="sparkles-icon" width="18" height="18" viewBox="0 0 20 20" fill="none"
@@ -704,7 +735,9 @@
               </span>
             </template>
             <span>{{ $t('agent.createAgent') }}</span>
-          </t-button>
+              </t-button>
+            </span>
+          </t-tooltip>
         </div>
         <!-- 空状态：空间下 -->
         <div v-if="spaceSelectionOrgId && !spaceAgentsLoading && spaceAgentsList.length === 0" class="empty-state">
@@ -816,6 +849,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { MessagePlugin, Icon as TIcon } from 'tdesign-vue-next'
 import { deleteAgent, copyAgent, type CustomAgent } from '@/api/agent'
+import { SKILL_ICON } from '@/types/mention'
 import { useChatResourcesStore } from '@/stores/chatResources'
 import { formatStringDate } from '@/utils/index'
 import { useI18n } from 'vue-i18n'
@@ -836,6 +870,7 @@ import ListSpaceSidebar from '@/components/ListSpaceSidebar.vue'
 import ResourceOriginBadge from '@/components/ResourceOriginBadge.vue'
 import { shouldShowResourceOriginBadge } from '@/utils/card-list-badge'
 import { useAuthStore } from '@/stores/auth'
+import { listMembers } from '@/api/tenant/members'
 import { useListUrlState } from '@/composables/useListUrlState'
 import { useResourcePins } from '@/composables/useResourcePins'
 import { integrationSectionKey } from '@/config/settingsRoute'
@@ -1087,7 +1122,8 @@ const openMoreAgentId = ref<string | null>(null)
 
 const showAgentListEmpty = computed(() => {
   if (loading.value) return false
-  if (!authStore.hasRole('contributor')) return false
+  // 000102：空态引导只对能创建智能体的空间管理员有意义（普通用户按钮置灰）
+  if (!authStore.hasRole('admin')) return false
   if (spaceSelection.value === 'all' && filteredAgents.value.length === 0) return true
   if (spaceSelection.value === 'mine' && agents.value.length === 0) return true
   return false
@@ -1214,6 +1250,8 @@ watch(creatorFilter, () => {
 
 onMounted(() => {
   fetchList()
+  // 000102：普通用户置灰的创建按钮悬停时要能报出管理员名单，进页面即懒加载一次。
+  if (!canCreateAgent.value) void fetchTenantAdminNames()
   window.addEventListener('openAgentEditor', handleOpenAgentEditor as EventListener)
 })
 
@@ -1560,6 +1598,8 @@ const formatDate = (dateStr: string) => {
 
 // 暴露创建方法供外部调用
 const openCreateModal = () => {
+  // 000102：菜单事件等外部入口也过创建权限门（普通用户置灰按钮 + 后端 403）
+  if (!canCreateAgent.value) return
   editingAgent.value = null
   editorMode.value = 'create'
   editorInitialSection.value = 'basic'
@@ -1567,8 +1607,61 @@ const openCreateModal = () => {
   editorVisible.value = true
 }
 
+// 000102：普通用户不能创建智能体——按钮保持可见但置灰，悬停提示联系
+// 空间管理员并列出名单。角色体系里 contributor 就是 UI 上的「普通用户」
+// （zh-CN: roleLabel.contributor = '普通用户'），所以门槛是 admin：只有
+// 空间管理员/所有者能创建。与后端 POST /agents 的 Admin+ 门对齐。
+const canCreateAgent = computed(() => authStore.hasRole('admin'))
+
+const tenantAdminNames = ref<string[]>([])
+const tenantAdminNamesLoaded = ref(false)
+
+// listMembers 是 Viewer+（GET /tenants/:id/members），普通用户拉得到；
+// 拿不到名单（接口异常 / 无管理员）时退回不带名字的占位文案。
+// 注意 page_size 上限 100（超出直接 400 被吞掉，tooltip 会误报「暂无」），
+// 超过一页时循环拉全量。
+const fetchTenantAdminNames = async () => {
+  if (tenantAdminNamesLoaded.value) return
+  const tenantId = Number(authStore.currentTenantId ?? 0)
+  if (!tenantId) return
+  try {
+    const pageSize = 100
+    const names = new Set<string>()
+    // 50 页（5000 成员）封顶，异常大的空间按已拉到的算，不无限翻页。
+    for (let page = 1; page <= 50; page++) {
+      const resp = await listMembers(tenantId, { page, page_size: pageSize })
+      const members = resp.data?.members || []
+      members.forEach(m => {
+        if ((m.role === 'admin' || m.role === 'owner') && (m.status ?? 'active') === 'active') {
+          const name = m.username || m.email
+          if (name) names.add(name)
+        }
+      })
+      const total = resp.data?.total ?? members.length
+      if (page * pageSize >= total) break
+    }
+    tenantAdminNames.value = [...names]
+    tenantAdminNamesLoaded.value = true
+  } catch {
+    tenantAdminNames.value = []
+  }
+}
+
+// 成员身份可能在页面挂载后才水合完成（currentTenantId 初始为空）：
+// 租户 ID 一旦就绪且仍缺名单就补拉一次，避免 tooltip 停在「暂无」。
+watch(() => authStore.currentTenantId, (id) => {
+  if (id && !canCreateAgent.value) void fetchTenantAdminNames()
+})
+
+const createDeniedTooltip = computed(() =>
+  t('agent.createDeniedHint', {
+    admins: tenantAdminNames.value.join('、') || t('agent.createDeniedNoAdmin'),
+  })
+)
+
 // 创建智能体
 const handleCreateAgent = () => {
+  if (!canCreateAgent.value) return
   if (!isReadyForAgent.value) {
     MessagePlugin.warning(t('contextualGuide.tenantModels.needChatModelFirst'))
     uiStore.openSettings('models')
@@ -1681,6 +1774,21 @@ defineExpose({
     color: var(--td-text-color-anti) !important;
   }
 
+  // 000102：普通用户置灰——渐变背景被 !important 钉死，需显式压掉 hover 态。
+  &.t-is-disabled,
+  &.t-is-disabled:hover,
+  &.t-is-disabled:active,
+  &.t-is-disabled:focus {
+    background: var(--td-bg-color-secondarycontainer) !important;
+    border: none !important;
+    color: var(--td-text-color-disabled) !important;
+    cursor: not-allowed;
+
+    &::before {
+      display: none;
+    }
+  }
+
   --td-button-primary-bg-color: #667eea !important;
   --td-button-primary-border-color: #667eea !important;
   --td-button-primary-active-bg-color: #5a6fd6 !important;
@@ -1740,26 +1848,52 @@ defineExpose({
   line-height: 20px;
 }
 
+// 创建智能体：图标 + 文字的自适应宽度按钮（不再是 28px 方块）
+// .create-btn-wrap：tooltip 的触发器——原生 disabled 按钮在部分浏览器
+// （Firefox 等）不派发 hover 事件，套一层 span 保证置灰态也能出提示。
+.create-btn-wrap {
+  display: inline-flex;
+  align-items: center;
+}
+
 .header-action-btn {
-  padding: 0 !important;
-  min-width: 28px !important;
-  width: 28px !important;
-  height: 28px !important;
+  padding: 0 14px 0 10px !important;
+  min-width: 0 !important;
+  width: auto !important;
+  height: 30px !important;
+  gap: 6px;
   display: inline-flex !important;
   align-items: center !important;
   justify-content: center !important;
+  white-space: nowrap;
   background: var(--td-bg-color-secondarycontainer) !important;
   border: 1px solid var(--td-component-stroke) !important;
   border-radius: 6px !important;
   color: var(--td-text-color-secondary);
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--td-bg-color-container) 72%, transparent);
   transition: background 0.2s, border-color 0.2s, color 0.2s;
 
-  &:hover {
+  &:not(.t-is-disabled):hover {
+    background: var(--td-brand-color-light) !important;
+    border-color: var(--td-brand-color-light) !important;
+    color: var(--td-brand-color);
+  }
+
+  // 000102：普通用户置灰态——背景已被 !important 钉死，TDesign 自带的
+  // disabled 变量压不住，这里显式压一层「不可点」观感。
+  &.t-is-disabled {
     background: var(--td-bg-color-secondarycontainer) !important;
     border-color: var(--td-component-stroke) !important;
-    color: var(--td-text-color-primary);
+    color: var(--td-text-color-disabled) !important;
+    cursor: not-allowed;
+
+    :deep(.t-icon),
+    :deep(.btn-icon-wrapper) {
+      color: var(--td-text-color-disabled);
+    }
   }
 
   :deep(.t-button__icon) {
@@ -2344,6 +2478,15 @@ defineExpose({
 
     &:hover {
       background: rgba(236, 72, 153, 0.12);
+    }
+  }
+
+  &.skills {
+    background: rgba(13, 180, 185, 0.08);
+    color: #0d92b0;
+
+    &:hover {
+      background: rgba(13, 180, 185, 0.12);
     }
   }
 

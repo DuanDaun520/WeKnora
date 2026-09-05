@@ -318,6 +318,26 @@ const canMutateKnowledge = computed(() => {
   return authStore.hasRole('contributor');
 });
 
+// 000099 共同维护：KB 管理者（创建者/管理员/共享授权）之外，本空间
+// Contributor+ 在打开了 allow_member_contribute 的 KB 里也可添加知识。
+// 后端对应 KBCoMaintainOrAdmin 守卫；跨空间共享（isViaShare）不适用。
+const canContributeKnowledge = computed(() => {
+  if (canEdit.value) return true;
+  if (isViaShare.value) return false;
+  if (!kbInfo.value) return false;
+  return !!(kbInfo.value as any).allow_member_contribute && authStore.hasRole('contributor');
+});
+
+// 000099 共同维护：成员在开放维护的 KB 里只能删改自己创建的条目
+// （后端 OwnedKnowledgeItemOrAdmin 守卫同一矩阵；creator_id 为空的
+// 历史条目不匹配成员路径）。
+const canMutateItem = (item: any): boolean => {
+  if (canEdit.value) return true;
+  if (!canContributeKnowledge.value) return false;
+  const uid = authStore.user?.id || '';
+  return !!(uid && item?.creator_id && item.creator_id === uid);
+};
+
 // Effective permission: from direct org share list or from GET /knowledge-bases/:id (e.g. agent-visible KB)
 const effectiveKBPermission = computed(() => orgStore.getKBPermission(kbId.value) || kbInfo.value?.my_permission || '');
 
@@ -2574,10 +2594,11 @@ async function createNewSession(value: string): Promise<void> {
                       </button>
                     </t-tooltip>
                   </div>
-                  <div v-if="canEdit" class="doc-filter-actions">
+                  <!-- 000099：成员在开放共同维护的 KB 也能添加知识；按钮渲染为「图标+文字」。 -->
+                  <div v-if="canContributeKnowledge" class="doc-filter-actions">
                     <KbUploadSourceDropdown ref="uploadSourceRef" :accept-file-types="acceptFileTypes"
                       :supported-file-types="[...supportedFileTypes]" include-manual trigger-icon="file-add"
-                      trigger-class="content-bar-icon-btn" data-guide="kb-detail-add-doc"
+                      trigger-class="content-bar-icon-btn" data-guide="kb-detail-add-doc" :label="t('knowledgeBase.addDocument')"
                       :tooltip="t('knowledgeBase.addDocument')" placement="bottom-right" @files="handleUploadSourceFiles"
                       @url="handleUploadSourceUrl" @manual="handleManualCreate" />
                   </div>
@@ -2617,6 +2638,7 @@ async function createNewSession(value: string): Promise<void> {
                     :can-edit="canEdit"
                     :can-download="canDownloadKnowledge"
                     :can-mutate-knowledge="canMutateKnowledge"
+                    :can-mutate-item="canMutateItem"
                     :trace-available-by-id="traceAvailableById"
                     :tag-list="tagList"
                     :move-menu-mode="moveMenuMode"
@@ -2643,6 +2665,7 @@ async function createNewSession(value: string): Promise<void> {
                   <DocumentListView :items="cardList" :folders="currentChildFolders" :folder-options="folderOptions"
                     :selected-ids="selectedIds" :tag-list="tagList"
                     :can-edit="canEdit" :can-download="canDownloadKnowledge" :can-mutate-knowledge="canMutateKnowledge"
+                    :can-mutate-item="canMutateItem"
                     :trace-visible-ids="traceAvailableById"
                     :move-menu-mode="moveMenuMode"
                     :move-target-kbs="moveTargetKbs"
@@ -2688,7 +2711,9 @@ async function createNewSession(value: string): Promise<void> {
       </template>
 
       <!-- DocContent drawer (shared by documents tab and wiki source refs) -->
-      <DocContent ref="docContentRef" :visible="isCardDetails" :details="details" :canEditKB="canEdit"
+      <!-- 000099：成员在开放维护的 KB 里，自己创建的文档详情页也放开编辑（canMutateItem）。 -->
+      <DocContent ref="docContentRef" :visible="isCardDetails" :details="details"
+        :canEditKB="canEdit || canMutateItem(details)"
         :canDownloadKB="canDownloadKnowledge" :kbId="kbId"
         @closeDoc="closeDoc" @getDoc="getDoc" @summaryStateChange="syncDocumentSummaryState">
       </DocContent>
