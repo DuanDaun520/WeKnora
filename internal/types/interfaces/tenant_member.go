@@ -68,4 +68,9 @@ type TenantMemberRepository interface {
 	// RemoveOwnerAtomically soft-deletes an Owner row under the same
 	// lock as DemoteOwnerAtomically.
 	RemoveOwnerAtomically(ctx context.Context, userID string, tenantID uint64) error
+
+	// MemberWorkspaceStats counts the member's tenant-scoped footprint
+	// (uploaded knowledge, chat sessions). Serves the tenant-admin member
+	// management 统计 action (000101).
+	MemberWorkspaceStats(ctx context.Context, tenantID uint64, userID string) (*types.MemberStats, error)
 }

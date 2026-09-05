@@ -59,9 +59,10 @@
           <t-icon name="user" class="menu-icon" />
           <span>{{ $t('settings.personalWorkspaceSettings') }}</span>
         </div>
-        <!-- “管理”类快捷入口只对真正具备写权限的人展示。只读名册和模型列表
-             仍可从「全部设置」进入，避免 viewer 看到名不副实的管理入口。 -->
-        <div v-if="canManageMembers" class="menu-item" @click="handleQuickNav('members')">
+        <!-- “管理”类快捷入口只对真正具备写权限的人展示。000101 起成员管理
+             从 Settings 拆成独立弹窗，直接经 uiStore 打开，不再走路由深链；
+             「成员行为日志」入口在成员管理弹窗右上角。 -->
+        <div v-if="canManageMembers" class="menu-item" @click="openMemberManage">
           <t-icon name="usergroup" class="menu-icon" />
           <span>{{ $t('tenantMember.title') }}</span>
         </div>
@@ -248,6 +249,13 @@ const handleQuickNav = (section: string) => {
   menuVisible.value = false
   uiStore.openSettings()
   router.push({ path: '/platform/settings', query: { section } })
+}
+
+// 成员管理（000101）：独立弹窗，不占用 Settings 路由。
+// 成员行为日志入口在成员管理弹窗右上角，不再单独占菜单项。
+const openMemberManage = () => {
+  menuVisible.value = false
+  uiStore.openMemberManage()
 }
 
 // Open the platform administration group inside the standard Settings

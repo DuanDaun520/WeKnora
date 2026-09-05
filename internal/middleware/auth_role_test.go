@@ -138,6 +138,12 @@ func (f *fakeMemberService) UpdateRole(
 func (f *fakeMemberService) RemoveMember(ctx context.Context, userID string, tenantID uint64) error {
 	return nil
 }
+func (f *fakeMemberService) ResetMemberPassword(ctx context.Context, tenantID uint64, targetUserID string) (string, error) {
+	return "", nil
+}
+func (f *fakeMemberService) GetMemberStats(ctx context.Context, tenantID uint64, userID string) (*types.MemberStats, error) {
+	return &types.MemberStats{}, nil
+}
 
 var _ interfaces.TenantMemberService = (*fakeMemberService)(nil)
 

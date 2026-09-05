@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
@@ -190,6 +191,17 @@ func (r *userRepository) UpdateUser(ctx context.Context, user *types.User) error
 		})
 	}
 	return r.db.WithContext(ctx).Save(user).Error
+}
+
+// UpdateLastLoginAt stamps users.last_login_at for a successful login
+// (000101). Single-column UPDATE on purpose: the login path must not
+// whole-row Save and race concurrent preference writes. Soft-deleted rows
+// are excluded by gorm's default scope; a miss is not an error.
+func (r *userRepository) UpdateLastLoginAt(ctx context.Context, userID string, at time.Time) error {
+	return r.db.WithContext(ctx).
+		Model(&types.User{}).
+		Where("id = ?", userID).
+		UpdateColumn("last_login_at", at).Error
 }
 
 // DeleteUser deletes a user

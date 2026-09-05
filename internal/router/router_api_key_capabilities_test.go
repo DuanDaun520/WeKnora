@@ -474,6 +474,11 @@ func TestTenantMemberRoutesDeclareManageMembersCapability(t *testing.T) {
 		path   string
 	}{
 		{http.MethodGet, "/api/v1/tenants/:id/members"},
+		// 000101 空间管理员成员管理弹窗重开的面（manage_members 能力）。
+		{http.MethodPost, "/api/v1/tenants/:id/members"},
+		{http.MethodDelete, "/api/v1/tenants/:id/members/:user_id"},
+		{http.MethodPost, "/api/v1/tenants/:id/members/:user_id/reset-password"},
+		{http.MethodGet, "/api/v1/tenants/:id/members/:user_id/stats"},
 	}
 
 	for _, tc := range cases {
@@ -488,15 +493,13 @@ func TestTenantMemberRoutesDeclareManageMembersCapability(t *testing.T) {
 		})
 	}
 
-	// Mutation routes (add/re-role/remove member, leave, invitations) were
-	// deleted with the enterprise rework — none may resurface for API keys.
+	// Re-roling, self-leave and the invitation flow stayed deleted with the
+	// enterprise rework — none of these may resurface for API keys.
 	for _, gone := range []struct {
 		method string
 		path   string
 	}{
-		{http.MethodPost, "/api/v1/tenants/:id/members"},
 		{http.MethodPut, "/api/v1/tenants/:id/members/:user_id"},
-		{http.MethodDelete, "/api/v1/tenants/:id/members/:user_id"},
 		{http.MethodPost, "/api/v1/tenants/:id/leave"},
 		{http.MethodGet, "/api/v1/tenants/:id/invitations"},
 		{http.MethodPost, "/api/v1/tenants/:id/invite-links"},

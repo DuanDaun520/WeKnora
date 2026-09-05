@@ -137,4 +137,16 @@ type TenantMemberResponse struct {
 	Status     TenantMemberStatus `json:"status"`
 	InvitedBy  *string            `json:"invited_by,omitempty"`
 	JoinedAt   time.Time          `json:"joined_at"`
+	// LastLoginAt is hydrated from users.last_login_at (000101). NULL ⇒ the
+	// member has never logged in since the column existed — the member
+	// management UI renders "-" and keeps the 邀请 affordance enabled.
+	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
+}
+
+// MemberStats is the per-member workspace activity summary served by
+// GET /tenants/:id/members/:user_id/stats. Counts are tenant-scoped so a
+// user active in several workspaces only sees this space's numbers.
+type MemberStats struct {
+	KnowledgeCount int64 `json:"knowledge_count"`
+	SessionCount   int64 `json:"session_count"`
 }

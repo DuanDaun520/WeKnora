@@ -32,10 +32,13 @@ function isBareIntegrationTab(section: string): section is IntegrationTab {
 /**
  * Section keys that no longer exist but still appear in old bookmarks and
  * openSettings calls. `skills` is the pre-000095 workspace key, kept as an
- * alias for the read-only skill catalog that moved back in 000099.
+ * alias for the read-only skill catalog that moved back in 000099. `members`
+ * left Settings entirely in 000101 (standalone 成员管理 dialog via the
+ * avatar menu), so its old deep-links fall back to the general page.
  */
 const SETTINGS_SECTION_ALIASES: Record<string, string> = {
   skills: 'skill-catalog',
+  members: 'general',
 }
 
 /**

@@ -114,10 +114,18 @@ func RegisterTenantRoutes(
 
 			// 成员名册只读（PR 3 of #1303 保留的列表面）。企业化改造后
 			// 用户与空间的绑定统一由系统管理员经
-			// /system/admin/users/:user_id/bindings 配置，加人/改角色/
-			// 踢人/自助退出不再经空间内路由开放。
+			// /system/admin/users/:user_id/bindings 配置；000101 成员管理
+			// 弹窗为空间管理员重开了一个收窄的管理面（加人/重置密码/
+			// 移出/统计），角色调整与自助退出仍不开放。
 			if memberHandler != nil {
 				g.apiKeyRoute(tenantByID, http.MethodGet, "/members", apiKeyManageMembers(apiKeyFullAccess()), g.Viewer(), memberHandler.ListMembers)
+				// 000101 空间管理员成员管理：Admin+（PathTenantMatch 已在
+				// 组级保证 :id 即调用者所在空间）；API-key 侧沿用
+				// manage_members 能力（全量 key 或受权 key）。
+				g.apiKeyRoute(tenantByID, http.MethodPost, "/members", apiKeyManageMembers(apiKeyFullAccess()), g.Admin(), memberHandler.AddTenantMember)
+				g.apiKeyRoute(tenantByID, http.MethodDelete, "/members/:user_id", apiKeyManageMembers(apiKeyFullAccess()), g.Admin(), memberHandler.RemoveTenantMember)
+				g.apiKeyRoute(tenantByID, http.MethodPost, "/members/:user_id/reset-password", apiKeyManageMembers(apiKeyFullAccess()), g.Admin(), memberHandler.ResetTenantMemberPassword)
+				g.apiKeyRoute(tenantByID, http.MethodGet, "/members/:user_id/stats", apiKeyManageMembers(apiKeyFullAccess()), g.Admin(), memberHandler.GetTenantMemberStats)
 			}
 
 			// Audit log feed (PR 6 of #1303). Admin+ so denied-action

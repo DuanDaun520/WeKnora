@@ -10,6 +10,7 @@ export type AuditAction =
   | 'rbac.member_removed'
   | 'rbac.member_role_changed'
   | 'rbac.member_left'
+  | 'rbac.member_password_reset'
   | 'rbac.access_denied'
   | string // forward-compat: future namespaces shouldn't break the type
 
@@ -42,6 +43,9 @@ export interface ListAuditLogResponse {
   success: boolean
   data?: AuditLog[]
   next_cursor?: number
+  // actor_user_id → 姓名（后端按页批量解析，用户名缺失时用工号）。
+  // 覆盖已移出空间/已停用的账号，让操作人列始终有名字；解析不到时省略。
+  actor_names?: Record<string, string>
   message?: string
 }
 

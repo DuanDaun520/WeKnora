@@ -70,6 +70,12 @@ test('the pre-000095 skills key aliases to the read-only skill catalog', () => {
   )
 })
 
+test('the pre-000101 members key falls back to the general settings page', () => {
+  // 000101：成员管理拆出 Settings（独立弹窗，UserMenu → uiStore 直开），
+  // 旧深链 ?section=members 归一化到 general，不再渲染已删除的 section。
+  assert.equal(normalizeSettingsSection('members'), 'general')
+})
+
 test('canonical settings query skips a redundant replace', () => {
   assert.equal(
     settingsQueryUnchanged(

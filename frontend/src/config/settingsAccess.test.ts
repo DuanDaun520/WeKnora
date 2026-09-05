@@ -8,9 +8,12 @@ import {
 } from './settingsAccess'
 
 test('management shortcuts are stricter than read-only settings pages', () => {
-  assert.equal(SETTINGS_SECTION_MIN_ROLE.members, 'viewer')
-  // 两级空间角色后成员名单的快捷入口对空间管理员开放（owner 已随
-  // 000092/000093 角色扁平化退出企业版）。
+  // 000101：成员管理拆出 Settings 成独立弹窗（UserMenu 入口），
+  // section 表不再持有 members；头像菜单快捷入口阈值保留 admin。
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(SETTINGS_SECTION_MIN_ROLE, 'members'),
+    false,
+  )
   assert.equal(SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE.members, 'admin')
   // 模型 / Ollama / WeKnoraCloud 设置已迁入系统管理控制台（000094
   // 模型平台化），websearch / vectorstore / parser / storage / sandbox /

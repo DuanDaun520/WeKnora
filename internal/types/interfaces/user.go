@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"context"
+	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
 )
@@ -130,6 +131,10 @@ type UserRepository interface {
 	GetUserByTenantID(ctx context.Context, tenantID uint64) (*types.User, error)
 	// UpdateUser updates a user
 	UpdateUser(ctx context.Context, user *types.User) error
+	// UpdateLastLoginAt stamps users.last_login_at for a successful login.
+	// Single-column UPDATE so the login path never races whole-row
+	// preference writes; failures are the caller's to log, not act on.
+	UpdateLastLoginAt(ctx context.Context, userID string, at time.Time) error
 	// DeleteUser deletes a user
 	DeleteUser(ctx context.Context, id string) error
 	// ListUsers lists users with pagination

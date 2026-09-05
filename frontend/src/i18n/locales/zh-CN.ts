@@ -147,14 +147,15 @@ export default {
       },
       outcome: {
         success: '成功',
-        denied: '拒绝'
+        denied: '未通过'
       },
       action: {
-        'rbac.member_added': '新增成员',
-        'rbac.member_removed': '移除成员',
-        'rbac.member_role_changed': '角色变更',
-        'rbac.member_left': '成员退出',
-        'rbac.access_denied': '访问被拒',
+        'rbac.member_added': '添加了成员',
+        'rbac.member_removed': '将成员移出了空间',
+        'rbac.member_role_changed': '调整了成员角色',
+        'rbac.member_left': '退出了空间',
+        'rbac.member_password_reset': '重置了成员密码',
+        'rbac.access_denied': '尝试使用未开通的功能',
         'rbac.invitation_sent': '发出邀请',
         'rbac.invitation_accepted': '接受邀请',
         'rbac.invitation_declined': '拒绝邀请',
@@ -223,6 +224,108 @@ export default {
       manageInfra: '配置模型 / 向量库 / IM 通道',
       createOwnKB: '创建并编辑自己的知识库和智能体',
       readAll: '查看空间内容'
+    }
+  },
+  memberManage: {
+    title: '成员管理',
+    description: '添加成员账号、重置密码、发送邀请信息，或把成员移出本空间。',
+    searchPlaceholder: '按工号或姓名搜索',
+    loading: '正在加载成员…',
+    retry: '重试',
+    empty: '还没有成员。点击右上角「添加成员」创建第一个成员账号。',
+    emptySearch: '没有匹配 "{q}" 的成员。',
+    lastLoginNever: '-',
+    roleManager: '空间管理员',
+    roleMember: '成员',
+    columns: {
+      employeeId: '工号',
+      name: '姓名',
+      role: '角色',
+      joinedAt: '添加时间',
+      lastLoginAt: '最后登录',
+      operations: '操作'
+    },
+    ops: {
+      resetPassword: '重置密码',
+      invite: '邀请',
+      stats: '统计',
+      remove: '移出空间'
+    },
+    add: {
+      button: '添加成员',
+      title: '添加成员',
+      employeeIdLabel: '工号',
+      employeeIdPlaceholder: '请输入登录工号',
+      employeeIdRequired: '请输入工号',
+      usernameLabel: '姓名',
+      usernamePlaceholder: '请输入姓名',
+      usernameRequired: '请输入姓名',
+      passwordHint: '新成员的初始密码为 abc1234#，首次登录后需修改密码。如该工号已有平台账号，则直接加入本空间，密码不变。',
+      submit: '添加',
+      submitting: '正在添加…',
+      resultTitle: '成员已添加',
+      resultBody: '{name}（{employeeId}）已加入本空间。',
+      copyInvite: '复制邀请信息',
+      successBound: '该工号已有平台账号，已直接加入本空间',
+      failed: '添加成员失败'
+    },
+    passwordResultHint: '密码仅展示这一次，请立即复制并告知成员。',
+    reset: {
+      confirmTitle: '重置密码',
+      confirmBody: '确定为 {name}（{employeeId}）重置密码吗？原密码立即失效，对方会退出当前登录。',
+      resultTitle: '密码已重置',
+      selfForbidden: '不能重置自己的密码，请在个人设置中修改密码。',
+      failed: '重置密码失败'
+    },
+    invite: {
+      copied: '邀请信息已复制，请发给对方',
+      copyFailed: '复制失败，请手动记录',
+      textTitle: '【知枢】邀请您加入知识空间「{tenant}」',
+      textIntro: '知枢，一款内部知识库+Skills 的智能体平台。',
+      textSite: '登录网址：{url}',
+      textEmployeeId: '登录工号：{employeeId}',
+      textName: '姓名：{name}',
+      textPassword: '初始密码：abc1234#（如管理员已重置密码，请使用重置后的密码）',
+      textFooter: '首次登录后请及时修改密码。'
+    },
+    stats: {
+      title: '成员统计',
+      knowledge: '上传过的知识',
+      sessions: '访问过的会话',
+      loadFailed: '统计加载失败'
+    },
+    remove: {
+      confirmTitle: '移出空间',
+      confirmBody: '确定要将 {name}（{employeeId}）移出本空间吗？对方将立即失去本空间的访问权限。',
+      success: '已移出空间',
+      adminProtected: '此是空间管理员，需要系统管理员才可以移出',
+      failed: '移出空间失败'
+    },
+    errors: {
+      generic: '操作失败，请稍后重试。'
+    }
+  },
+  memberAudit: {
+    title: '成员行为日志',
+    description: '记录本空间里与成员相关的操作，按时间倒序排列。一分钟内重复的记录会自动合并。',
+    refresh: '刷新',
+    loading: '正在加载…',
+    end: '已经到底了。',
+    empty: '暂无记录。',
+    loadFailed: '加载行为日志失败',
+    forbidden: '无权查看成员行为日志。',
+    systemActor: '系统',
+    loginDenied: '疑似登录时密码错误',
+    otherDenied: '尝试使用未开通的功能，或登录状态已过期',
+    columns: {
+      time: '时间',
+      actor: '操作人',
+      action: '事件',
+      outcome: '结果'
+    },
+    outcome: {
+      success: '成功',
+      denied: '未通过'
     }
   },
   userProfile: {

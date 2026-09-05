@@ -10,6 +10,7 @@ export type TenantMemberStatus = 'active' | 'invited' | 'suspended'
 // already joined with the user's email/username/avatar by the backend.
 export interface TenantMember {
   user_id: string
+  employee_id: string
   email: string
   username: string
   avatar?: string
@@ -17,6 +18,8 @@ export interface TenantMember {
   status: TenantMemberStatus
   invited_by?: string | null
   joined_at: string
+  /** 最后登录时间；null = 从未登录（历史账号在下次登录前保持 null）。 */
+  last_login_at?: string | null
 }
 
 export interface ListMembersResponse {
@@ -48,19 +51,49 @@ function buildMembersQuery(params: ListMembersParams | undefined): string {
   return qs ? `?${qs}` : ''
 }
 
-export interface AddMemberRequest {
-  email: string
-  role: TenantRole
-}
-
-export interface AddMemberResponse {
+export interface SimpleResponse {
   success: boolean
-  data?: TenantMember
   message?: string
 }
 
-export interface SimpleResponse {
+// 000101 空间管理员添加成员：工号 + 姓名（+可选密码）。已有平台账号的
+// 工号直接绑定为普通成员（created=false），否则创建新账号（默认密码
+// abc1234# 由后端补齐并在响应里原样返回一次，供弹窗一次性展示）。
+export interface AddTenantMemberRequest {
+  employee_id: string
+  username: string
+  password?: string
+}
+
+export interface AddTenantMemberResponse {
   success: boolean
+  data?: {
+    member: TenantMember
+    created: boolean
+    password: string
+  }
+  message?: string
+}
+
+export interface ResetMemberPasswordResponse {
+  success: boolean
+  data?: {
+    /** 随机 8 位数字新密码，仅本次返回；成员下次登录须改密。 */
+    new_password: string
+  }
+  message?: string
+}
+
+export interface MemberStats {
+  /** 该成员在本空间上传的知识数量（未删除）。 */
+  knowledge_count: number
+  /** 该成员在本空间参与过的会话次数（未删除）。 */
+  session_count: number
+}
+
+export interface MemberStatsResponse {
+  success: boolean
+  data?: MemberStats
   message?: string
 }
 
@@ -101,18 +134,45 @@ export async function fetchAllTenantMembers(tenantId: number): Promise<TenantMem
 }
 
 /**
- * Invite an existing user (by email) to the tenant with the given role.
- * Backend: POST /api/v1/tenants/:id/members (Owner+).
+ * 添加成员（000101 空间管理员弹窗）。
+ * Backend: POST /api/v1/tenants/:id/members (Admin+)。
  *
- * Returns 404 when the email does not match any registered user — the
- * caller should ask the invitee to register first. PR 3 does not yet
- * support email-based invites for users who don't have an account.
+ * 工号已存在平台账号 → 直接绑定为普通成员（created=false）；否则创建
+ * 新账号，默认密码 abc1234#（可经 body.password 覆盖），首次登录须改密。
+ * 400：工号已存在但请求带了不同姓名 / 该用户已是本空间成员 / 账号已停用。
  */
-export async function addMember(
+export async function addTenantMember(
   tenantId: number,
-  body: AddMemberRequest,
-): Promise<AddMemberResponse> {
-  return (await post(`/api/v1/tenants/${tenantId}/members`, body)) as unknown as AddMemberResponse
+  body: AddTenantMemberRequest,
+): Promise<AddTenantMemberResponse> {
+  return (await post(`/api/v1/tenants/${tenantId}/members`, body)) as unknown as AddTenantMemberResponse
+}
+
+/**
+ * 将成员密码重置为随机 8 位数字并吊销其会话。
+ * Backend: POST /api/v1/tenants/:id/members/:user_id/reset-password (Admin+)。
+ * 新密码仅本次响应返回；成员下次登录会被要求改成符合策略的密码。
+ */
+export async function resetMemberPassword(
+  tenantId: number,
+  userId: string,
+): Promise<ResetMemberPasswordResponse> {
+  return (await post(
+    `/api/v1/tenants/${tenantId}/members/${userId}/reset-password`,
+  )) as unknown as ResetMemberPasswordResponse
+}
+
+/**
+ * 成员在本空间的用量统计（上传知识数 / 参与会话数）。
+ * Backend: GET /api/v1/tenants/:id/members/:user_id/stats (Admin+)。
+ */
+export async function getMemberStats(
+  tenantId: number,
+  userId: string,
+): Promise<MemberStatsResponse> {
+  return (await get(
+    `/api/v1/tenants/${tenantId}/members/${userId}/stats`,
+  )) as unknown as MemberStatsResponse
 }
 
 /**
@@ -130,10 +190,11 @@ export async function updateMemberRole(
 }
 
 /**
- * Remove a member from the tenant.
- * Backend: DELETE /api/v1/tenants/:id/members/:user_id (Owner+).
+ * Remove a member from the tenant (移出空间).
+ * Backend: DELETE /api/v1/tenants/:id/members/:user_id (Admin+)。
  *
- * Returns 409 when this would remove the last active Owner.
+ * 403 when the target is the caller themselves or another workspace
+ * admin — those need the system admin (unbind via /system/admin).
  */
 export async function removeMember(
   tenantId: number,

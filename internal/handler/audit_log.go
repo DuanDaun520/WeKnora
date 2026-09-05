@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -19,11 +21,15 @@ import (
 // to ordinary members.
 type AuditLogHandler struct {
 	auditService interfaces.AuditLogService
+	userService  interfaces.UserService
 }
 
-// NewAuditLogHandler constructs the handler.
-func NewAuditLogHandler(auditService interfaces.AuditLogService) *AuditLogHandler {
-	return &AuditLogHandler{auditService: auditService}
+// NewAuditLogHandler constructs the handler. userService backs the
+// best-effort actor_names enrichment (000101 成员行为日志：操作人列必须
+// 有名字，即使操作者已被移出空间/停用)；nil keeps the envelope lean
+// (unit tests construct the handler without a user service).
+func NewAuditLogHandler(auditService interfaces.AuditLogService, userService interfaces.UserService) *AuditLogHandler {
+	return &AuditLogHandler{auditService: auditService, userService: userService}
 }
 
 // auditLogListResponse is the response envelope for ListTenantAuditLog. The
@@ -32,6 +38,56 @@ type auditLogListResponse struct {
 	Success    bool              `json:"success"`
 	Data       []*types.AuditLog `json:"data"`
 	NextCursor uint64            `json:"next_cursor"`
+	// ActorNames maps actor_user_id → display name (username, falling back
+	// to employee id) for the actors on this page. Omitted when nothing
+	// could be resolved. The member-behaviour dialog merges this over its
+	// roster lookup so removed/deactivated users still render a name
+	// instead of a bare user id.
+	ActorNames map[string]string `json:"actor_names,omitempty"`
+}
+
+// actorNamesFor batch-resolves the actor ids of one page into display
+// names. Best-effort: a nil userService (tests) or a lookup failure just
+// yields nil, and the frontend falls back to its roster map.
+func (h *AuditLogHandler) actorNamesFor(ctx context.Context, entries []*types.AuditLog) map[string]string {
+	if h.userService == nil || len(entries) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(entries))
+	ids := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e == nil || e.ActorUserID == "" {
+			continue
+		}
+		if _, dup := seen[e.ActorUserID]; dup {
+			continue
+		}
+		seen[e.ActorUserID] = struct{}{}
+		ids = append(ids, e.ActorUserID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	users, err := h.userService.GetUsersByIDs(ctx, ids)
+	if err != nil {
+		logger.Warnf(ctx, "audit log actor name lookup failed: %v", err)
+		return nil
+	}
+	names := make(map[string]string, len(users))
+	for id, u := range users {
+		if u == nil {
+			continue
+		}
+		if name := strings.TrimSpace(u.Username); name != "" {
+			names[id] = name
+		} else if emp := strings.TrimSpace(u.EmployeeID); emp != "" {
+			names[id] = emp
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return names
 }
 
 // ListTenantAuditLog godoc
@@ -103,6 +159,7 @@ func (h *AuditLogHandler) ListTenantAuditLog(c *gin.Context) {
 		Success:    true,
 		Data:       entries,
 		NextCursor: nextCursor,
+		ActorNames: h.actorNamesFor(ctx, entries),
 	})
 }
 
@@ -166,6 +223,7 @@ func (h *AuditLogHandler) ListKnowledgeBaseActivity(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, auditLogListResponse{
 		Success: true, Data: entries, NextCursor: nextCursor,
+		ActorNames: h.actorNamesFor(ctx, entries),
 	})
 }
 
@@ -253,5 +311,6 @@ func (h *AuditLogHandler) ListSystemAuditLog(c *gin.Context) {
 		Success:    true,
 		Data:       entries,
 		NextCursor: nextCursor,
+		ActorNames: h.actorNamesFor(ctx, entries),
 	})
 }

@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 )
 
@@ -492,4 +495,124 @@ func (s *tenantMemberService) emitRemovalAudit(
 		TargetUserID: targetUserID,
 		Outcome:      types.AuditOutcomeSuccess,
 	})
+}
+
+// memberPasswordResetDigits is the digit count of tenant-admin generated
+// reset passwords (000101: "重置为8位数字").
+const memberPasswordResetDigits = 8
+
+// ErrMemberUserMissing is returned by ResetMemberPassword when the
+// membership points at a user row that cannot be loaded (deleted user,
+// partial DI graph in tests). Handlers surface it as 404/500.
+var ErrMemberUserMissing = errors.New("member user record not found")
+
+// ResetMemberPassword replaces the target member's password with a random
+// 8-digit numeric password and returns it exactly once. The 8-digit code
+// satisfies the length-only ValidatePasswordPolicy; MustChangePassword=true
+// still forces a rotation at the next login, exactly like the system-admin
+// reset path (product requirement: admins hand out a short spoken-friendly
+// code). Sessions are revoked so a reset doubles as "log the member out
+// everywhere".
+func (s *tenantMemberService) ResetMemberPassword(
+	ctx context.Context,
+	tenantID uint64,
+	targetUserID string,
+) (string, error) {
+	if s.userRepo == nil {
+		return "", ErrMemberUserMissing
+	}
+	user, err := s.userRepo.GetUserByID(ctx, targetUserID)
+	if err != nil {
+		// Join keeps the underlying cause (typically gorm.ErrRecordNotFound)
+		// while still matching the sentinel the handler/test asserts on.
+		return "", errors.Join(ErrMemberUserMissing, err)
+	}
+	if user == nil {
+		return "", ErrMemberUserMissing
+	}
+
+	plain, err := generateNumericPassword(memberPasswordResetDigits)
+	if err != nil {
+		return "", err
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(plain), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	user.PasswordHash = string(hash)
+	user.MustChangePassword = true
+	user.UpdatedAt = time.Now()
+	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
+		return "", err
+	}
+
+	// Best-effort session revocation — mirrors AdminResetPassword: a user
+	// whose password was just rolled must not keep riding old tokens.
+	if s.tokenRepo != nil {
+		if err := s.tokenRepo.RevokeTokensByUserID(ctx, targetUserID); err != nil {
+			logger.Warnf(ctx,
+				"ResetMemberPassword: failed to revoke tokens for user %s tenant %d: %v",
+				targetUserID, tenantID, err)
+		}
+	}
+
+	details, _ := json.Marshal(map[string]any{
+		"generated_digits": memberPasswordResetDigits,
+	})
+	s.emitAudit(ctx, &types.AuditLog{
+		TenantID:     tenantID,
+		ActorUserID:  auditActor(ctx),
+		ActorRole:    auditActorRole(ctx),
+		Action:       types.AuditActionMemberPasswordReset,
+		TargetType:   "tenant_member",
+		TargetUserID: targetUserID,
+		Outcome:      types.AuditOutcomeSuccess,
+		Details:      types.JSON(details),
+	})
+	return plain, nil
+}
+
+// generateNumericPassword returns a cryptographically random string of
+// exactly n digits, biased to never start with 0 so the admin can read it
+// aloud without a leading-zero ambiguity (range 1000…-9999…).
+func generateNumericPassword(n int) (string, error) {
+	if n < 4 {
+		n = 4
+	}
+	buf := make([]byte, n)
+	// First digit: 1-9.
+	v, err := cryptoRandInt(9)
+	if err != nil {
+		return "", err
+	}
+	buf[0] = byte('1' + v)
+	for i := 1; i < n; i++ {
+		v, err := cryptoRandInt(10)
+		if err != nil {
+			return "", err
+		}
+		buf[i] = byte('0' + v)
+	}
+	return string(buf), nil
+}
+
+// cryptoRandInt returns a crypto/rand non-negative int below max.
+func cryptoRandInt(max int) (int, error) {
+	if max <= 0 {
+		return 0, errors.New("cryptoRandInt: max must be positive")
+	}
+	n, err := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(max)))
+	if err != nil {
+		return 0, err
+	}
+	return int(n.Int64()), nil
+}
+
+// GetMemberStats proxies the repository so handlers stay service-only.
+func (s *tenantMemberService) GetMemberStats(
+	ctx context.Context,
+	tenantID uint64,
+	userID string,
+) (*types.MemberStats, error) {
+	return s.repo.MemberWorkspaceStats(ctx, tenantID, userID)
 }

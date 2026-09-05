@@ -15,12 +15,13 @@ export const AUDIT_ACTION_I18N_ROOTS = {
   kbActivity: 'knowledgeEditor.activity.actions',
 } as const
 
-/** Workspace membership / invitation audit events (tenantMember drawer). */
+/** Workspace membership / invitation audit events (member audit modal). */
 export const TENANT_MEMBER_AUDIT_ACTIONS = [
   'rbac.member_added',
   'rbac.member_removed',
   'rbac.member_role_changed',
   'rbac.member_left',
+  'rbac.member_password_reset',
   'rbac.access_denied',
   'rbac.invitation_sent',
   'rbac.invitation_accepted',

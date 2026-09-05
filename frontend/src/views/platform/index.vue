@@ -9,6 +9,10 @@
         </div>
         <!-- 全局设置模态框，供所有 platform 子路由使用 -->
         <Settings />
+        <!-- 空间管理员成员管理 / 成员行为日志独立弹窗（000101；行为日志
+             入口在成员管理弹窗右上角） -->
+        <MemberManageModal />
+        <MemberAuditLogModal />
         <!-- 全局命令面板 (⌘K)，随 platform 路由存活 -->
         <GlobalCommandPalette />
         <!-- 带遮罩层的新手引导：首次进入自动开启，可从用户菜单顶部昵称旁帮助按钮重新打开 -->
@@ -21,6 +25,8 @@ import { ref, onMounted, onUnmounted, nextTick, provide, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router'
 import UploadMask from '@/components/upload-mask.vue'
 import Settings from '@/views/settings/Settings.vue'
+import MemberManageModal from '@/views/members/MemberManageModal.vue'
+import MemberAuditLogModal from '@/views/members/MemberAuditLogModal.vue'
 import GlobalCommandPalette from '@/components/GlobalCommandPalette.vue'
 import NewUserGuide from '@/components/NewUserGuide.vue'
 import { useCommandPaletteStore } from '@/stores/commandPalette'

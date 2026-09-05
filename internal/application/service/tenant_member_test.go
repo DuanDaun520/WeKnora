@@ -3,10 +3,13 @@ package service
 import (
 	"context"
 	"errors"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 
 	apprepo "github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
@@ -176,6 +179,10 @@ func (r *fakeTenantMemberRepo) CountActiveOwners(ctx context.Context, tenantID u
 	return n, nil
 }
 
+func (r *fakeTenantMemberRepo) MemberWorkspaceStats(ctx context.Context, tenantID uint64, userID string) (*types.MemberStats, error) {
+	return &types.MemberStats{}, nil
+}
+
 func (r *fakeTenantMemberRepo) HasAnyMembers(ctx context.Context, tenantID uint64) (bool, error) {
 	if r.failHasAny != nil {
 		return false, r.failHasAny
@@ -298,6 +305,7 @@ func (r *cleanupUserRepo) UpdateUser(_ context.Context, user *types.User) error 
 	r.users[user.ID] = &cp
 	return nil
 }
+func (r *cleanupUserRepo) UpdateLastLoginAt(context.Context, string, time.Time) error { return nil }
 func (r *cleanupUserRepo) DeleteUser(context.Context, string) error { return nil }
 func (r *cleanupUserRepo) ListUsers(context.Context, int, int) ([]*types.User, error) {
 	return nil, nil
@@ -400,6 +408,59 @@ func TestTenantMemberService_RemoveMember_RevokesTokensEvenWhenHomeUnchanged(t *
 	}
 	if len(tokenRepo.revoked) != 1 || tokenRepo.revoked[0] != "contrib" {
 		t.Fatalf("revoked users = %v, want [contrib]", tokenRepo.revoked)
+	}
+}
+
+func TestTenantMemberService_ResetMemberPassword_GeneratesEightDigitsAndRevokesTokens(t *testing.T) {
+	// 000101 空间管理员重置密码：8 位数字（无前导零）+ 强制下次登录改密 + 吊销会话。
+	// 纯数字明文不满足密码策略，这是刻意旁路：MustChangePassword=true 会在
+	// 下次登录时强制轮换为合规密码（与系统管理员重置同构）。
+	memberRepo := newFakeRepo()
+	hashed, err := bcrypt.GenerateFromPassword([]byte("OldSecure9"), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("hash old password: %v", err)
+	}
+	userRepo := &cleanupUserRepo{users: map[string]*types.User{
+		"contrib": {ID: "contrib", PasswordHash: string(hashed)},
+	}}
+	tokenRepo := &cleanupTokenRepo{}
+	svc := NewTenantMemberService(memberRepo, nil, userRepo, tokenRepo)
+	ctx := context.Background()
+
+	plain, err := svc.ResetMemberPassword(ctx, 7, "contrib")
+	if err != nil {
+		t.Fatalf("ResetMemberPassword: %v", err)
+	}
+	if !regexp.MustCompile(`^[1-9][0-9]{7}$`).MatchString(plain) {
+		t.Fatalf("returned password %q is not 8 digits without leading zero", plain)
+	}
+
+	got := userRepo.users["contrib"]
+	if got.MustChangePassword != true {
+		t.Fatal("MustChangePassword must be true after member password reset")
+	}
+	if got.PasswordHash == string(hashed) {
+		t.Fatal("password hash was not replaced")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(got.PasswordHash), []byte(plain)); err != nil {
+		t.Fatalf("stored hash does not match returned password: %v", err)
+	}
+	if len(tokenRepo.revoked) != 1 || tokenRepo.revoked[0] != "contrib" {
+		t.Fatalf("revoked users = %v, want [contrib]", tokenRepo.revoked)
+	}
+}
+
+func TestTenantMemberService_ResetMemberPassword_MissingUserFailsBeforeWrite(t *testing.T) {
+	memberRepo := newFakeRepo()
+	userRepo := &cleanupUserRepo{users: map[string]*types.User{}}
+	tokenRepo := &cleanupTokenRepo{}
+	svc := NewTenantMemberService(memberRepo, nil, userRepo, tokenRepo)
+
+	if _, err := svc.ResetMemberPassword(context.Background(), 7, "ghost"); !errors.Is(err, ErrMemberUserMissing) {
+		t.Fatalf("ResetMemberPassword(unknown user) err = %v, want ErrMemberUserMissing", err)
+	}
+	if len(tokenRepo.revoked) != 0 {
+		t.Fatalf("unknown user must not revoke tokens, got %v", tokenRepo.revoked)
 	}
 }
 

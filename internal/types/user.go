@@ -108,6 +108,12 @@ type User struct {
 	// Stored as JSON (jsonb on Postgres, TEXT on SQLite) via the
 	// driver.Valuer / sql.Scanner methods on UserPreferences.
 	Preferences UserPreferences `json:"preferences" gorm:"type:jsonb;not null;default:'{}'"`
+	// LastLoginAt records the most recent successful login (000101). NULL
+	// means the user has not logged in since the column was introduced —
+	// the member-management UI uses this to render 最后登录时间 "-” and to
+	// keep the 邀请 (invite) affordance enabled. Updated best-effort by the
+	// login path; a failed write never fails the login itself.
+	LastLoginAt *time.Time `json:"last_login_at,omitempty"`
 	// Creation time of the user
 	CreatedAt time.Time `json:"created_at"`
 	// Last updated time of the user
@@ -201,6 +207,7 @@ type UserInfo struct {
 	IsSystemAdmin       bool            `json:"is_system_admin"`
 	MustChangePassword  bool            `json:"must_change_password"`
 	Preferences         UserPreferences `json:"preferences"`
+	LastLoginAt         *time.Time      `json:"last_login_at,omitempty"`
 	CreatedAt           time.Time       `json:"created_at"`
 	UpdatedAt           time.Time       `json:"updated_at"`
 }

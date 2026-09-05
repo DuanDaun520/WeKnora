@@ -51,7 +51,6 @@
             <!-- 右侧内容区域 -->
             <div class="settings-content">
               <div class="content-wrapper" :class="{
-                'content-wrapper--wide': currentSection === 'members',
                 'content-wrapper--full': SYSTEM_ADMIN_SECTIONS.has(currentSection) || isIntegrationSection(currentSection),
               }">
                 <!-- 角色不允许访问当前 section（deep-link 进来 / 跨空间切换后角色降级）—— 优先于具体 section 渲染。
@@ -141,10 +140,9 @@
                     <TenantInfo />
                   </div>
 
-                  <!-- 成员管理 (#1303 PR 3) -->
-                  <div v-if="currentSection === 'members'" class="section">
-                    <TenantMembers />
-                  </div>
+                  <!-- 成员管理已随 000101 拆成独立弹窗（UserMenu 入口，
+                       uiStore.openMemberManage），不再作为 Settings section；
+                       旧深链 ?section=members 经 settingsRoute 别名落到常规设置。 -->
 
                   <!-- 空间用量统计（Token统计与计费设计.md §5.2）：
                        空间管理员的「我的 + 全空间」双页签看板。 -->
@@ -185,7 +183,6 @@ import EnvVarSettings from './EnvVarSettings.vue'
 import SkillCatalogSettings from './SkillCatalogSettings.vue'
 import TenantMcpSettings from './TenantMcpSettings.vue'
 import MemoryWorkspaceSettings from './MemoryWorkspaceSettings.vue'
-import TenantMembers from './TenantMembers.vue'
 import UsageStatsSettings from './UsageStatsSettings.vue'
 import TenantUsagePanel from './TenantUsagePanel.vue'
 import SystemSettings from '@/views/system/SystemSettings.vue'
@@ -338,7 +335,7 @@ const canSeeSection = (key: string): boolean => {
   }
   const min = SETTINGS_SECTION_MIN_ROLE[key] ?? 'viewer'
   // canAccessAllTenants（superuser）和路由层一样必须 bypass，否则 cross-tenant
-  // 管理员看不到自己有权操作的入口（参考 TenantMembers.vue 的 canManage）。
+  // 管理员看不到自己有权操作的入口（成员管理弹窗的入口判定同理，见 UserMenu）。
   if (authStore.canAccessAllTenants) return true
   return authStore.hasRole(min)
 }
@@ -374,7 +371,6 @@ const navItems = computed(() => {
     { key: 'skill-catalog', icon: 'rocket', label: t('settings.skills.title') },
     { key: 'tenant-mcp', icon: 'tools', label: t('settings.tenantMcp') },
     { key: 'tenant', icon: 'user-circle', label: t('settings.tenantInfo') },
-    { key: 'members', icon: 'usergroup', label: t('tenantMember.title') },
     { key: 'tenant-usage', icon: 'chart-pie', label: t('usageStats.tenantMenu') },
     ...integrationItems,
   ]
@@ -404,7 +400,7 @@ const navGroups = computed<NavGroup[]>(() => {
     {
       key: 'workspace',
       label: t('settings.navGroups.workspace'),
-      items: pickItems(['tenant', 'members', 'tenant-usage', 'chathistory', 'memory', 'skill-catalog', 'tenant-mcp']),
+      items: pickItems(['tenant', 'tenant-usage', 'chathistory', 'memory', 'skill-catalog', 'tenant-mcp']),
     },
     {
       // IM / 网页嵌入 / Claw / Chrome 已隐藏或迁组，发布集成只剩 API。
@@ -841,14 +837,8 @@ onUnmounted(() => {
   max-width: 760px;
   padding: 40px 48px;
 
-  /* 成员 / 审计表格列多，600px 会把操作列挤到贴边；铺满右侧内容列更稳。 */
-  &--wide {
-    max-width: none;
-    width: 100%;
-    padding: 32px 36px 40px;
-    box-sizing: border-box;
-  }
-
+  /* 成员管理已随 000101 拆出 Settings（独立弹窗自管宽度），--wide
+     变体随之移除；系统管理与集成面板仍用 --full 铺满。 */
   &--full {
     max-width: none;
     width: 100%;

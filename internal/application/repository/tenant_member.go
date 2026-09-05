@@ -109,7 +109,7 @@ func (r *tenantMemberRepository) CountFilteredByTenant(
 		like := "%" + escapeLikePattern(search) + "%"
 		err = q.
 			Joins(`INNER JOIN users ON users.id = tenant_members.user_id AND users.deleted_at IS NULL`).
-			Where(`(LOWER(users.email) LIKE LOWER(?) OR LOWER(users.username) LIKE LOWER(?))`, like, like).
+			Where(`(LOWER(users.employee_id) LIKE LOWER(?) OR LOWER(users.email) LIKE LOWER(?) OR LOWER(users.username) LIKE LOWER(?))`, like, like, like).
 			Count(&total).Error
 	}
 	return total, err
@@ -134,7 +134,7 @@ func (r *tenantMemberRepository) ListPagedByTenant(
 		like := "%" + escapeLikePattern(search) + "%"
 		err = q.
 			Joins(`INNER JOIN users ON users.id = tenant_members.user_id AND users.deleted_at IS NULL`).
-			Where(`(LOWER(users.email) LIKE LOWER(?) OR LOWER(users.username) LIKE LOWER(?))`, like, like).
+			Where(`(LOWER(users.employee_id) LIKE LOWER(?) OR LOWER(users.email) LIKE LOWER(?) OR LOWER(users.username) LIKE LOWER(?))`, like, like, like).
 			Find(&members).Error
 	}
 	if err != nil {
@@ -289,4 +289,31 @@ func (r *tenantMemberRepository) HasAnyMembers(ctx context.Context, tenantID uin
 		return false, err
 	}
 	return true, nil
+}
+
+// MemberWorkspaceStats counts one member's footprint inside a single
+// workspace: uploaded knowledge rows and chat sessions. Lives on the
+// member repository (rather than the knowledge/session repos) because the
+// query is member-centric — the handler story stays "ask the member repo
+// about a member". Counts are tenant-scoped and soft-delete aware:
+//   - knowledge: knowledges.tenant_id + creator_id (000099 stamped creator)
+//   - sessions:  sessions.user_id holds the member's user UUID for web
+//     sessions (channel principals use other strings, which simply don't
+//     match and are therefore not counted — IM-bot traffic is not "this
+//     member's session" anyway).
+func (r *tenantMemberRepository) MemberWorkspaceStats(ctx context.Context, tenantID uint64, userID string) (*types.MemberStats, error) {
+	stats := &types.MemberStats{}
+	if err := r.db.WithContext(ctx).
+		Table("knowledges").
+		Where("tenant_id = ? AND creator_id = ? AND deleted_at IS NULL", tenantID, userID).
+		Count(&stats.KnowledgeCount).Error; err != nil {
+		return nil, err
+	}
+	if err := r.db.WithContext(ctx).
+		Table("sessions").
+		Where("tenant_id = ? AND user_id = ? AND deleted_at IS NULL", tenantID, userID).
+		Count(&stats.SessionCount).Error; err != nil {
+		return nil, err
+	}
+	return stats, nil
 }

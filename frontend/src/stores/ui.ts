@@ -12,6 +12,13 @@ export const useUIStore = defineStore('ui', {
     kbEditorInitialSection: null as string | null,
     settingsInitialSection: null as string | null,
     settingsInitialSubSection: null as string | null,
+    // 000101 空间管理员成员管理：独立于 Settings 弹窗的两个全局模态框。
+    // memberManage 名册弹窗入口在 UserMenu（canManageMembers）；
+    // memberAudit 行为日志弹窗挂在成员管理弹窗右上角链接上。
+    // memberManage = 名册 + 加人/重置密码/邀请/统计/移出；
+    // memberAudit = 成员行为日志（白话文案）。
+    showMemberManageModal: false,
+    showMemberAuditModal: false,
     manualEditorVisible: false,
     manualEditorMode: 'create' as 'create' | 'edit',
     manualEditorKBId: null as string | null,
@@ -34,6 +41,24 @@ export const useUIStore = defineStore('ui', {
       this.showSettingsModal = false
       this.settingsInitialSection = null
       this.settingsInitialSubSection = null
+    },
+
+    // 成员管理弹窗（000101）：openMemberManage 时刷新名册由组件自己
+    // watch visible 完成，store 只负责开关，不携带初始状态。
+    openMemberManage() {
+      this.showMemberManageModal = true
+    },
+
+    closeMemberManage() {
+      this.showMemberManageModal = false
+    },
+
+    openMemberAudit() {
+      this.showMemberAuditModal = true
+    },
+
+    closeMemberAudit() {
+      this.showMemberAuditModal = false
     },
 
     toggleSettings() {

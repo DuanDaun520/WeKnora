@@ -38,7 +38,7 @@ func newAuditHandlerTestRouter(svc interfaces.AuditLogService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
-	h := NewAuditLogHandler(svc)
+	h := NewAuditLogHandler(svc, nil)
 	r.GET("/tenants/:id/audit-log", h.ListTenantAuditLog)
 	return r
 }
@@ -177,7 +177,7 @@ func newKBActivityHandlerTestRouter(
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	})
-	h := NewAuditLogHandler(svc)
+	h := NewAuditLogHandler(svc, nil)
 	r.GET("/knowledge-bases/:id/activity", h.ListKnowledgeBaseActivity)
 	return r
 }
@@ -246,7 +246,7 @@ func newSystemAuditHandlerTestRouter(svc interfaces.AuditLogService) *gin.Engine
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(middleware.ErrorHandler())
-	h := NewAuditLogHandler(svc)
+	h := NewAuditLogHandler(svc, nil)
 	r.GET("/system/admin/audit-log", h.ListSystemAuditLog)
 	return r
 }

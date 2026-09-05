@@ -19,7 +19,8 @@ export const SETTINGS_SECTION_MIN_ROLE: Record<string, SettingsRoleKey> = {
   system: 'admin',
   userprofile: 'viewer',
   tenant: 'viewer',
-  members: 'viewer',
+  // members 已随 000101 拆成独立弹窗（UserMenu → uiStore.openMemberManage），
+  // 不再是 Settings section；旧深链经 settingsRoute 别名落到 general。
   mymemory: 'viewer',
   memory: 'admin',
   // 沙箱密钥（个人环境变量）对普通用户隐藏，仅空间管理员可见。
@@ -41,6 +42,10 @@ export const SETTINGS_SECTION_MIN_ROLE: Record<string, SettingsRoleKey> = {
  * A management-labelled avatar shortcut has a stricter threshold than the
  * corresponding read-only Settings page. Skills moved to the console
  * (000095): the shortcut is now system-admin-only, see UserMenu.vue.
+ * `members` survives here even though the Settings section is gone (000101):
+ * the avatar-menu entry now opens the standalone 成员管理 modal (the
+ * 成员行为日志 modal hangs off its top-right link), and both still
+ * require the same admin-grade capability.
  */
 export const SETTINGS_MANAGEMENT_SHORTCUT_MIN_ROLE = {
   members: 'admin',

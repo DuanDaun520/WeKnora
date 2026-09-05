@@ -50,4 +50,17 @@ type TenantMemberService interface {
 	// RemoveMember soft-deletes the membership while enforcing the
 	// "cannot remove the last active Owner" invariant.
 	RemoveMember(ctx context.Context, userID string, tenantID uint64) error
+
+	// ResetMemberPassword (000101 tenant-admin member management) replaces
+	// the member's password with a randomly generated 8-digit numeric one
+	// and returns it exactly once. The 8-digit code satisfies the
+	// length-only ValidatePasswordPolicy; MustChangePassword=true is set
+	// regardless so the member must rotate at next login. All of the
+	// member's sessions are revoked. Callers enforce the
+	// membership / cannot-reset-self guards.
+	ResetMemberPassword(ctx context.Context, tenantID uint64, targetUserID string) (string, error)
+
+	// GetMemberStats returns the member's tenant-scoped activity summary
+	// (uploaded knowledge count, session count) for the 统计 action.
+	GetMemberStats(ctx context.Context, tenantID uint64, userID string) (*types.MemberStats, error)
 }
