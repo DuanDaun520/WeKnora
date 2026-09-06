@@ -4534,6 +4534,8 @@ export default {
     sharedAgentNotReadyDetail: '共享智能体「{agentName}」尚未就绪（缺少：{reasons}），请联系分享方管理员完成配置。',
     knowledgeBase: '知识库',
     knowledgeBaseWithCount: '知识库({count})',
+    mcpListTitle: 'MCP 服务',
+    skillsListTitle: '技能',
     notConfigured: '未配置',
     sharedAgentModelLabel: '共享智能体配置的模型',
     noModel: '暂无可用模型',
@@ -6037,6 +6039,7 @@ export default {
     customAgents: '自定义智能体',
     selector: {
       title: '选择智能体',
+      detailHint: '将鼠标悬浮在智能体上查看详情',
       current: '当前',
       goToSettings: '设置',
       sharedLabel: '共享',

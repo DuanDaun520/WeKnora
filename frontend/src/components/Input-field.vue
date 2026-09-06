@@ -152,8 +152,6 @@ const triggerImageUpload = () => {
 };
 const atButtonRef = ref<HTMLElement>();
 const showAgentModeSelector = ref(false);
-const agentModeButtonRef = ref<HTMLElement>();
-const agentModeDropdownStyle = ref<Record<string, string>>({});
 
 const selectedAgentId = computed({
   get: () => settingsStore.selectedAgentId || BUILTIN_QUICK_ANSWER_ID,
@@ -236,14 +234,18 @@ const agentKBSelectionMode = computed(() => {
 const sharedAgentKbList = ref<Array<{ id: string; name: string; type?: string; knowledge_count?: number; chunk_count?: number }>>([]);
 
 // 当智能体改变时，模型、可@知识库列表均跟随新智能体配置；网络搜索由用户主动开启
-// 知识库：用新智能体配置的列表替换当前选中，使已选与可@列表一致（含共享智能体）
+// 知识库：不再默认勾选智能体配置的知识库，由用户按需自行 @ 选择；
+// 仅收敛现有选择——'none' 清空（知识库被禁用），'selected' 保留与智能体允许范围的交集，'all' 原样保留。
 watch([selectedAgentId, agentKnowledgeBases, agentKBSelectionMode], ([newAgentId, newAgentKbs, newKbMode], [oldAgentId]) => {
   if (settingsStore._isApplyingSessionState) return;
   if (newAgentId !== oldAgentId && oldAgentId !== undefined) {
     if (newKbMode === 'none') {
       settingsStore.selectKnowledgeBases([]);
-    } else {
-      settingsStore.selectKnowledgeBases(newAgentKbs && newAgentKbs.length > 0 ? [...newAgentKbs] : []);
+    } else if (newKbMode === 'selected' && newKbKbs?.length) {
+      const allowed = new Set(newKbKbs.map(String));
+      settingsStore.selectKnowledgeBases(
+        (settingsStore.settings.selectedKnowledgeBases || []).filter((id: string) => allowed.has(String(id)))
+      );
     }
     // 若 @ 面板已打开，刷新可@列表以立即反映新智能体的知识库范围
     if (showMention.value) {
@@ -302,6 +304,8 @@ const isKnowledgeBaseDisabledByAgent = computed(() => {
   if (!hasAgentConfig.value) return false;
   return agentKBSelectionMode.value === 'none';
 });
+// @ 菜单是否可用：智能体流式模式下知识库被禁用时，若还配了 MCP/技能，
+// 输入 @ 仍可选中它们（面板内容按触发方式区分，见 loadMentionItems）
 const isMentionDisabled = computed(() => {
   if (settingsStore.isAgentStreamMode && isKnowledgeBaseDisabledByAgent.value) {
     return agentMCPSelectionMode.value === 'none' && agentSkillsSelectionMode.value === 'none';
@@ -491,6 +495,60 @@ const mentionLoading = ref(false);
 const mentionOffset = ref(0);
 const MENTION_PAGE_SIZE = 20;
 
+// —— 工具栏 MCP / Skills 能力入口 ——
+// 与 @ 面板同款过滤（enabled + 智能体选择模式允许），仅在智能体确实配置了
+// 可用服务/技能时非空，为空则整个图标不显示。
+const agentMCPList = computed(() => {
+  if (agentMCPSelectionMode.value === 'none') return [];
+  return mcpServices.value.filter(service => isMCPAllowedByAgent(service));
+});
+
+const agentSkillList = computed(() => {
+  if (agentSkillsSelectionMode.value === 'none') return [];
+  if (!editorResources.skillsAvailable) return [];
+  return editorResources.skills.filter(skill => isSkillAllowedByAgent(skill.name));
+});
+
+// 技能清单平时只在 @ 面板打开时才拉取；工具栏入口也要用，这里提前 ensure
+// （store 按 sandbox_config_id 缓存，与 @ 面板共用同一次请求）。
+watch([selectedAgentId, agentSkillsSelectionMode], () => {
+  if (agentSkillsSelectionMode.value !== 'none') {
+    void editorResources.ensureSkills(currentAgentConfig.value?.sandbox_config_id);
+  }
+}, { immediate: true });
+
+// 弹层描述截断：20 个汉字以内，超出加省略号；完整内容经 title 悬浮展示
+const truncateCapabilityDesc = (desc?: string) => {
+  if (!desc) return '';
+  return desc.length > 20 ? `${desc.slice(0, 20)}…` : desc;
+};
+
+// 弹层行勾选：与 @ 会话请求消费的 selectedMCPServices / selectedSkills 同一份存储，
+// 勾选后输入框顶部同样出现可移除的 chip。MCP/Skills 已从 @ 面板移除，这里是唯一入口。
+const toggleMCPService = (service: MCPService) => {
+  if (selectedMCPServiceIds.value.includes(service.id)) {
+    settingsStore.removeMCPService(service.id);
+  } else {
+    settingsStore.addMCPService(service.id);
+  }
+};
+
+const toggleSkill = (skillName: string) => {
+  if (selectedSkillNames.value.includes(skillName)) {
+    settingsStore.removeSkill(skillName);
+  } else {
+    settingsStore.addSkill(skillName);
+  }
+};
+
+// 图标右上角计数角标：当前智能体可用范围内已勾选的数量（与 @ 按钮角标同款式）
+const selectedMCPCount = computed(() =>
+  agentMCPList.value.filter(svc => selectedMCPServiceIds.value.includes(svc.id)).length
+);
+const selectedSkillCount = computed(() =>
+  agentSkillList.value.filter(skill => selectedSkillNames.value.includes(skill.name)).length
+);
+
 // 共享智能体时用于标识「共享空间」的展示名（组织名或共享者），供 @ 列表与已选标签显示角标
 const sharedAgentOrgName = computed(() => {
   const sourceTenantId = settingsStore.selectedAgentSourceTenantId;
@@ -653,6 +711,12 @@ const allSelectedItems = computed(() => {
 
   return [...agentConfiguredKbs, ...userSelectedKbs, ...files, ...tags, ...selectedMCPItems.value, ...skillMentionItems.value];
 });
+
+// @ 按钮的角标/高亮只统计知识库/文件/标签；MCP 与技能的计数在各自工具栏图标上，
+// 避免勾选了 MCP/技能却让知识库图标出现计数。
+const kbSelectedCount = computed(() =>
+  allSelectedItems.value.filter(item => item.type !== 'mcp' && item.type !== 'skill').length
+);
 
 // 移除选中项（智能体配置的项也可以移除）
 const removeSelectedItem = (item: MentionItem) => {
@@ -1207,6 +1271,8 @@ const loadMentionItems = async (q: string, resetIndex = true, append = false) =>
   // 根据智能体的 kb_selection_mode 过滤知识库；选中共享智能体时使用该空间下的知识库，否则使用本空间 + 共享给自己的
   let kbItems: any[] = [];
   let tagItems: MentionItem[] = [];
+  // MCP 与技能仅在「输入 @ 字符」触发时进入面板；点工具栏知识库图标打开的
+  // 面板只承载知识库/文件/标签（MCP/技能由工具栏专属弹窗勾选）
   let mcpItems: MentionItem[] = [];
   let skillItems: MentionItem[] = [];
   if (!append) {
@@ -1341,37 +1407,40 @@ const loadMentionItems = async (q: string, resetIndex = true, append = false) =>
       tagItems = [];
     }
 
-    const mcpMode = agentMCPSelectionMode.value;
-    if (mcpMode !== 'none') {
-      mcpItems = mcpServices.value
-        .filter(service => isMCPAllowedByAgent(service))
-        .filter(service => !q || service.name?.toLowerCase().includes(q.toLowerCase()) || (service.description || '').toLowerCase().includes(q.toLowerCase()))
-        .map(service => ({
-          id: service.id,
-          name: service.name,
-          type: 'mcp' as const,
-          description: service.description || '',
-        }));
-    }
+    // 输入 @ 字符触发时才带上 MCP / Skills；按钮（知识库图标）触发不含
+    if (!isMentionTriggeredByButton.value) {
+      const mcpMode = agentMCPSelectionMode.value;
+      if (mcpMode !== 'none') {
+        mcpItems = mcpServices.value
+          .filter(service => isMCPAllowedByAgent(service))
+          .filter(service => !q || service.name?.toLowerCase().includes(q.toLowerCase()) || (service.description || '').toLowerCase().includes(q.toLowerCase()))
+          .map(service => ({
+            id: service.id,
+            name: service.name,
+            type: 'mcp' as const,
+            description: service.description || '',
+          }));
+      }
 
-    const skillsMode = agentSkillsSelectionMode.value;
-    if (skillsMode !== 'none') {
-      await editorResources.ensureSkills(currentAgentConfig.value?.sandbox_config_id);
-      skillItems = editorResources.skills
-        .filter(skill => isSkillAllowedByAgent(skill.name))
-        .map(skill => ({
-          id: skill.name,
-          name: skill.name,
-          type: 'skill' as const,
-          skillName: skill.name,
-          description: skill.description || '',
-        }))
-        .filter(skill => {
-          if (!q) return true;
-          const keyword = q.toLowerCase();
-          return skill.name.toLowerCase().includes(keyword)
-            || (skill.description || '').toLowerCase().includes(keyword);
-        });
+      const skillsMode = agentSkillsSelectionMode.value;
+      if (skillsMode !== 'none') {
+        await editorResources.ensureSkills(currentAgentConfig.value?.sandbox_config_id);
+        skillItems = editorResources.skills
+          .filter(skill => isSkillAllowedByAgent(skill.name))
+          .map(skill => ({
+            id: skill.name,
+            name: skill.name,
+            type: 'skill' as const,
+            skillName: skill.name,
+            description: skill.description || '',
+          }))
+          .filter(skill => {
+            if (!q) return true;
+            const keyword = q.toLowerCase();
+            return skill.name.toLowerCase().includes(keyword)
+              || (skill.description || '').toLowerCase().includes(keyword);
+          });
+      }
     }
   }
 
@@ -1831,21 +1900,15 @@ onMounted(() => {
   document.addEventListener('click', closeModelSelector);
   document.addEventListener('click', closeMentionSelector);
 
-  // 监听窗口大小变化和滚动，重新计算位置
+  // 监听窗口大小变化和滚动，重新计算模型下拉位置（智能体选择已是居中弹窗，无需重定位）
   resizeHandler = () => {
     if (showModelSelector.value) {
       updateModelDropdownPosition();
-    }
-    if (showAgentModeSelector.value) {
-      updateAgentModeDropdownPosition();
     }
   };
   scrollHandler = () => {
     if (showModelSelector.value) {
       updateModelDropdownPosition();
-    }
-    if (showAgentModeSelector.value) {
-      updateAgentModeDropdownPosition();
     }
   };
 
@@ -2006,90 +2069,6 @@ const createSession = async (val: string) => {
   clearvalue();
 }
 
-const updateAgentModeDropdownPosition = () => {
-  const anchor = agentModeButtonRef.value;
-
-  if (!anchor) {
-    agentModeDropdownStyle.value = {
-      position: 'fixed',
-      top: '50%',
-      left: '50%',
-      transform: 'translate(-50%, -50%)'
-    };
-    return;
-  }
-
-  // Normalize coordinates to CSS pixels (root <html> may carry `zoom`).
-  const zoom = getRootZoom();
-  const rect = rectToCssPx(anchor.getBoundingClientRect(), zoom);
-  const dropdownWidth = 200;
-  const offsetY = 8;
-  const { width: vw, height: vh } = cssViewportSize(zoom);
-
-  // 水平位置：左对齐
-  let left = Math.floor(rect.left);
-  const minLeft = 16;
-  const maxLeft = Math.max(16, vw - dropdownWidth - 16);
-  left = Math.max(minLeft, Math.min(maxLeft, left));
-
-  // 垂直位置：紧贴按钮，使用合理的高度避免空白
-  const preferredDropdownHeight = 140; // Agent 模式选择器内容较少，用更小的优选高度
-  const maxDropdownHeight = 150;
-  const minDropdownHeight = 100;
-  const topMargin = 20;
-  const spaceBelow = vh - rect.bottom;
-  const spaceAbove = rect.top;
-
-  console.log('[Agent Dropdown] Space check:', {
-    spaceBelow,
-    spaceAbove,
-    windowHeight: vh
-  });
-
-  let actualHeight: number;
-
-  // 优先考虑下方空间
-  if (spaceBelow >= minDropdownHeight + offsetY) {
-    // 下方有足够空间，向下弹出
-    actualHeight = Math.min(preferredDropdownHeight, spaceBelow - offsetY - 16);
-    const top = Math.floor(rect.bottom + offsetY);
-
-    agentModeDropdownStyle.value = {
-      position: 'fixed !important',
-      width: `${dropdownWidth}px`,
-      left: `${left}px`,
-      top: `${top}px`,
-      maxHeight: `${actualHeight}px`,
-      transform: 'none !important',
-      margin: '0 !important',
-      padding: '0 !important',
-    };
-    console.log('[Agent Dropdown] Position: below button', { actualHeight });
-  } else {
-    // 向上弹出，使用 bottom 定位确保紧贴按钮
-    const availableHeight = spaceAbove - offsetY - topMargin;
-    if (availableHeight >= preferredDropdownHeight) {
-      actualHeight = preferredDropdownHeight;
-    } else {
-      actualHeight = Math.max(minDropdownHeight, availableHeight);
-    }
-
-    const bottom = vh - rect.top + offsetY;
-
-    agentModeDropdownStyle.value = {
-      position: 'fixed !important',
-      width: `${dropdownWidth}px`,
-      left: `${left}px`,
-      bottom: `${bottom}px`, // 使用 bottom 定位，确保紧贴按钮
-      maxHeight: `${actualHeight}px`,
-      transform: 'none !important',
-      margin: '0 !important',
-      padding: '0 !important',
-    };
-    console.log('[Agent Dropdown] Position: above button', { actualHeight, bottom });
-  }
-};
-
 const toggleAgentModeSelector = () => {
   // 互斥
   showMention.value = false;
@@ -2100,16 +2079,6 @@ const toggleAgentModeSelector = () => {
     if (!chatResources.isFresh('agents')) {
       void loadAgents(true);
     }
-    // 多次更新位置确保准确
-    nextTick(() => {
-      updateAgentModeDropdownPosition();
-      requestAnimationFrame(() => {
-        updateAgentModeDropdownPosition();
-        setTimeout(() => {
-          updateAgentModeDropdownPosition();
-        }, 50);
-      });
-    });
   }
 }
 
@@ -2572,11 +2541,27 @@ defineExpose({
         <!-- 左侧控制按钮 -->
         <div class="control-left" v-if="!embeddedMode">
           <!-- Agent 模式切换按钮 -->
-          <div ref="agentModeButtonRef" class="control-btn agent-mode-btn" :class="{
+          <div class="control-btn agent-mode-btn" :class="{
             'is-normal': !isCustomAgent && !isAgentEnabled,
             'is-agent': !isCustomAgent && isAgentEnabled,
             'is-custom': isCustomAgent
           }" @click.stop="toggleAgentModeSelector">
+            <!-- 智能体图标（与侧栏 agent.svg 同源），currentColor 跟随按钮状态 -->
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"
+              class="agent-mode-icon">
+              <path
+                d="M10 3L10.8 6.2C10.9 6.7 11.3 7.1 11.8 7.2L15 8L11.8 8.8C11.3 8.9 10.9 9.3 10.8 9.8L10 13L9.2 9.8C9.1 9.3 8.7 8.9 8.2 8.8L5 8L8.2 7.2C8.7 7.1 9.1 6.7 9.2 6.2L10 3Z"
+                fill="currentColor" stroke="currentColor" stroke-width="0.8" stroke-linecap="round"
+                stroke-linejoin="round" />
+              <path
+                d="M15.5 4L15.8 5.2C15.85 5.45 16.05 5.65 16.3 5.7L17.5 6L16.3 6.3C16.05 6.35 15.85 6.55 15.8 6.8L15.5 8L15.2 6.8C15.15 6.55 14.95 6.35 14.7 6.3L13.5 6L14.7 5.7C14.95 5.65 15.15 5.45 15.2 5.2L15.5 4Z"
+                fill="currentColor" stroke="currentColor" stroke-width="0.6" stroke-linecap="round"
+                stroke-linejoin="round" />
+              <path
+                d="M4.5 13L4.8 14.2C4.85 14.45 5.05 14.65 5.3 14.7L6.5 15L5.3 15.3C5.05 15.35 4.85 15.55 4.8 15.8L4.5 17L4.2 15.8C4.15 15.55 3.95 15.35 3.7 15.3L2.5 15L3.7 14.7C3.95 14.65 4.15 14.45 4.2 14.2L4.5 13Z"
+                fill="currentColor" stroke="currentColor" stroke-width="0.6" stroke-linecap="round"
+                stroke-linejoin="round" />
+            </svg>
             <span class="agent-mode-text">
               {{ selectedAgent.name || (isAgentEnabled ? $t('input.agentMode') : $t('input.normalMode')) }}
             </span>
@@ -2587,9 +2572,9 @@ defineExpose({
           </div>
 
           <!-- Agent 选择器下拉菜单 -->
-          <AgentSelector :visible="showAgentModeSelector" :anchorEl="agentModeButtonRef"
-            :currentAgentId="selectedAgentId" :agents="enabledAgents" :all-models="allModels"
-            @close="closeAgentModeSelector" @select="handleSelectAgent" @not-ready="handleAgentNotReady" />
+          <AgentSelector :visible="showAgentModeSelector" :currentAgentId="selectedAgentId" :agents="enabledAgents"
+            :all-models="allModels" @close="closeAgentModeSelector" @select="handleSelectAgent"
+            @not-ready="handleAgentNotReady" />
 
           <!-- WebSearch 开关按钮（智能体未启用时不显示） -->
           <t-tooltip v-if="showWebSearchButton" placement="top" theme="light"
@@ -2658,6 +2643,60 @@ defineExpose({
             </div>
           </t-tooltip>
 
+          <!-- MCP 服务入口：智能体配置了可用 MCP 服务时显示，点击勾选参与对话的服务 -->
+          <t-popup v-if="agentMCPList.length > 0" trigger="click" placement="top-left"
+            overlay-class-name="input-capability-popup" :overlay-style="{ padding: 0 }"
+            :overlay-inner-style="{ padding: 0 }">
+            <template #content>
+              <div class="capability-list">
+                <div class="capability-list__header">{{ $t('input.mcpListTitle') }}</div>
+                <div v-for="svc in agentMCPList" :key="svc.id" class="capability-row"
+                  :class="{ 'is-selected': selectedMCPServiceIds.includes(svc.id) }" role="button" tabindex="0"
+                  @click="toggleMCPService(svc)" @keydown.enter.prevent="toggleMCPService(svc)">
+                  <t-icon name="tools" size="14px" class="capability-row__icon" />
+                  <div class="capability-row__body">
+                    <div class="capability-row__name" :title="svc.name">{{ svc.name }}</div>
+                    <div v-if="svc.description" class="capability-row__desc" :title="svc.description">
+                      {{ truncateCapabilityDesc(svc.description) }}</div>
+                  </div>
+                  <t-icon v-if="selectedMCPServiceIds.includes(svc.id)" name="check" size="14px"
+                    class="capability-row__check" />
+                </div>
+              </div>
+            </template>
+            <div class="control-btn capability-btn" :title="$t('input.mcpListTitle')">
+              <t-icon name="tools" size="18px" class="control-icon" />
+              <span v-if="selectedMCPCount > 0" class="capability-count">{{ selectedMCPCount }}</span>
+            </div>
+          </t-popup>
+
+          <!-- Skills 入口：智能体配置了可用技能时显示，点击勾选参与对话的技能 -->
+          <t-popup v-if="agentSkillList.length > 0" trigger="click" placement="top-left"
+            overlay-class-name="input-capability-popup" :overlay-style="{ padding: 0 }"
+            :overlay-inner-style="{ padding: 0 }">
+            <template #content>
+              <div class="capability-list">
+                <div class="capability-list__header">{{ $t('input.skillsListTitle') }}</div>
+                <div v-for="skill in agentSkillList" :key="skill.name" class="capability-row"
+                  :class="{ 'is-selected': selectedSkillNames.includes(skill.name) }" role="button" tabindex="0"
+                  @click="toggleSkill(skill.name)" @keydown.enter.prevent="toggleSkill(skill.name)">
+                  <t-icon :name="SKILL_ICON" size="14px" class="capability-row__icon" />
+                  <div class="capability-row__body">
+                    <div class="capability-row__name" :title="skill.name">{{ skill.name }}</div>
+                    <div v-if="skill.description" class="capability-row__desc" :title="skill.description">
+                      {{ truncateCapabilityDesc(skill.description) }}</div>
+                  </div>
+                  <t-icon v-if="selectedSkillNames.includes(skill.name)" name="check" size="14px"
+                    class="capability-row__check" />
+                </div>
+              </div>
+            </template>
+            <div class="control-btn capability-btn" :title="$t('input.skillsListTitle')">
+              <t-icon :name="SKILL_ICON" size="18px" class="control-icon" />
+              <span v-if="selectedSkillCount > 0" class="capability-count">{{ selectedSkillCount }}</span>
+            </div>
+          </t-popup>
+
           <!-- @ 知识库/文件选择按钮 -->
           <t-tooltip placement="top" theme="light" :popupProps="{ overlayClassName: 'input-field-tooltip' }">
             <template #content>
@@ -2666,23 +2705,23 @@ defineExpose({
                 <a href="#" @click.prevent="handleGoToAgentSettings('knowledge')">{{ $t('input.goToAgentSettings')
                 }}</a>
               </div>
-              <span v-else>{{ allSelectedItems.length > 0 ? $t('input.knowledgeBaseWithCount', {
+              <span v-else>{{ kbSelectedCount > 0 ? $t('input.knowledgeBaseWithCount', {
                 count:
-                  allSelectedItems.length
+                  kbSelectedCount
               }) : $t('input.knowledgeBase') }}</span>
             </template>
             <div ref="atButtonRef" class="control-btn kb-btn" data-guide="chat-kb-mention" :class="{
-              'active': allSelectedItems.length > 0,
+              'active': kbSelectedCount > 0,
               'disabled': isMentionDisabled
             }" @click.stop @mousedown.prevent="triggerMention">
               <svg width="18" height="18" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg"
                 class="control-icon at-icon">
-                <circle cx="10" cy="10" r="3.5" stroke="currentColor" stroke-width="1.8" />
-                <path
-                  d="M13.5 10V11.5C13.5 12.163 13.7634 12.7989 14.2322 13.2678C14.7011 13.7366 15.337 14 16 14C16.663 14 17.2989 13.7366 17.7678 13.2678C18.2366 12.7989 18.5 12.163 18.5 11.5V10C18.5 7.74566 17.6045 5.58365 16.0104 3.98959C14.4163 2.39553 12.2543 1.5 10 1.5C7.74566 1.5 5.58365 2.39553 3.98959 3.98959C2.39553 5.58365 1.5 7.74566 1.5 10C1.5 12.2543 2.39553 14.4163 3.98959 16.0104C5.58365 17.6045 7.74566 18.5 10 18.5H12"
-                  stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                <!-- 知识库图标（与侧栏 zhishiku.svg 同源），fill 用 currentColor 跟随按钮状态 -->
+                <path fill-rule="evenodd" clip-rule="evenodd"
+                  d="M9.17736 1.28207C9.32257 1.23367 9.4805 1.24024 9.6212 1.30054L18.3713 5.05054C18.5619 5.13222 18.6995 5.30316 18.7388 5.50681C18.778 5.71045 18.7136 5.9203 18.567 6.06694C18.5138 6.12012 18.4366 6.24314 18.3744 6.46076C18.3146 6.66994 18.2812 6.92361 18.2812 7.1875C18.2812 7.45139 18.3146 7.70506 18.3744 7.91424C18.4366 8.13186 18.5138 8.25487 18.567 8.30806C18.811 8.55214 18.811 8.94786 18.567 9.19194C18.5138 9.24512 18.4366 9.36814 18.3744 9.58576C18.3146 9.79494 18.2812 10.0486 18.2812 10.3125C18.2812 10.5764 18.3146 10.8301 18.3744 11.0392C18.4366 11.2569 18.5138 11.3799 18.567 11.4331C18.811 11.6771 18.811 12.0729 18.567 12.3169C18.5138 12.3701 18.4366 12.4931 18.3744 12.7108C18.3146 12.92 18.2812 13.1736 18.2812 13.4375C18.2812 13.7014 18.3146 13.955 18.3744 14.1642C18.4366 14.3819 18.5138 14.5049 18.567 14.558C18.709 14.7001 18.7741 14.9017 18.7419 15.1001C18.7097 15.2984 18.5843 15.4691 18.4045 15.559L12.1545 18.684C11.9886 18.767 11.7944 18.772 11.6245 18.6976L1.62449 14.3226C1.397 14.2231 1.25 13.9983 1.25 13.75V4.375C1.25 4.10599 1.42215 3.86715 1.67736 3.78207L9.17736 1.28207ZM2.5 5.33064L10.9868 9.04362C10.9627 9.10997 10.9413 9.1765 10.9225 9.24236C10.826 9.58006 10.7812 9.95139 10.7812 10.3125C10.7812 10.6736 10.826 11.0449 10.9225 11.3826C10.9694 11.5469 11.0321 11.7153 11.1153 11.875C11.0321 12.0347 10.9694 12.2031 10.9225 12.3674C10.826 12.705 10.7812 13.0764 10.7812 13.4375C10.7812 13.7986 10.826 14.17 10.9225 14.5076C10.9694 14.6719 11.0321 14.8403 11.1153 15C11.0321 15.1597 10.9694 15.3281 10.9225 15.4924C10.826 15.83 10.7812 16.2014 10.7812 16.5625C10.7812 16.6986 10.7876 16.8361 10.8007 16.9728L2.5 13.3413V5.33064ZM12.1275 17.3C12.1265 17.2964 12.1254 17.2929 12.1244 17.2892C12.0646 17.08 12.0312 16.8264 12.0312 16.5625C12.0312 16.2986 12.0646 16.045 12.1244 15.8358C12.1695 15.6779 12.2225 15.5697 12.2686 15.502L17.0432 13.1146C17.0351 13.2224 17.0312 13.3304 17.0312 13.4375C17.0312 13.7986 17.076 14.17 17.1725 14.5076C17.1944 14.5844 17.2198 14.662 17.249 14.7393L12.1275 17.3ZM17.249 11.6142L12.1275 14.175C12.1265 14.1714 12.1254 14.1679 12.1244 14.1642C12.0646 13.955 12.0312 13.7014 12.0312 13.4375C12.0312 13.1736 12.0646 12.92 12.1244 12.7108C12.1695 12.5529 12.2225 12.4447 12.2686 12.377L17.0432 9.98965C17.0351 10.0974 17.0312 10.2054 17.0312 10.3125C17.0312 10.6736 17.076 11.0449 17.1725 11.3826C17.1944 11.4594 17.2198 11.537 17.249 11.6142ZM17.249 8.48921L12.1275 11.05C12.1265 11.0464 12.1254 11.0428 12.1244 11.0392C12.0646 10.8301 12.0312 10.5764 12.0312 10.3125C12.0312 10.0486 12.0646 9.79494 12.1244 9.58576C12.1695 9.42785 12.2225 9.31975 12.2686 9.252L17.0432 6.86465C17.0351 6.9724 17.0312 7.0804 17.0312 7.1875C17.0312 7.54861 17.076 7.91994 17.1725 8.25764C17.1944 8.33437 17.2198 8.412 17.249 8.48921ZM16.6402 5.66864L9.34721 2.54307L3.61469 4.45391L11.8573 8.06006L16.6402 5.66864Z"
+                  fill="currentColor" stroke="currentColor" stroke-width="0.3" />
               </svg>
-              <span v-if="allSelectedItems.length > 0" class="kb-count">{{ allSelectedItems.length }}</span>
+              <span v-if="kbSelectedCount > 0" class="kb-count">{{ kbSelectedCount }}</span>
             </div>
           </t-tooltip>
 
@@ -3110,6 +3149,10 @@ const getImgSrc = (url: string) => {
   color: var(--td-text-color-secondary, #666);
 }
 
+.agent-mode-icon {
+  flex-shrink: 0;
+}
+
 .agent-mode-text {
   font-size: 13px;
   color: var(--td-text-color-secondary, #666);
@@ -3263,6 +3306,122 @@ const getImgSrc = (url: string) => {
   }
 }
 
+/* MCP / Skills 能力入口按钮（与附件按钮同规格） */
+.capability-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  min-width: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  color: var(--td-text-color-secondary, #666);
+
+  &:hover {
+    background: var(--td-bg-color-secondarycontainer-hover, #f0f0f0);
+    color: var(--td-text-color-primary, #333);
+  }
+
+  /* 勾选计数角标（与 @ 按钮的 kb-count 同款式） */
+  .capability-count {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    background: var(--td-brand-color);
+    color: var(--td-text-color-anti, #fff);
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 15px;
+    border: 2px solid var(--td-bg-color-container);
+    border-radius: var(--td-radius-round, 999px);
+    box-sizing: content-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+}
+
+/* 弹层列表：slot 元素带本组件 scope 属性，scoped 样式对 teleport 内容仍生效 */
+.capability-list {
+  min-width: 220px;
+  max-width: 300px;
+  max-height: min(50vh, 360px);
+  overflow-y: auto;
+  padding: 4px;
+  box-sizing: border-box;
+
+  .capability-list__header {
+    padding: 6px 10px 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--td-text-color-placeholder, #999);
+    user-select: none;
+  }
+
+  .capability-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+
+    &:hover {
+      background: var(--td-bg-color-container-hover, #f0f0f0);
+    }
+
+    &.is-selected {
+      background: var(--td-brand-color-light, rgba(7, 192, 95, 0.1));
+
+      .capability-row__icon,
+      .capability-row__name {
+        color: var(--td-brand-color, #07C05F);
+      }
+    }
+  }
+
+  .capability-row__check {
+    color: var(--td-brand-color, #07C05F);
+    margin-top: 2px;
+    flex-shrink: 0;
+  }
+
+  .capability-row__icon {
+    color: var(--td-text-color-secondary, #666);
+    margin-top: 2px;
+    flex-shrink: 0;
+  }
+
+  .capability-row__body {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .capability-row__name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--td-text-color-primary, #333);
+    line-height: 18px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .capability-row__desc {
+    font-size: 11px;
+    color: var(--td-text-color-placeholder, #999);
+    line-height: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
 .image-preview-bar {
   display: flex;
   gap: 8px;
@@ -3360,6 +3519,16 @@ const getImgSrc = (url: string) => {
   .t-popup__content {
     box-shadow: var(--td-shadow-2);
     border: .5px solid var(--td-component-border, #e7e7e7);
+  }
+}
+
+/* MCP / Skills 列表弹层容器（t-popup 内部结构，需 :global） */
+:global(.input-capability-popup) {
+  .t-popup__content {
+    box-shadow: var(--td-shadow-2);
+    border: .5px solid var(--td-component-border, #e7e7e7);
+    border-radius: 8px;
+    background: var(--td-bg-color-container, #fff);
   }
 }
 
