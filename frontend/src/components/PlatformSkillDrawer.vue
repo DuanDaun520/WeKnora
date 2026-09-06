@@ -32,20 +32,8 @@
       </section>
     </template>
 
-    <!-- 注册源二选一：源链接或 zip 上传，与空间「技能管理」注册步同款上限 -->
-    <section class="setting-drawer__section">
-      <h4 class="setting-drawer__section-title">{{ t('settings.sandbox.skillSourceSection') }}</h4>
-      <p class="section-help section-help--under-title">
-        {{ t('settings.sandbox.skillSourceSectionHint', { size: maxSkillBundleMB }) }}
-      </p>
-      <t-input
-        v-model="sourceInput"
-        :placeholder="t('settings.sandbox.skillSourcePlaceholder')"
-        :disabled="busy"
-        @enter="handleSave"
-      />
-    </section>
-
+    <!-- 注册只走 zip 上传（从源拉取的公网依赖不适合内网环境，界面已去掉；
+         上传上限与空间「技能管理」注册步一致） -->
     <section class="setting-drawer__section">
       <h4 class="setting-drawer__section-title">{{ t('settings.sandbox.skillUploadSection') }}</h4>
       <p class="section-help section-help--under-title">
@@ -91,6 +79,64 @@
       </t-button>
     </section>
 
+    <!-- 基本信息（000104/000105）：分类只能从已登记的分类中选择 —— 新分类在
+         技能库「分类管理」里先创建（000105），本下拉不再即输即建。分类留空或
+         前端未匹配登记表时回落到未分类；作者留空时注册自动读取 SKILL.md。
+         编辑时与 bundle 重注册分开保存 —— 仅改动的字段会点亮 drift，需推送
+         后才进入各空间。 -->
+    <section class="setting-drawer__section">
+      <h4 class="setting-drawer__section-title">{{ t('skillLibrary.metaSectionTitle') }}</h4>
+      <p class="section-help section-help--under-title">{{ t('skillLibrary.metaSectionHint') }}</p>
+      <div class="meta-grid">
+        <div class="meta-field">
+          <span class="meta-field__label">{{ t('skillLibrary.categoryLabel') }}</span>
+          <t-select
+            v-model="categoryInput"
+            :placeholder="t('skillLibrary.categoryPlaceholder')"
+            :loading="categoriesLoading"
+            filterable
+            clearable
+            :disabled="busy"
+          >
+            <t-option v-for="c in categoryOptions" :key="c" :value="c" :label="c" />
+          </t-select>
+        </div>
+        <div class="meta-field">
+          <span class="meta-field__label">{{ t('skillLibrary.authorLabel') }}</span>
+          <t-input
+            v-model="authorInput"
+            :placeholder="t('skillLibrary.authorPlaceholder')"
+            :maxlength="255"
+            :disabled="busy"
+          />
+        </div>
+      </div>
+      <!-- 000106：中文展示元数据。独立于 SKILL.md 的 name/description，空值时
+           列表回落 SKILL.md 内容；描述只影响展示，不写入技能包。 -->
+      <div class="meta-field meta-field--span2">
+        <span class="meta-field__label">{{ t('skillLibrary.zhNameLabel') }}</span>
+        <t-input
+          v-model="zhNameInput"
+          :placeholder="t('skillLibrary.zhNamePlaceholder')"
+          :maxlength="255"
+          :disabled="busy"
+        />
+      </div>
+      <div class="meta-field meta-field--span2">
+        <span class="meta-field__label">{{ t('skillLibrary.zhDescriptionLabel') }}</span>
+        <t-textarea
+          v-model="zhDescriptionInput"
+          :placeholder="t('skillLibrary.zhDescriptionPlaceholder')"
+          :maxlength="2000"
+          :disabled="busy"
+          :autosize="{ minRows: 2, maxRows: 5 }"
+        />
+      </div>
+      <p v-if="isEdit && skill?.version" class="meta-version">
+        {{ t('skillLibrary.currentVersion', { version: skill.version }) }}
+      </p>
+    </section>
+
     <!-- 空间分配（仅编辑已保存技能时出现）：保存是两个请求 —— 技能更新 PUT 先
          落地，分配 replace-all 跟上；被阻止的是逐空间结果，抽屉保留并把原因
          列在下方。 -->
@@ -112,6 +158,10 @@
               </span>
               <span v-else-if="row.assigned && row.installCount > 0" class="assignment-row__hint">
                 {{ t('skillLibrary.assignmentSkillsHint', { count: row.installCount }) }}
+              </span>
+              <!-- 已分配但空间尚未安装到任何沙箱：引导文案而非静默（000106） -->
+              <span v-else-if="row.assigned" class="assignment-row__hint--muted">
+                {{ t('skillLibrary.assignmentNotInstalledHint') }}
               </span>
             </div>
             <t-switch
@@ -147,9 +197,9 @@ import SettingDrawer from '@/components/settings/SettingDrawer.vue'
 import { listPlatformTenants, type PlatformTenant } from '@/api/system'
 import {
   createPlatformSkillFromFile,
-  createPlatformSkillFromSource,
+  listSkillCategories,
   updatePlatformSkillFromFile,
-  updatePlatformSkillFromSource,
+  updatePlatformSkillMeta,
   updatePlatformSkillTenantAssignments,
   type PlatformSkill,
   type PlatformSkillAssignment,
@@ -174,20 +224,51 @@ const { t } = useI18n()
 const isEdit = computed(() => !!props.skill)
 
 // ---- register inputs ----
-const sourceInput = ref('')
 const pendingFile = ref<File | null>(null)
 const uploading = ref(false)
-const addingFromSource = ref(false)
 const uploadPercent = ref(0)
 const fileInputRef = ref<HTMLInputElement | null>(null)
 // A name_immutable refusal (zip carries a different name) keeps the drawer
 // open with the alert pinned on top.
 const nameImmutableAlert = ref(false)
 
-const busy = computed(() => uploading.value || addingFromSource.value)
-const hasBundleInput = computed(() => !!pendingFile.value || !!sourceInput.value.trim())
-const saving = computed(() => busy.value || savingAssignments.value)
+const busy = computed(() => uploading.value)
+const hasBundleInput = computed(() => !!pendingFile.value)
+const saving = computed(() => busy.value || savingAssignments.value || savingMeta.value)
 const primaryDisabled = computed(() => !isEdit.value && !hasBundleInput.value)
+
+// ---- definition metadata: category / author (000104) ----
+// Create mode rides the register POST (empty = fall back to SKILL.md); edit
+// mode persists through the separate meta PUT only when a value changed — a
+// same-value PUT would bump updated_at and fake a drift marker per assignment.
+const categoryInput = ref('')
+const authorInput = ref('')
+const zhNameInput = ref('')
+const zhDescriptionInput = ref('')
+const categoryOptions = ref<string[]>([])
+const categoriesLoading = ref(false)
+const savingMeta = ref(false)
+const metaBaseline = ref({ category: '', author: '', zhName: '', zhDescription: '' })
+
+async function loadSkillCategoriesOnce() {
+  if (categoryOptions.value.length) return
+  categoriesLoading.value = true
+  try {
+    const rows = await listSkillCategories()
+    categoryOptions.value = rows.map((row) => row.name)
+    // A skill may already carry a category; keep it selectable even if the
+    // registry list is somehow stale (a category can only ever be set when it
+    // was registered, but the edit view stays open over slow refreshes).
+    const baseline = metaBaseline.value.category
+    if (baseline && !categoryOptions.value.includes(baseline)) {
+      categoryOptions.value = [baseline, ...categoryOptions.value]
+    }
+  } catch {
+    // A failed directory load only costs the dropdown suggestions.
+  } finally {
+    categoriesLoading.value = false
+  }
+}
 
 // ---- workspace assignment section (edit mode only) ----
 const platformTenants = ref<PlatformTenant[]>([])
@@ -261,10 +342,20 @@ watch(
   () => props.visible,
   async (open) => {
     if (!open) return
-    sourceInput.value = ''
     clearFile()
     nameImmutableAlert.value = false
     assignmentOutcomes.value = []
+    metaBaseline.value = {
+      category: props.skill?.category || '',
+      author: props.skill?.author || '',
+      zhName: props.skill?.zh_name || '',
+      zhDescription: props.skill?.zh_description || '',
+    }
+    categoryInput.value = metaBaseline.value.category
+    authorInput.value = metaBaseline.value.author
+    zhNameInput.value = metaBaseline.value.zhName
+    zhDescriptionInput.value = metaBaseline.value.zhDescription
+    void loadSkillCategoriesOnce()
     if (props.skill) {
       await loadPlatformTenantsOnce()
       seedAssignmentRows(props.skill.assignments || [])
@@ -327,9 +418,7 @@ function registerErrorMessage(err: any): string {
     return t('settings.sandbox.skillBundleTooManyZipEntries', { count: tooManyEntries[1] })
   }
   if (raw) return raw
-  return pendingFile.value
-    ? t('settings.sandbox.skillUploadFailed')
-    : t('settings.sandbox.skillSourceFailed')
+  return t('settings.sandbox.skillUploadFailed')
 }
 
 // ---- save: create registers; edit re-registers (optional new bundle) then
@@ -338,24 +427,21 @@ function registerErrorMessage(err: any): string {
 async function persistBundle(): Promise<boolean> {
   if (!hasBundleInput.value) return true
   nameImmutableAlert.value = false
+  // Empty metadata on CREATE means "read it from the SKILL.md frontmatter".
+  const category = categoryInput.value.trim()
+  const author = authorInput.value.trim()
+  const file = pendingFile.value
+  if (!file) return true
   try {
-    if (pendingFile.value) {
-      uploading.value = true
-      uploadPercent.value = 0
-      const onProgress = (percent: number) => { uploadPercent.value = percent }
-      if (isEdit.value) {
-        await updatePlatformSkillFromFile(props.skill!.id, pendingFile.value, onProgress)
-      } else {
-        await createPlatformSkillFromFile(pendingFile.value, onProgress)
-      }
+    uploading.value = true
+    uploadPercent.value = 0
+    const onProgress = (percent: number) => { uploadPercent.value = percent }
+    if (isEdit.value) {
+      await updatePlatformSkillFromFile(props.skill!.id, file, onProgress)
     } else {
-      addingFromSource.value = true
-      const source = sourceInput.value.trim()
-      if (isEdit.value) {
-        await updatePlatformSkillFromSource(props.skill!.id, source)
-      } else {
-        await createPlatformSkillFromSource(source)
-      }
+      const zhName = zhNameInput.value.trim()
+      const zhDescription = zhDescriptionInput.value.trim()
+      await createPlatformSkillFromFile(file, onProgress, category, author, zhName, zhDescription)
     }
     return true
   } catch (e: any) {
@@ -370,7 +456,6 @@ async function persistBundle(): Promise<boolean> {
     return false
   } finally {
     uploading.value = false
-    addingFromSource.value = false
     uploadPercent.value = 0
   }
 }
@@ -396,6 +481,38 @@ async function persistAssignments(): Promise<boolean> {
   }
 }
 
+// Edit-mode metadata save. Skipped when nothing changed so an untouched
+// drawer never lights drift; an explicit empty string clears the field.
+async function persistMeta(): Promise<boolean> {
+  if (!isEdit.value) return true
+  const category = categoryInput.value.trim()
+  const author = authorInput.value.trim()
+  const zhName = zhNameInput.value.trim()
+  const zhDescription = zhDescriptionInput.value.trim()
+  const same =
+    category === metaBaseline.value.category &&
+    author === metaBaseline.value.author &&
+    zhName === metaBaseline.value.zhName &&
+    zhDescription === metaBaseline.value.zhDescription
+  if (same) return true
+  savingMeta.value = true
+  try {
+    await updatePlatformSkillMeta(props.skill!.id, {
+      category,
+      author,
+      zh_name: zhName,
+      zh_description: zhDescription,
+    })
+    metaBaseline.value = { category, author, zhName, zhDescription }
+    return true
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('skillLibrary.toasts.metaFailed'))
+    return false
+  } finally {
+    savingMeta.value = false
+  }
+}
+
 async function handleSave() {
   if (saving.value || primaryDisabled.value) return
   if (!(await persistBundle())) return
@@ -405,6 +522,7 @@ async function handleSave() {
     close()
     return
   }
+  if (!(await persistMeta())) return
   const clean = await persistAssignments()
   emit('saved')
   if (clean) {
@@ -439,6 +557,38 @@ function close() {
 
 .file-input-hidden {
   display: none;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+
+  @media (max-width: 640px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.meta-field {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.meta-field__label {
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+}
+
+.meta-field--span2 {
+  grid-column: 1 / -1;
+}
+
+.meta-version {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
 }
 
 .skill-upload-area {
@@ -534,6 +684,12 @@ function close() {
   flex-shrink: 0;
   font-size: 11px;
   color: var(--td-warning-color-7, #B85C00);
+}
+
+.assignment-row__hint--muted {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--td-text-color-placeholder);
 }
 
 .assignment-outcomes {

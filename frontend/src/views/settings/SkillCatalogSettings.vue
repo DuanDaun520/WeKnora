@@ -19,16 +19,12 @@
 
     <template v-else>
       <div v-if="catalog.length === 0" class="empty-state">
-        <t-empty :description="canManage ? $t('settings.skills.emptyDesc') : $t('settings.skills.emptyDescReadonly')" />
+        <t-empty :description="canManage ? $t('settings.skills.emptyDescManaged') : $t('settings.skills.emptyDescReadonly')" />
         <p v-if="canManage && skillConfigs.length === 0" class="empty-hint">
           {{ $t('settings.skills.emptyNoSandboxHint') }}
         </p>
-        <div v-if="canManage" class="empty-actions">
-          <t-button theme="primary" @click="openAdd">
-            {{ $t('settings.skills.addSkill') }}
-          </t-button>
-          <t-button v-if="skillConfigs.length === 0" theme="default" variant="outline"
-            @click="goSandboxSection">
+        <div v-if="canManage && skillConfigs.length === 0" class="empty-actions">
+          <t-button theme="default" variant="outline" @click="goSandboxSection">
             {{ $t('settings.skills.goSandboxSettings') }}
           </t-button>
         </div>
@@ -36,7 +32,6 @@
 
       <div v-else class="skill-list">
         <article v-for="item in catalog" :key="item.id" class="skill-card" :class="{
-          'skill-card--focused': focusedCatalogId === item.id,
           'skill-card--installed': liveInstalls(item).length > 0,
           'skill-card--idle': liveInstalls(item).length === 0,
         }">
@@ -47,14 +42,58 @@
             <div class="skill-card__body">
               <div class="skill-card__header">
                 <div class="skill-card__heading">
+                  <!-- 技能英文名独占一行，不再被版本/分类/溯源 pill 挤压 -->
                   <h3 class="skill-card__title" :title="item.name">{{ item.name }}</h3>
-                  <!-- 000098 溯源：该目录行由平台「技能库」分配物化而来 -->
-                  <span v-if="item.source_platform_skill_id" class="skill-card__from-library">
-                    {{ $t('settings.skills.fromLibrary') }}
-                  </span>
-                  <span v-if="item.version" class="skill-card__type">{{ item.version }}</span>
+                  <div v-if="item.source_platform_skill_id || item.version || item.category || item.visible === false" class="skill-card__tags">
+                    <!-- 000108：本空间已隐藏（管理页 include_hidden 才会列出） -->
+                    <span v-if="item.visible === false" class="skill-card__hidden">
+                      {{ $t('settings.skills.hiddenInSpace') }}
+                    </span>
+                    <!-- 000098 溯源：该目录行由平台「技能库」分配物化而来 -->
+                    <span v-if="item.source_platform_skill_id" class="skill-card__from-library">
+                      {{ $t('settings.skills.fromLibrary') }}
+                    </span>
+                    <span v-if="item.version" class="skill-card__type">{{ item.version }}</span>
+                    <!-- 分类：Skills/MCP 浏览页分组；空间管理员/系统管理员可就地改 -->
+                    <span v-if="item.category" class="skill-card__category" :title="item.category">
+                      {{ item.category }}
+                    </span>
+                  </div>
                 </div>
                 <div class="skill-card__actions">
+                  <!-- 000108：空间可见开关（隐藏后从 Skills/MCP 浏览、智能体选技能
+                       与引用/运行时消失；列表本身用 include_hidden 保留可管理） -->
+                  <t-switch
+                    v-if="canManage"
+                    size="small"
+                    class="skill-card__visible-switch"
+                    :value="item.visible !== false"
+                    :disabled="savingVisibleId === item.id"
+                    :aria-label="$t('settings.skills.spaceVisibleAria')"
+                    @change="(v: boolean) => setSpaceVisible(item, v)"
+                  />
+                  <!-- 修改分类：t-popup 内联编辑（与安装面板同款受控弹层） -->
+                  <t-popup v-if="canManage" :visible="editingCategoryId === item.id" trigger="click"
+                    placement="bottom-right" attach="body" destroy-on-close
+                    overlay-class-name="skill-category-editor-overlay"
+                    :overlay-inner-style="{ padding: 0 }"
+                    @visible-change="(visible: boolean) => setCategoryEditor(item.id, visible)">
+                    <button type="button" class="skill-card__icon-btn"
+                      :title="$t('settings.skills.editCategory')" :aria-label="$t('settings.skills.editCategory')">
+                      <t-icon name="edit-1" size="14px" />
+                    </button>
+                    <template #content>
+                      <div class="skill-category-editor">
+                        <t-input v-model="editingCategoryValue" maxlength="255"
+                          :placeholder="$t('settings.skills.categoryPlaceholder')" :disabled="savingCategoryId === item.id"
+                          @enter="saveCategory(item)" />
+                        <t-button size="small" theme="primary" :loading="savingCategoryId === item.id"
+                          @click="saveCategory(item)">
+                          {{ $t('common.save') }}
+                        </t-button>
+                      </div>
+                    </template>
+                  </t-popup>
                   <button type="button" class="skill-card__icon-btn" :title="$t('settings.sandbox.skillFiles')"
                     :aria-label="$t('settings.sandbox.skillFiles')" @click="openCatalogFiles(item)">
                     <folder-icon size="14px" />
@@ -132,149 +171,8 @@
             </div>
           </div>
         </article>
-        <button v-if="canManage" type="button" class="skill-card skill-card--add" @click="openAdd">
-          <span class="skill-card--add__icon" aria-hidden="true">
-            <add-icon />
-          </span>
-          <span class="skill-card--add__label">{{ $t('settings.skills.addSkill') }}</span>
-        </button>
       </div>
     </template>
-
-    <SettingDrawer v-model:visible="showAdd" :title="$t('settings.skills.addSkill')" :description="addStepDescription"
-      :icon="SKILL_ICON" width="680px" :min-width="560" :max-width="920"
-      storage-key="setting-drawer:width:skill-catalog-add" :confirm-loading="addPrimaryLoading"
-      :confirm-disabled="addPrimaryDisabled" :confirm-text="addPrimaryText" @confirm="handleAddPrimary">
-      <template #header-extra>
-        <nav class="skill-add-steps" :aria-label="$t('settings.skills.addProgress')">
-          <component :is="canJumpAddStep(index) ? 'button' : 'div'" v-for="(item, index) in addSteps" :key="item.key"
-            :type="canJumpAddStep(index) ? 'button' : undefined" :class="['skill-add-step', {
-              'is-active': addStep === index,
-              'is-done': addStep > index,
-              'is-clickable': canJumpAddStep(index),
-            }]" :aria-current="addStep === index ? 'step' : undefined" @click="goToAddStep(index)">
-            <span class="skill-add-step__marker">
-              <t-icon v-if="addStep > index" name="check" />
-              <template v-else>{{ index + 1 }}</template>
-            </span>
-            <span class="skill-add-step__title">{{ item.title }}</span>
-            <span v-if="index < addSteps.length - 1" class="skill-add-step__line" aria-hidden="true" />
-          </component>
-        </nav>
-      </template>
-      <template #footer-left>
-        <t-button v-if="addStep > 0" variant="outline" @click="addPreviousStep">
-          {{ $t('settings.sandbox.back') }}
-        </t-button>
-      </template>
-
-      <article v-if="addStep > 0 && registeredCatalog" class="skill-card parsed-skill">
-        <div class="skill-card__main">
-          <div class="skill-card__badge" aria-hidden="true">
-            <t-icon :name="SKILL_ICON" size="16px" />
-          </div>
-          <div class="skill-card__body">
-            <div class="skill-card__header">
-              <h3 class="skill-card__title" :title="registeredCatalog.name">{{ registeredCatalog.name }}</h3>
-              <span v-if="registeredCatalog.version" class="skill-card__type">{{ registeredCatalog.version }}</span>
-            </div>
-            <p v-if="registeredCatalog.description" class="skill-card__desc" :title="registeredCatalog.description">
-              {{ compactText(registeredCatalog.description) }}
-            </p>
-          </div>
-        </div>
-      </article>
-
-      <template v-if="addStep === 0">
-        <section class="setting-drawer__section">
-          <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillSourceSection') }}</h4>
-          <p class="installer-model-hint">{{ $t('settings.sandbox.skillSourceSectionHint', { size: maxSkillBundleMB })
-          }}</p>
-          <t-input v-model="sourceInput" :placeholder="$t('settings.sandbox.skillSourcePlaceholder')"
-            :disabled="addBusy || !!registeredCatalog" @enter="handleAddPrimary" />
-        </section>
-
-        <section class="setting-drawer__section">
-          <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillUploadSection') }}</h4>
-          <p class="installer-model-hint">{{ $t('settings.sandbox.skillUploadSectionHint', { size: maxSkillBundleMB })
-          }}</p>
-          <input ref="fileInputRef" type="file" accept=".zip,application/zip" class="file-input-hidden"
-            @change="onFileInputChange" />
-          <div class="file-upload-area file-upload-area--large"
-            :class="{ 'has-file': !!pendingFile, 'is-disabled': addBusy || !!registeredCatalog }"
-            @click="!addBusy && !registeredCatalog && fileInputRef?.click()" @dragover.prevent @dragenter.prevent
-            @drop.prevent="onFileDrop">
-            <div class="file-upload-content">
-              <div class="file-upload-icon-wrap" aria-hidden="true">
-                <t-icon name="cloud-upload" size="32px" class="upload-icon" />
-              </div>
-              <div class="upload-text">
-                <span v-if="pendingFile" class="upload-file-name">
-                  {{ t('settings.skills.addFileSelected', { name: pendingFile.name }) }}
-                </span>
-                <template v-else>
-                  <span class="upload-primary-text">{{ $t('settings.sandbox.skillUploadClick') }}</span>
-                  <span class="upload-secondary-text">{{ $t('settings.sandbox.skillUploadDrag') }}</span>
-                </template>
-              </div>
-              <t-progress v-if="uploading" :percentage="uploadPercent" size="small" />
-            </div>
-          </div>
-          <t-button v-if="pendingFile && !registeredCatalog" variant="text" size="small" :disabled="addBusy"
-            @click="pendingFile = null">
-            {{ $t('settings.skills.addClearFile') }}
-          </t-button>
-        </section>
-      </template>
-
-      <template v-else>
-        <section v-if="skillConfigs.length > 0" class="setting-drawer__section">
-          <h4 class="setting-drawer__section-title">{{ $t('settings.skills.pickSandboxes') }}</h4>
-          <p class="installer-model-hint">{{ $t('settings.skills.pickSandboxesHint') }}</p>
-          <div class="sandbox-pick-list">
-            <div v-for="row in addPickRows" :key="row.cfg.id" class="sandbox-pick-row"
-              :class="{ 'is-busy': row.busy, 'is-ready': row.ready }">
-              <t-checkbox v-if="row.selectable" :checked="addTargetIds.includes(row.cfg.id)" :disabled="installing"
-                class="sandbox-pick" @change="(checked: boolean) => setAddPick(row.cfg.id, checked)">
-                <span class="sandbox-pick__main">
-                  <SandboxBackendBadge :type="row.cfg.sandbox_type" size="sm" />
-                  <span class="sandbox-pick__text">
-                    <span class="sandbox-pick__name">{{ row.cfg.name }}</span>
-                    <span class="sandbox-pick__meta">{{ sandboxMetaLine(row.cfg) }}</span>
-                  </span>
-                </span>
-              </t-checkbox>
-              <div v-else class="sandbox-pick sandbox-pick--status">
-                <span class="sandbox-pick__main">
-                  <SandboxBackendBadge :type="row.cfg.sandbox_type" size="sm" />
-                  <span class="sandbox-pick__text">
-                    <span class="sandbox-pick__name">{{ row.cfg.name }}</span>
-                    <span class="sandbox-pick__meta">{{ sandboxPickStatus(row) }}</span>
-                  </span>
-                </span>
-                <div v-if="row.busy" class="sandbox-pick__progress">
-                  <t-progress theme="circle" :percentage="sandboxPickPercent(row) ?? 0" :size="18" :stroke-width="2"
-                    :label="false" />
-                  <span v-if="sandboxPickPercent(row) != null">{{ sandboxPickPercent(row) }}%</span>
-                </div>
-                <t-button v-if="row.busy && row.install" size="small" variant="text" theme="primary"
-                  @click="openManageFromPick(registeredCatalog?.id, row.install)">
-                  {{ $t('settings.skills.viewInstallProgress') }}
-                </t-button>
-              </div>
-            </div>
-          </div>
-        </section>
-        <p v-else class="installer-model-hint">{{ $t('settings.skills.emptyNoSandboxHint') }}</p>
-
-        <section v-if="addTargetIds.length > 0" class="setting-drawer__section">
-          <h4 class="setting-drawer__section-title">{{ $t('settings.sandbox.skillInstallerModel') }}</h4>
-          <p class="installer-model-hint">{{ $t('settings.sandbox.skillInstallerModelHint') }}</p>
-          <ModelSelector model-type="KnowledgeQA" :selected-model-id="installerModelId"
-            :disabled="savingInstallerModel || installing" @update:selected-model-id="onInstallerModelChange" />
-        </section>
-      </template>
-    </SettingDrawer>
 
     <SettingDrawer v-model:visible="showInstall" :title="$t('settings.skills.installToSandbox')"
       :description="installDrawerDesc" :icon="SKILL_ICON" width="560px" :min-width="480" :max-width="760"
@@ -340,7 +238,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import { AddIcon, DeleteIcon, FolderIcon } from 'tdesign-icons-vue-next'
+import { DeleteIcon, FolderIcon } from 'tdesign-icons-vue-next'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import SandboxSkillsPanel from '@/components/SandboxSkillsPanel.vue'
@@ -351,16 +249,13 @@ import ModelSelector from '@/components/ModelSelector.vue'
 import { useConfirmDelete } from '@/components/settings/useConfirmDelete'
 import { useConfigSkillInstallProgress } from '@/composables/useConfigSkillInstallProgress'
 import { SKILL_ICON } from '@/types/mention'
-import { MAX_SKILL_BUNDLE_SIZE_BYTES, MAX_SKILL_BUNDLE_SIZE_MB } from '@/utils'
 import {
   deleteSkillCatalog,
   installSkillCatalog,
   listSkillCatalog,
-  registerSkillCatalogFromFile,
-  registerSkillCatalogFromSource,
+  updateSkillCatalogMeta,
   type SkillCatalogInstall,
   type SkillCatalogItem,
-  type SkillCatalogRegisterResult,
 } from '@/api/skill'
 import {
   getAgentById,
@@ -372,27 +267,19 @@ import {
   listSandboxConfigs,
   type SandboxConfigRecord,
 } from '@/api/system'
-import { useUIStore } from '@/stores/ui'
 import { useAuthStore } from '@/stores/auth'
 
 const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
-const uiStore = useUIStore()
 const authStore = useAuthStore()
 const confirmDelete = useConfirmDelete()
 
-// 000099 空间侧技能目录：写动作（登记/安装/启停/删除）后端全部 SystemAdmin，
-// 这里同步只在 UI 上给系统管理员露出；空间管理员是只读访客。
-const canManage = computed(() => authStore.isSystemAdmin)
-
-// 沙箱预选两条来源：openSettings('skill-catalog', configId) 深链（uiStore）
-// 与控制台旧链改道后的 URL ?sandbox=。
-const initialSandboxId = computed(
-  () =>
-    uiStore.settingsInitialSubSection ||
-    (typeof route.query.sandbox === 'string' ? route.query.sandbox : ''),
-)
+// 000107 空间侧技能目录：安装/启停/删除后端放宽到 AdminOrSystemAdmin —— 本
+// 空间 admin/owner 可对**自己空间**的沙箱做技能镜像管理，平台系统管理员照旧
+// （hasRole 对系统管理员按 admin 旁路）。hasRole 只是 UI 对齐，后端守卫才是
+// 权威；登记入口仍移除（平台单向分配），这里只消费平台物化出的目录行。
+const canManage = computed(() => authStore.hasRole('admin'))
 
 // 空态「前往沙箱配置」：沙箱配置已并入控制台「沙箱连接」，从空间 Settings
 // 跨路由跳过去；保留 ?tenant=（无害：连接面板不读它）。
@@ -406,16 +293,9 @@ function goSandboxSection() {
 const loading = ref(false)
 const records = ref<SandboxConfigRecord[]>([])
 const catalog = ref<SkillCatalogItem[]>([])
-const focusedCatalogId = ref('')
 const deletingId = ref('')
-const showAdd = ref(false)
 const showInstall = ref(false)
 const showManage = ref(false)
-const addStep = ref(0)
-const registeredCatalog = ref<SkillCatalogRegisterResult | null>(null)
-const pendingFile = ref<File | null>(null)
-const addTargetIds = ref<string[]>([])
-const addSessionIds = ref<string[]>([])
 const installTargetIds = ref<string[]>([])
 const installSessionIds = ref<string[]>([])
 const installCatalog = ref<SkillCatalogItem | null>(null)
@@ -426,12 +306,13 @@ const filesDrawerVisible = ref(false)
 const filesCatalogId = ref('')
 const filesCatalogName = ref('')
 const openPanelId = ref('')
-const sourceInput = ref('')
-const uploading = ref(false)
-const addingFromSource = ref(false)
+// 分类编辑（SystemAdmin）：卡片内 t-popup 受控状态
+const editingCategoryId = ref('')
+const editingCategoryValue = ref('')
+const savingCategoryId = ref('')
+// 000108：空间可见开关正在保存的技能
+const savingVisibleId = ref('')
 const installing = ref(false)
-const uploadPercent = ref(0)
-const fileInputRef = ref<HTMLInputElement | null>(null)
 const installerAgent = ref<CustomAgent | null>(null)
 const installerModelId = ref('')
 const savingInstallerModel = ref(false)
@@ -450,44 +331,10 @@ const {
 })
 
 let pollTimer: number | null = null
-let focusTimer: number | null = null
 
 const skillConfigs = computed(() =>
   records.value.filter((record) => isNamedSandboxBackend(record.sandbox_type)),
 )
-
-const addBusy = computed(() => uploading.value || addingFromSource.value)
-const maxSkillBundleMB = MAX_SKILL_BUNDLE_SIZE_MB
-
-const addSteps = computed(() => [
-  { key: 'register', title: t('settings.skills.addStepRegister') },
-  { key: 'install', title: t('settings.skills.addStepInstall') },
-])
-
-const addStepDescription = computed(() =>
-  addStep.value === 0
-    ? t('settings.skills.addStepRegisterDesc')
-    : t('settings.skills.addStepInstallDesc'),
-)
-
-const addPrimaryLoading = computed(() =>
-  addStep.value === 0 ? addBusy.value : installing.value,
-)
-
-const addPrimaryDisabled = computed(() => {
-  if (addBusy.value || installing.value) return true
-  if (addStep.value === 0) {
-    if (registeredCatalog.value) return false
-    return !sourceInput.value.trim() && !pendingFile.value
-  }
-  return addTargetIds.value.length > 0 && !installerModelId.value
-})
-
-const addPrimaryText = computed(() => {
-  if (addStep.value === 0) return t('common.next')
-  if (addTargetIds.value.length > 0) return t('settings.skills.installToSandbox')
-  return t('settings.skills.addFinish')
-})
 
 const installConfirmText = computed(() =>
   installTargetIds.value.length > 0
@@ -500,11 +347,7 @@ const installConfirmDisabled = computed(() =>
 )
 
 const installPickRows = computed(() =>
-  sandboxPickRows(catalogItemById(installCatalog.value?.id), 'remaining', installSessionIds.value),
-)
-
-const addPickRows = computed(() =>
-  sandboxPickRows(catalogItemById(registeredCatalog.value?.id), 'all', addSessionIds.value),
+  sandboxPickRows(catalogItemById(installCatalog.value?.id), installSessionIds.value),
 )
 
 const installDrawerDesc = computed(() => {
@@ -580,7 +423,6 @@ function catalogItemById(id: string | undefined | null): SkillCatalogItem | null
 
 function sandboxPickRows(
   item: SkillCatalogItem | null,
-  mode: 'remaining' | 'all',
   sessionIds: string[],
 ): SandboxPickRow[] {
   const byId = new Map(
@@ -589,7 +431,6 @@ function sandboxPickRows(
   const session = new Set(sessionIds)
   return skillConfigs.value
     .filter((cfg) => {
-      if (mode === 'all') return true
       const inst = byId.get(cfg.id)
       if (session.has(cfg.id)) return true
       if (inst && isInstallBusy(inst)) return true
@@ -621,10 +462,6 @@ function sandboxPickStatus(row: SandboxPickRow): string {
   return sandboxMetaLine(row.cfg)
 }
 
-function setAddPick(id: string, checked: boolean) {
-  setPickId(addTargetIds, id, checked)
-}
-
 function setInstallPick(id: string, checked: boolean) {
   setPickId(installTargetIds, id, checked)
 }
@@ -645,30 +482,6 @@ function prunePicks(ids: { value: string[] }, rows: SandboxPickRow[]) {
 
 function rememberSession(session: { value: string[] }, ids: string[]) {
   session.value = [...new Set([...session.value, ...ids])]
-}
-
-function catalogFromRegister(data: SkillCatalogRegisterResult | undefined, fallbackName: string): SkillCatalogRegisterResult | null {
-  const id = data?.id || ''
-  if (!id) return null
-  return {
-    id,
-    name: data?.name || fallbackName,
-    version: data?.version,
-    description: data?.description,
-  }
-}
-
-function syncRegisteredFromCatalog() {
-  const current = registeredCatalog.value
-  if (!current?.id) return
-  const item = catalog.value.find((row) => row.id === current.id)
-  if (!item) return
-  registeredCatalog.value = {
-    id: item.id,
-    name: item.name,
-    version: item.version,
-    description: item.description,
-  }
 }
 
 function compactText(value: string): string {
@@ -742,9 +555,21 @@ function installsView(item: SkillCatalogItem) {
 }
 
 function installSummary(item: SkillCatalogItem, view: ReturnType<typeof installsView>): string {
-  if (view.installs.length === 0) return t('settings.skills.installToSandbox')
+  if (view.installs.length === 0) {
+    // 可装（有可选沙箱）时给动作文案；纯只读空态给「尚未装到任何沙箱」。
+    return view.canAdd
+      ? t('settings.skills.installToSandbox')
+      : t('settings.skills.noInstalls')
+  }
   if (view.installs.length === 1) {
-    return t('settings.skills.installedOnName', { name: installName(view.installs[0]) })
+    // 单个安装：chip 文字反映真实状态，而不是一律写「已安装到沙箱名」——
+    // 安装中/失败/停用的技能不该伪装成已就绪（颜色只做辅助，文字才是语义）。
+    const inst = view.installs[0]
+    if (isInstallBusy(inst)) return installStatusText(inst) // 安装中 / 删除中
+    if (inst.status === 'failed') return t('settings.sandbox.skillStatusFailed')
+    if (inst.status === 'ready' && !inst.enabled) return t('settings.skills.disabledOnSandbox')
+    // ready && enabled：真正可用。文案不再暴露沙箱名（空间自建/平台推送通用）。
+    return t('settings.skills.installedOnSandbox')
   }
   return t('settings.skills.installedCount', { count: view.installs.length })
 }
@@ -784,6 +609,57 @@ function setInstallPanel(id: string, visible: boolean) {
     return
   }
   if (openPanelId.value === id) openPanelId.value = ''
+}
+
+// 分类编辑弹层：打开时用当前值播种，关闭时清空（与安装面板同一受控模式）。
+function setCategoryEditor(id: string, visible: boolean) {
+  if (visible) {
+    editingCategoryValue.value = catalog.value.find((row) => row.id === id)?.category || ''
+    editingCategoryId.value = id
+    return
+  }
+  if (editingCategoryId.value === id) editingCategoryId.value = ''
+}
+
+async function saveCategory(item: SkillCatalogItem) {
+  const category = editingCategoryValue.value.trim()
+  if (category.length > 255) {
+    MessagePlugin.warning(t('settings.skills.categorySaveFailed'))
+    return
+  }
+  if (category === (item.category || '')) {
+    editingCategoryId.value = ''
+    return
+  }
+  savingCategoryId.value = item.id
+  try {
+    await updateSkillCatalogMeta(item.id, category)
+    MessagePlugin.success(t('settings.skills.categorySaved'))
+    editingCategoryId.value = ''
+    await loadCatalog(true)
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('settings.skills.categorySaveFailed'))
+  } finally {
+    savingCategoryId.value = ''
+  }
+}
+
+// 000108：空间内显示/隐藏。切换不影响分类，故把当前分类一并带上（后端 PUT
+// 会写 category，空字符串会把分类清空）。
+async function setSpaceVisible(item: SkillCatalogItem, visible: boolean) {
+  if (savingVisibleId.value) return
+  savingVisibleId.value = item.id
+  try {
+    await updateSkillCatalogMeta(item.id, item.category || '', visible)
+    MessagePlugin.success(
+      visible ? t('settings.skills.showToSpace') : t('settings.skills.hideFromSpace'),
+    )
+    await loadCatalog(true)
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('settings.skills.categorySaveFailed'))
+  } finally {
+    savingVisibleId.value = ''
+  }
 }
 
 function openManageFromPanel(item: SkillCatalogItem, inst: SkillCatalogInstall) {
@@ -842,55 +718,6 @@ function askDelete(item: SkillCatalogItem) {
     body: t('settings.skills.deleteCatalogConfirm', { name: item.name }),
     onConfirm: () => removeCatalog(item),
   })
-}
-
-function defaultAddTargets(): string[] {
-  const preferred = (initialSandboxId.value || '').trim()
-  if (preferred && skillConfigs.value.some((cfg) => cfg.id === preferred)) return [preferred]
-  if (skillConfigs.value.length === 1) return [skillConfigs.value[0].id]
-  return []
-}
-
-function revealCatalog(id: string) {
-  focusedCatalogId.value = id
-  if (focusTimer != null) window.clearTimeout(focusTimer)
-  focusTimer = window.setTimeout(() => {
-    if (focusedCatalogId.value === id) focusedCatalogId.value = ''
-    focusTimer = null
-  }, 2400)
-}
-
-function resetAddWizard() {
-  addStep.value = 0
-  registeredCatalog.value = null
-  pendingFile.value = null
-  sourceInput.value = ''
-  addTargetIds.value = []
-  addSessionIds.value = []
-  uploadPercent.value = 0
-  if (fileInputRef.value) fileInputRef.value.value = ''
-}
-
-async function openAdd() {
-  if (!canManage.value) return
-  resetAddWizard()
-  await loadInstallerModel()
-  showAdd.value = true
-}
-
-function canJumpAddStep(index: number) {
-  if (index === addStep.value) return false
-  return Boolean(registeredCatalog.value) || index < addStep.value
-}
-
-function goToAddStep(index: number) {
-  if (!canJumpAddStep(index) && index !== addStep.value) return
-  addStep.value = index
-}
-
-function addPreviousStep() {
-  if (addStep.value <= 0) return
-  addStep.value -= 1
 }
 
 function openInstall(item: SkillCatalogItem) {
@@ -975,137 +802,8 @@ async function ensureInstallerModelIfNeeded(configIds: string[]) {
   await persistInstallerModel(installerModelId.value)
 }
 
-function isZipFile(file: File): boolean {
-  return file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip'
-}
-
-function acceptPendingFile(file: File) {
-  if (addBusy.value || registeredCatalog.value) return
-  if (!isZipFile(file)) {
-    MessagePlugin.error(t('settings.sandbox.skillUploadFailed'))
-    return
-  }
-  if (file.size > MAX_SKILL_BUNDLE_SIZE_BYTES) {
-    MessagePlugin.error(t('settings.sandbox.skillBundleTooLarge', { size: maxSkillBundleMB }))
-    return
-  }
-  pendingFile.value = file
-}
-
-function skillRegisterErrorMessage(err: any, fromFile: boolean): string {
-  const raw = String(err?.message || '')
-  if (/cannot exceed \d+\s*MB/i.test(raw)) {
-    return t('settings.sandbox.skillBundleTooLarge', { size: maxSkillBundleMB })
-  }
-  const tooManyFiles = raw.match(/skill directory holds more than (\d+) files/i)
-  if (tooManyFiles) {
-    return t('settings.sandbox.skillBundleTooManyFiles', { count: tooManyFiles[1] })
-  }
-  const tooManyEntries = raw.match(/archive has more than (\d+) zip entries/i)
-  if (tooManyEntries) {
-    return t('settings.sandbox.skillBundleTooManyZipEntries', { count: tooManyEntries[1] })
-  }
-  const legacyTooMany = raw.match(/archive holds more than (\d+) files/i)
-  if (legacyTooMany) {
-    return t('settings.sandbox.skillBundleTooManyFiles', { count: legacyTooMany[1] })
-  }
-  if (raw) return raw
-  return fromFile
-    ? t('settings.sandbox.skillUploadFailed')
-    : t('settings.sandbox.skillSourceFailed')
-}
-
-async function registerThenAdvance() {
-  if (registeredCatalog.value) {
-    addTargetIds.value = defaultAddTargets()
-    addStep.value = 1
-    return
-  }
-  const source = sourceInput.value.trim()
-  if (!pendingFile.value && !source) return
-
-  try {
-    let registered: SkillCatalogRegisterResult | null = null
-    if (pendingFile.value) {
-      uploading.value = true
-      uploadPercent.value = 0
-      const res = await registerSkillCatalogFromFile(pendingFile.value, (percent) => {
-        uploadPercent.value = percent
-      })
-      registered = catalogFromRegister(res?.data, pendingFile.value.name)
-    } else {
-      addingFromSource.value = true
-      const res = await registerSkillCatalogFromSource(source)
-      registered = catalogFromRegister(res?.data, source)
-    }
-    if (!registered) {
-      await loadCatalog()
-      return
-    }
-    registeredCatalog.value = registered
-    addTargetIds.value = defaultAddTargets()
-    addStep.value = 1
-    MessagePlugin.success(t('settings.skills.registerAccepted'))
-    await loadCatalog()
-    syncRegisteredFromCatalog()
-  } catch (e: any) {
-    MessagePlugin.error(skillRegisterErrorMessage(e, Boolean(pendingFile.value)))
-  } finally {
-    uploading.value = false
-    addingFromSource.value = false
-    uploadPercent.value = 0
-    if (fileInputRef.value) fileInputRef.value.value = ''
-  }
-}
-
 function catalogInstallFailedCount(res: { data?: { errors?: Record<string, string> } } | null | undefined): number {
   return Object.keys(res?.data?.errors || {}).length
-}
-
-async function handleAddPrimary() {
-  if (addPrimaryLoading.value || addPrimaryDisabled.value) return
-  if (addStep.value === 0) {
-    await registerThenAdvance()
-    return
-  }
-  const catalogId = registeredCatalog.value?.id
-  if (!catalogId) return
-  const targets = [...addTargetIds.value]
-  if (targets.length === 0) {
-    showAdd.value = false
-    revealCatalog(catalogId)
-    return
-  }
-  installing.value = true
-  try {
-    await ensureInstallerModelIfNeeded(targets)
-    const res = await installSkillCatalog(catalogId, targets)
-    const failed = catalogInstallFailedCount(res)
-    if (failed > 0) {
-      MessagePlugin.warning(t('settings.skills.installPartial', { failed }))
-    } else {
-      MessagePlugin.success(t('settings.skills.installAccepted'))
-    }
-    rememberSession(addSessionIds, targets)
-    await loadCatalog()
-    prunePicks(addTargetIds, addPickRows.value)
-  } catch (e: any) {
-    MessagePlugin.error(e?.message || t('settings.sandbox.skillUploadFailed'))
-  } finally {
-    installing.value = false
-  }
-}
-
-function onFileInputChange(event: Event) {
-  const input = event.target as HTMLInputElement
-  const file = input.files?.[0]
-  if (file) acceptPendingFile(file)
-}
-
-function onFileDrop(event: DragEvent) {
-  if (addBusy.value || registeredCatalog.value) return
-  const file = event.dataTransfer?.files?.[0]
-  if (file) acceptPendingFile(file)
 }
 
 function onInstallDrawerConfirm() {
@@ -1133,6 +831,14 @@ async function confirmInstall() {
     rememberSession(installSessionIds, targets)
     await loadCatalog()
     prunePicks(installTargetIds, installPickRows.value)
+    // 安装已接受：直接打开该技能在目标沙箱的「管理」抽屉，让安装过程（进度/
+    // 阶段/转录）立即可见，而不是只弹一个 toast 后让用户去找那个忙碌 chip。
+    const refreshed = catalog.value.find((row) => row.id === item.id)
+    const targetSet = new Set(targets)
+    const started = (refreshed?.installations || []).find(
+      (inst) => targetSet.has(inst.sandbox_config_id) && isInstallBusy(inst),
+    )
+    if (started) openManage(item, started)
   } catch (e: any) {
     MessagePlugin.error(e?.message || t('settings.sandbox.skillUploadFailed'))
   } finally {
@@ -1183,7 +889,8 @@ function ensurePoll() {
 
 async function loadCatalog(silent = false) {
   try {
-    const res = await listSkillCatalog()
+    // 000108：管理页 include_hidden，隐藏的技能也列出以便改回可见
+    const res = await listSkillCatalog(true)
     catalog.value = res?.data || []
   } catch (e: any) {
     if (!silent) MessagePlugin.error(e?.message || t('settings.skills.loadFailed'))
@@ -1222,31 +929,13 @@ watch(showInstall, (open) => {
   installSessionIds.value = []
 })
 
-watch(showAdd, (open) => {
-  if (open) {
-    openPanelId.value = ''
-    return
-  }
-  const catalogId = registeredCatalog.value?.id
-  resetAddWizard()
-  void loadCatalog()
-  if (catalogId) revealCatalog(catalogId)
-})
-
 const busyPickTargets = computed(() => {
-  const seen = new Set<string>()
   const targets: { configId: string; skillId: string }[] = []
-  const consider = (rows: SandboxPickRow[]) => {
-    for (const row of rows) {
-      if (!row.busy || !row.install?.skill_id) continue
-      const key = `${row.cfg.id}:${row.install.skill_id}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      targets.push({ configId: row.cfg.id, skillId: row.install.skill_id })
-    }
+  if (!showInstall.value) return targets
+  for (const row of installPickRows.value) {
+    if (!row.busy || !row.install?.skill_id) continue
+    targets.push({ configId: row.cfg.id, skillId: row.install.skill_id })
   }
-  if (showInstall.value) consider(installPickRows.value)
-  if (showAdd.value && addStep.value === 1) consider(addPickRows.value)
   return targets
 })
 
@@ -1258,7 +947,6 @@ onMounted(load)
 onUnmounted(() => {
   stopPoll()
   stopInstallProgress()
-  if (focusTimer != null) window.clearTimeout(focusTimer)
 })
 </script>
 
@@ -1310,6 +998,20 @@ onUnmounted(() => {
 
 :global(.skill-install-panel-overlay) {
   z-index: 3050 !important;
+}
+
+:global(.skill-category-editor-overlay) {
+  z-index: 3050 !important;
+}
+
+// 分类编辑弹层：输入 + 保存一行（复用安装面板的 overlay 样式骨架）
+.skill-category-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 260px;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
 }
 
 :global(.skill-install-panel-overlay .t-popup__content) {
@@ -1377,52 +1079,6 @@ onUnmounted(() => {
     background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
     color: var(--td-brand-color);
   }
-
-  &--add {
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    height: 100%;
-    padding: 16px 12px;
-    border-style: dashed;
-    background: transparent;
-    color: var(--td-text-color-placeholder);
-    cursor: pointer;
-    font: inherit;
-    text-align: center;
-
-    &:hover,
-    &:focus-visible {
-      color: var(--td-brand-color);
-      border-color: var(--td-brand-color);
-      background: color-mix(in srgb, var(--td-brand-color) 6%, transparent);
-      box-shadow: none;
-
-      .skill-card--add__icon {
-        background: color-mix(in srgb, var(--td-brand-color) 10%, transparent);
-        color: var(--td-brand-color);
-      }
-    }
-
-    &__icon {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      background: var(--td-bg-color-secondarycontainer);
-      color: var(--td-text-color-secondary);
-      font-size: 18px;
-    }
-
-    &__label {
-      font-size: 13px;
-      font-weight: 500;
-      line-height: 1.4;
-    }
-  }
 }
 
 .skill-card__main {
@@ -1457,22 +1113,30 @@ onUnmounted(() => {
 
 .skill-card__header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
-  min-height: 28px;
 }
 
 .skill-card__heading {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: baseline;
+  flex-direction: column;
+  gap: 3px;
+}
+
+// 版本 / 分类 / 溯源 pill 排在英文名之下的独立一行，可换行不挤压标题
+.skill-card__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
+  min-width: 0;
 }
 
 .skill-card__title {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
   margin: 0;
   font-size: 14px;
@@ -1535,6 +1199,24 @@ onUnmounted(() => {
   color: var(--td-text-color-placeholder);
 }
 
+// 000108：本空间已隐藏的标识（管理页 include_hidden 列出的隐藏技能）
+.skill-card__hidden {
+  flex-shrink: 0;
+  padding: 0 6px;
+  border: 1px solid var(--td-warning-color-5, #E37318);
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--td-warning-color-7, #B85C00);
+  background: color-mix(in srgb, var(--td-warning-color) 10%, transparent);
+  white-space: nowrap;
+}
+
+.skill-card__visible-switch {
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
 // 溯源 pill：平台技能库分配物化的目录行（自建行不渲染）
 .skill-card__from-library {
   flex-shrink: 0;
@@ -1546,6 +1228,22 @@ onUnmounted(() => {
   color: var(--td-brand-color);
   background: var(--td-brand-color-light, transparent);
   white-space: nowrap;
+}
+
+// 分类 pill：中性配色与溯源 pill 区分（分类可改，溯源是事实）
+.skill-card__category {
+  flex-shrink: 0;
+  max-width: 120px;
+  padding: 0 6px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondarycontainer);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .skill-card__desc {
@@ -1781,103 +1479,6 @@ onUnmounted(() => {
   color: var(--td-text-color-secondary);
 }
 
-.parsed-skill {
-  margin: 0 0 16px;
-}
-
-.skill-add-steps {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-}
-
-.skill-add-step {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: var(--td-text-color-placeholder);
-  transition: color 0.15s ease;
-
-  &:not(:last-child) {
-    flex: 1;
-  }
-
-  &.is-active {
-    color: var(--td-brand-color);
-  }
-
-  &.is-done {
-    color: var(--td-text-color-secondary);
-  }
-
-  &.is-clickable {
-    padding: 0;
-    font: inherit;
-    text-align: left;
-    background: none;
-    border: 0;
-    cursor: pointer;
-
-    &:hover:not(.is-active) {
-      color: var(--td-brand-color);
-    }
-
-    &:focus-visible {
-      outline: 2px solid var(--td-brand-color);
-      outline-offset: 2px;
-      border-radius: 4px;
-    }
-  }
-}
-
-.skill-add-step__marker {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  flex-shrink: 0;
-  border: 1px solid currentColor;
-  border-radius: 50%;
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 1;
-
-  .is-active & {
-    background: var(--td-brand-color);
-    border-color: var(--td-brand-color);
-    color: #fff;
-  }
-
-  .is-done & {
-    background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
-    border-color: color-mix(in srgb, var(--td-brand-color) 35%, transparent);
-    color: var(--td-brand-color);
-  }
-}
-
-.skill-add-step__title {
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.skill-add-step__line {
-  flex: 1;
-  min-width: 16px;
-  height: 1px;
-  margin: 0 4px;
-  background: var(--td-component-stroke);
-
-  .is-done & {
-    background: color-mix(in srgb, var(--td-brand-color) 35%, transparent);
-  }
-}
-
 .sandbox-pick-list {
   display: flex;
   flex-direction: column;
@@ -2004,76 +1605,5 @@ onUnmounted(() => {
   :deep(.t-progress--circle svg) {
     display: block;
   }
-}
-
-.skill-source-row {
-  width: 100%;
-}
-
-.file-input-hidden {
-  display: none;
-}
-
-.file-upload-area {
-  border: 1px dashed var(--td-component-stroke);
-  border-radius: 10px;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
-
-  &:hover:not(.is-disabled) {
-    border-color: var(--td-brand-color);
-    background: color-mix(in srgb, var(--td-brand-color) 4%, transparent);
-  }
-
-  &.is-disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-}
-
-.file-upload-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  padding: 24px 20px;
-}
-
-.file-upload-icon-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--td-brand-color) 12%, transparent);
-}
-
-.upload-icon {
-  color: var(--td-brand-color);
-}
-
-.upload-text {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-}
-
-.upload-primary-text {
-  font-size: 15px;
-  font-weight: 500;
-  color: var(--td-text-color-primary);
-}
-
-.upload-secondary-text {
-  font-size: 13px;
-  color: var(--td-text-color-secondary);
-}
-
-.upload-file-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--td-brand-color);
 }
 </style>

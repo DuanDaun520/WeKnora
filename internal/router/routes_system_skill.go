@@ -33,9 +33,25 @@ func RegisterSystemAdminSkillRoutes(
 		// first, same shape as the sandbox-connection routes.
 		adminRoutes.GET("/skills", h.ListSkills)
 		adminRoutes.POST("/skills", h.CreateSkill)
+
+		// Category registry of the library (000105): categories are created
+		// here first and skills then only reference them (the register drawer is
+		// not creatable). GET lists the registry with usage counts; POST
+		// registers one; rename/remove administer the registry and the skills
+		// referencing it in one transaction. Static segments, so they win over
+		// the :id routes below.
+		adminRoutes.GET("/skills/categories", h.ListSkillCategories)
+		adminRoutes.POST("/skills/categories", h.CreateSkillCategory)
+		adminRoutes.PUT("/skills/categories/rename", h.RenameSkillCategory)
+		adminRoutes.PUT("/skills/categories/remove", h.RemoveSkillCategory)
+
 		adminRoutes.GET("/skills/:id", h.GetSkill)
 		adminRoutes.PUT("/skills/:id", h.UpdateSkill)
 		adminRoutes.DELETE("/skills/:id", h.DeleteSkill)
+
+		// Definition metadata (category/author): separate from the bundle
+		// re-register so a meta edit alone drives drift toward push.
+		adminRoutes.PUT("/skills/:id/meta", h.UpdateSkillMeta)
 
 		// File browser of the stored platform bundle (drawer SKILL.md view).
 		adminRoutes.GET("/skills/:id/files", h.ListSkillFiles)

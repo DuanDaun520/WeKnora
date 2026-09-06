@@ -44,12 +44,14 @@ func RegisterModelRoutes(
 }
 
 // Sandbox configs are workspace infrastructure that hold provider credentials.
-// Since the admin-console 按空间代管 migration the whole management surface
-// (config CRUD, inventory, config-scoped skills) is SystemAdmin-only and the
-// admin console drives it through X-Tenant-ID; workspace admins keep the
-// Viewer reads (agent editors resolve sandbox configs). Scoped API keys
-// cannot safely receive partial authority over them yet because mutation can
-// strand remote sandboxes.
+// Since the admin-console 按空间代管 migration config CRUD, workspace policy and
+// inventory are SystemAdmin-only and the admin console drives them through
+// X-Tenant-ID; workspace admins keep the Viewer reads (agent editors resolve
+// sandbox configs). Config-scoped SKILLS are the one relaxed slice (000107):
+// a space's own admin/owner may install and manage the skills baked into its
+// own configs, while direct upload stays platform-SystemAdmin-only. Scoped API
+// keys cannot safely receive partial authority over any of it yet because
+// mutation can strand remote sandboxes.
 func RegisterSandboxConfigRoutes(
 	r *gin.RouterGroup,
 	h *handler.SandboxConfigHandler,
@@ -66,20 +68,25 @@ func RegisterSandboxConfigRoutes(
 		configs.PUT("/:id", g.SystemAdmin(), h.Update)
 		configs.DELETE("/:id", g.SystemAdmin(), h.Delete)
 		configs.GET("/:id/sandboxes", g.SystemAdmin(), h.Inventory)
-		// Skills are SystemAdmin throughout, reads included: an upload drives
-		// a root shell whose output is baked into the image every session of
-		// this config boots, and the listing names what that image carries.
-		configs.GET("/:id/skills", g.SystemAdmin(), skills.List)
+		// Managing the skills baked into a config's image (list / enable-disable /
+		// reinstall / uninstall / progress / transcript) since 000107 is a decision
+		// the space's own admin/owner may make for its own configs: guards are
+		// AdminOrSystemAdmin, and every service call is tenant-scoped to the
+		// request's workspace, so a space admin can never reach another space's
+		// config by id. Direct upload (POST) still drives a root shell whose output
+		// is baked into the image every session boots, so it stays platform-
+		// SystemAdmin-only (000099: skills arrive via the platform library).
+		configs.GET("/:id/skills", g.AdminOrSystemAdmin(), skills.List)
 		configs.POST("/:id/skills", g.SystemAdmin(), skills.Upload)
-		configs.GET("/:id/skills/:skillId", g.SystemAdmin(), skills.Get)
-		configs.GET("/:id/skills/:skillId/files", g.SystemAdmin(), skills.ListFiles)
-		configs.GET("/:id/skills/:skillId/files/content", g.SystemAdmin(), skills.GetFile)
-		configs.POST("/:id/skills/:skillId/reinstall", g.SystemAdmin(), skills.Reinstall)
-		configs.POST("/:id/skills/:skillId/stop", g.SystemAdmin(), skills.Stop)
-		configs.PATCH("/:id/skills/:skillId", g.SystemAdmin(), skills.Patch)
-		configs.DELETE("/:id/skills/:skillId", g.SystemAdmin(), skills.Delete)
-		configs.GET("/:id/skills/:skillId/install-events", g.SystemAdmin(), skills.InstallEvents)
-		configs.GET("/:id/skills/:skillId/transcript", g.SystemAdmin(), skills.InstallTranscript)
+		configs.GET("/:id/skills/:skillId", g.AdminOrSystemAdmin(), skills.Get)
+		configs.GET("/:id/skills/:skillId/files", g.AdminOrSystemAdmin(), skills.ListFiles)
+		configs.GET("/:id/skills/:skillId/files/content", g.AdminOrSystemAdmin(), skills.GetFile)
+		configs.POST("/:id/skills/:skillId/reinstall", g.AdminOrSystemAdmin(), skills.Reinstall)
+		configs.POST("/:id/skills/:skillId/stop", g.AdminOrSystemAdmin(), skills.Stop)
+		configs.PATCH("/:id/skills/:skillId", g.AdminOrSystemAdmin(), skills.Patch)
+		configs.DELETE("/:id/skills/:skillId", g.AdminOrSystemAdmin(), skills.Delete)
+		configs.GET("/:id/skills/:skillId/install-events", g.AdminOrSystemAdmin(), skills.InstallEvents)
+		configs.GET("/:id/skills/:skillId/transcript", g.AdminOrSystemAdmin(), skills.InstallTranscript)
 	}
 }
 

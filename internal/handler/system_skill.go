@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/application/service"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -18,6 +20,16 @@ import (
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
+
+// maxZhDescriptionLen caps the admin-managed Chinese description (000106). The
+// console list shows only its first 40 characters; the cap just bounds what the
+// edit form may store.
+const maxZhDescriptionLen = 2000
+
+// metaRuneLen counts characters (runes) rather than bytes: the UI maxlength and
+// the VARCHAR(255) columns both count characters, so an ASCII byte-length check
+// would wrongly reject Chinese metadata well under the cap.
+func metaRuneLen(s string) int { return utf8.RuneCountInString(s) }
 
 // SystemSkillHandler backs the /system/admin/skills endpoints — the platform
 // skill library of the admin console (000098). A skill is registered once
@@ -82,15 +94,19 @@ func (h *SystemSkillHandler) emitAudit(
 // skill. Instructions are deliberately absent: the file browser already
 // serves SKILL.md out of the stored bundle.
 type systemPlatformSkillResponse struct {
-	ID           string                            `json:"id"`
-	Name         string                            `json:"name"`
-	Version      string                            `json:"version,omitempty"`
-	Description  string                            `json:"description,omitempty"`
-	Source       string                            `json:"source,omitempty"`
-	BundleSHA256 string                            `json:"bundle_sha256,omitempty"`
-	Assignments  []service.PlatformSkillAssignment `json:"assignments"`
-	CreatedAt    time.Time                         `json:"created_at"`
-	UpdatedAt    time.Time                         `json:"updated_at"`
+	ID            string                            `json:"id"`
+	Name          string                            `json:"name"`
+	Version       string                            `json:"version,omitempty"`
+	Description   string                            `json:"description,omitempty"`
+	Source        string                            `json:"source,omitempty"`
+	BundleSHA256  string                            `json:"bundle_sha256,omitempty"`
+	Category      string                            `json:"category,omitempty"`
+	Author        string                            `json:"author,omitempty"`
+	ZhName        string                            `json:"zh_name,omitempty"`
+	ZhDescription string                            `json:"zh_description,omitempty"`
+	Assignments   []service.PlatformSkillAssignment `json:"assignments"`
+	CreatedAt     time.Time                         `json:"created_at"`
+	UpdatedAt     time.Time                         `json:"updated_at"`
 }
 
 func (h *SystemSkillHandler) toResponse(
@@ -106,15 +122,19 @@ func (h *SystemSkillHandler) toResponse(
 		assignments = []service.PlatformSkillAssignment{}
 	}
 	return systemPlatformSkillResponse{
-		ID:           e.ID,
-		Name:         e.Name,
-		Version:      e.Version,
-		Description:  e.Description,
-		Source:       e.Source,
-		BundleSHA256: e.BundleSHA256,
-		Assignments:  assignments,
-		CreatedAt:    e.CreatedAt,
-		UpdatedAt:    e.UpdatedAt,
+		ID:            e.ID,
+		Name:          e.Name,
+		Version:       e.Version,
+		Description:   e.Description,
+		Source:        e.Source,
+		BundleSHA256:  e.BundleSHA256,
+		Category:      e.Category,
+		Author:        e.Author,
+		ZhName:        e.ZhName,
+		ZhDescription: e.ZhDescription,
+		Assignments:   assignments,
+		CreatedAt:     e.CreatedAt,
+		UpdatedAt:     e.UpdatedAt,
 	}
 }
 
@@ -139,6 +159,22 @@ func respondPlatformSkillError(c *gin.Context, err error) bool {
 			"error": gin.H{
 				"code":    "name_immutable",
 				"message": "技能名称不可修改；如需改名请注册新技能",
+			},
+		})
+	case stderrors.Is(err, service.ErrPlatformSkillCategoryNotFound):
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"error": gin.H{
+				"code":    "category_not_found",
+				"message": "分类不存在，请先在技能库「分类管理」中创建",
+			},
+		})
+	case stderrors.Is(err, service.ErrPlatformSkillCategoryExists):
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false,
+			"error": gin.H{
+				"code":    "category_exists",
+				"message": "同名分类已存在",
 			},
 		})
 	default:
@@ -292,6 +328,7 @@ func (h *SystemSkillHandler) registerBody(
 		err     error
 		source  string
 		archive []byte
+		meta    service.PlatformSkillMeta
 	)
 	if strings.HasPrefix(c.ContentType(), "application/json") {
 		var req skillSourceRequest
@@ -299,6 +336,8 @@ func (h *SystemSkillHandler) registerBody(
 			return nil, false
 		}
 		source = strings.TrimSpace(req.Source)
+		meta.Category, meta.Author = req.Category, req.Author
+		meta.ZhName, meta.ZhDescription = req.ZhName, req.ZhDescription
 	} else {
 		body, ok := readSkillUploadBody(c)
 		if !ok {
@@ -309,13 +348,25 @@ func (h *SystemSkillHandler) registerBody(
 		if source == "" {
 			source = "upload"
 		}
+		meta.Category, meta.Author = c.PostForm("category"), c.PostForm("author")
+		meta.ZhName, meta.ZhDescription = c.PostForm("zh_name"), c.PostForm("zh_description")
+	}
+	// Empty category/author mean "fall back to the SKILL.md frontmatter";
+	// empty zh fields mean "no Chinese copy yet" (SKILL.md has no zh values).
+	// Oversized ones never reach the service.
+	meta.Category, meta.Author = strings.TrimSpace(meta.Category), strings.TrimSpace(meta.Author)
+	meta.ZhName, meta.ZhDescription = strings.TrimSpace(meta.ZhName), strings.TrimSpace(meta.ZhDescription)
+	if metaRuneLen(meta.Category) > 255 || metaRuneLen(meta.Author) > 255 ||
+		metaRuneLen(meta.ZhName) > 255 || metaRuneLen(meta.ZhDescription) > maxZhDescriptionLen {
+		_ = c.Error(apperrors.NewBadRequestError("skill metadata is too long"))
+		return nil, false
 	}
 
 	if updateID == "" {
 		if archive != nil {
-			skill, err = h.svc.CreateFromArchive(ctx, archive, source)
+			skill, err = h.svc.CreateFromArchive(ctx, archive, source, meta)
 		} else {
-			skill, err = h.svc.CreateFromSource(ctx, source)
+			skill, err = h.svc.CreateFromSource(ctx, source, meta)
 		}
 	} else {
 		if archive != nil {
@@ -329,6 +380,170 @@ func (h *SystemSkillHandler) registerBody(
 		return nil, false
 	}
 	return skill, true
+}
+
+// systemSkillMetaRequest is the presence-based body of PUT /skills/:id/meta:
+// an absent field keeps the current value, a present string replaces it (an
+// explicit "" clears back to uncategorized / unknown author).
+type systemSkillMetaRequest struct {
+	Category      *string `json:"category"`
+	Author        *string `json:"author"`
+	ZhName        *string `json:"zh_name"`
+	ZhDescription *string `json:"zh_description"`
+}
+
+// UpdateSkillMeta PUT /system/admin/skills/:id/meta
+// Rewrites only the admin-managed definition metadata. The service's
+// updated_at stamp lights drift on every assignment, so the new
+// category/author/zh fields reach workspaces through the same push that bundle
+// edits do — bundle re-registers (PUT /:id) never touch these columns.
+func (h *SystemSkillHandler) UpdateSkillMeta(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := secutils.SanitizeForLog(c.Param("id"))
+	var req systemSkillMetaRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperrors.NewBadRequestError(err.Error()))
+		return
+	}
+	for _, capped := range []struct {
+		value *string
+		max   int
+	}{{req.Category, 255}, {req.Author, 255}, {req.ZhName, 255},
+		{req.ZhDescription, maxZhDescriptionLen}} {
+		if capped.value != nil && metaRuneLen(strings.TrimSpace(*capped.value)) > capped.max {
+			_ = c.Error(apperrors.NewBadRequestError("skill metadata is too long"))
+			return
+		}
+	}
+	updated, err := h.svc.UpdateMeta(
+		ctx, id, req.Category, req.Author, req.ZhName, req.ZhDescription)
+	if err != nil {
+		respondPlatformSkillServiceError(c, err)
+		return
+	}
+	h.emitAudit(ctx, types.AuditActionSystemPlatformSkillUpdated, id, map[string]any{
+		"category": updated.Category, "author": updated.Author,
+	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": h.toResponse(ctx, updated)})
+}
+
+// systemSkillCategoryCreateRequest is the body of POST /skills/categories.
+type systemSkillCategoryCreateRequest struct {
+	Name string `json:"name"`
+}
+
+// CreateSkillCategory POST /system/admin/skills/categories
+// Registers a category in the library's registry (000105). Categories are
+// created HERE first — the register/edit drawer only picks from what already
+// exists, never mints a new one.
+func (h *SystemSkillHandler) CreateSkillCategory(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req systemSkillCategoryCreateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperrors.NewBadRequestError(err.Error()))
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len(name) > 255 {
+		_ = c.Error(apperrors.NewBadRequestError("invalid category name"))
+		return
+	}
+	created, err := h.svc.CreateCategory(ctx, name)
+	if err != nil {
+		respondPlatformSkillServiceError(c, err)
+		return
+	}
+	h.emitAudit(ctx, types.AuditActionSystemPlatformSkillUpdated, "", map[string]any{
+		"created_category": created.Name,
+	})
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": systemSkillCategoryResponse{
+		ID: created.ID, Name: created.Name,
+	}})
+}
+
+// systemSkillCategoryResponse is the console projection of one registry row.
+type systemSkillCategoryResponse struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// ListSkillCategories GET /system/admin/skills/categories
+// The category registry with per-name usage counts: every registered category
+// (a just-created, unused one included) plus how many live skills reference it.
+func (h *SystemSkillHandler) ListSkillCategories(c *gin.Context) {
+	rows, err := h.svc.ListCategories(c.Request.Context())
+	if err != nil {
+		c.Error(apperrors.NewInternalServerError(err.Error()))
+		return
+	}
+	if rows == nil {
+		rows = []repository.SkillCategoryCount{}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows})
+}
+
+// systemSkillCategoryRenameRequest is the body of PUT /skills/categories/rename.
+type systemSkillCategoryRenameRequest struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// RenameSkillCategory PUT /system/admin/skills/categories/rename
+// Moves every live skill of one category to another name. The updated_at bump
+// lights drift on each affected skill's assignments; push propagates.
+func (h *SystemSkillHandler) RenameSkillCategory(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req systemSkillCategoryRenameRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperrors.NewBadRequestError(err.Error()))
+		return
+	}
+	from, to := strings.TrimSpace(req.From), strings.TrimSpace(req.To)
+	if from == "" || to == "" || from == to ||
+		len(from) > 255 || len(to) > 255 {
+		_ = c.Error(apperrors.NewBadRequestError("invalid category rename"))
+		return
+	}
+	moved, err := h.svc.RenameCategory(ctx, from, to)
+	if err != nil {
+		respondPlatformSkillServiceError(c, err)
+		return
+	}
+	h.emitAudit(ctx, types.AuditActionSystemPlatformSkillUpdated, "", map[string]any{
+		"rename_from": from, "rename_to": to, "moved": moved,
+	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "renamed": moved})
+}
+
+// systemSkillCategoryRemoveRequest is the body of PUT /skills/categories/remove.
+type systemSkillCategoryRemoveRequest struct {
+	Name string `json:"name"`
+}
+
+// RemoveSkillCategory PUT /system/admin/skills/categories/remove
+// Sends one category's skills back to uncategorized. Like rename, the
+// affected rows drift until pushed.
+func (h *SystemSkillHandler) RemoveSkillCategory(c *gin.Context) {
+	ctx := c.Request.Context()
+	var req systemSkillCategoryRemoveRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		_ = c.Error(apperrors.NewBadRequestError(err.Error()))
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" || len(name) > 255 {
+		_ = c.Error(apperrors.NewBadRequestError("invalid category name"))
+		return
+	}
+	cleared, err := h.svc.RemoveCategory(ctx, name)
+	if err != nil {
+		respondPlatformSkillServiceError(c, err)
+		return
+	}
+	h.emitAudit(ctx, types.AuditActionSystemPlatformSkillUpdated, "", map[string]any{
+		"removed_category": name, "cleared": cleared,
+	})
+	c.JSON(http.StatusOK, gin.H{"success": true, "cleared": cleared})
 }
 
 // DeleteSkill DELETE /system/admin/skills/:id

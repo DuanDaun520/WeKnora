@@ -40,6 +40,11 @@ export interface MCPService {
   }
   env_vars?: Record<string, string> // Environment variables for stdio transport
   is_builtin?: boolean // Whether this is a builtin MCP service
+  // Skills/MCP browser fields: grouping category (empty = uncategorized) and
+  // creator attribution (id + read-time enriched display name).
+  category?: string
+  created_by?: string
+  creator_name?: string
   // Per-field "configured?" map embedded on the main response (server-side
   // dto.MCPServiceResponse.Credentials). Drives the CredentialResource card
   // without a follow-up GET. Absent for builtin services.

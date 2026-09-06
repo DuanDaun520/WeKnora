@@ -1297,16 +1297,23 @@
                             </div>
                           </t-option>
                         </t-select>
-                        <!-- 000100：登记/安装收归系统管理员（000099）——「管理沙箱」
-                             「管理技能」入口仅系统管理员可见；普通成员只看到统一配置
-                             提示，也不展示 Docker · 镜像 · 描述 这类技术摘要。 -->
-                        <div v-if="canInstallSkills" class="sandbox-select-links">
-                          <a href="javascript:void(0)" class="go-settings-link"
-                            @click.prevent="uiStore.openSettings('sandbox')">
+                        <!-- 000100/000107：「管理沙箱」指平台控制台的沙箱连接，仍仅系统管
+                             理员可见；「管理技能」指本空间技能目录（000107 起本空间 admin/
+                             owner 可安装），本空间管理员以上可见。普通成员只看到统一配置提示。 -->
+                        <div
+                          v-if="canManageSandboxConsole || (hasSandboxSelected && canInstallSkills)"
+                          class="sandbox-select-links"
+                        >
+                          <a
+                            v-if="canManageSandboxConsole"
+                            href="javascript:void(0)"
+                            class="go-settings-link"
+                            @click.prevent="uiStore.openSettings('sandbox')"
+                          >
                             {{ $t('agent.editor.goSandboxSettings') }}
                           </a>
-                          <template v-if="hasSandboxSelected">
-                            <span class="sandbox-select-links__sep" aria-hidden="true">·</span>
+                          <template v-if="hasSandboxSelected && canInstallSkills">
+                            <span v-if="canManageSandboxConsole" class="sandbox-select-links__sep" aria-hidden="true">·</span>
                             <a
                               href="javascript:void(0)"
                               class="go-settings-link"
@@ -2077,9 +2084,13 @@ const hasSandboxSelected = computed(() => !!formData.value.config.sandbox_config
 const canEnableSkills = computed(() =>
   hasSandboxSelected.value || namedSandboxConfigs().length === 1,
 );
-// 技能登记/安装后端是 g.SystemAdmin()（000095 收权）：只有系统管理员能从
-// 编辑器里直装，空间管理员点了只会 403，入口直接收紧。
-const canInstallSkills = computed(() => authStore.isSystemAdmin);
+// 000107：技能安装后端放宽到 AdminOrSystemAdmin —— 本空间 admin/owner 或平
+// 台系统管理员可从编辑器直装（hasRole 对系统管理员按 admin 旁路；hasRole 只
+// 是 UI 对齐，后端守卫才是权威）。
+const canInstallSkills = computed(() => authStore.hasRole('admin'));
+// 「管理沙箱」入口指向平台控制台的沙箱连接（SystemAdmin 控制台），不是空间
+// 技能目录 —— 即使 000107 放开了技能安装，这个入口仍只对平台系统管理员可见。
+const canManageSandboxConsole = computed(() => authStore.isSystemAdmin);
 
 type CatalogSkillRow = SkillCatalogItem & {
   installed: boolean
@@ -2136,7 +2147,14 @@ const catalogSkillGroups = computed(() => {
 })
 
 function skillStatusHint(skill: CatalogSkillRow): string {
-  if (!skill.installed) return t('agent.editor.skillNotInstalled')
+  if (!skill.installed) {
+    // 未安装对系统管理员是可行动的（右侧有「安装」按钮，装完即入可用组）；
+    // 对普通成员是等待态 —— 说明原因而非丢一个干巴巴的「未安装」。已推送的
+    // 平台技能同理：定义已进空间目录，但须安装到当前沙箱镜像才能真正可用。
+    return canInstallSkills.value
+      ? t('agent.editor.skillNotInstalledSelf')
+      : t('agent.editor.skillNotInstalledByAdmin')
+  }
   if (skill.installStatus === 'installing') return t('settings.sandbox.skillStatusInstalling')
   if (skill.installStatus === 'failed') return t('settings.sandbox.skillStatusFailed')
   if (skill.installStatus === 'removing') return t('settings.sandbox.skillStatusRemoving')

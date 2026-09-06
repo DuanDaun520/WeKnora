@@ -148,6 +148,22 @@ const (
 	AuditActionSystemUserEnabled  AuditAction = "system.user_enabled"
 	AuditActionSystemUserDisabled AuditAction = "system.user_disabled"
 
+	// AuditActionSystemUserDeleted fires when a SystemAdmin hard-deletes a
+	// user via DELETE /system/admin/users/{user_id}: every binding is
+	// removed first (rbac.member_removed rows), then the users row itself
+	// is deleted. Details carry {target_employee_id, bindings_removed}.
+	// TenantID=0 (system scope).
+	AuditActionSystemUserDeleted AuditAction = "system.user_deleted"
+
+	// Platform workspace-lifecycle actions fired by the
+	// /system/admin/tenants* endpoints. tenant_updated covers name /
+	// description / storage-quota edits and the disable/enable toggle
+	// (details carry the changed fields); tenant_deleted records the
+	// hard delete of an empty workspace. TenantID=0 (system scope);
+	// TargetType=tenant / TargetID=<tenant id>.
+	AuditActionSystemTenantUpdated AuditAction = "system.tenant_updated"
+	AuditActionSystemTenantDeleted AuditAction = "system.tenant_deleted"
+
 	// Platform model-governance actions fired by the /system/admin/models*
 	// endpoints (000094 rework: models are configured by the system admin
 	// and shared with workspaces through explicit assignments). TenantID=0

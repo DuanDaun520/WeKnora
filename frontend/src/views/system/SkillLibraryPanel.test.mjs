@@ -58,3 +58,49 @@ test('panel chrome reuses the console conventions', () => {
   assert.match(source, /skillLibrary\.noMatchHint/)
   assert.match(source, /skillLibrary\.addSkill/)
 })
+
+test('cards surface the definition metadata (000104)', () => {
+  // 分类 pill 与空间技能目录卡同款；作者与更新时间同行。
+  assert.match(source, /skill-card__category/)
+  assert.match(source, /skill\.category/)
+  assert.match(source, /skill-card__author/)
+  assert.match(source, /skill\.author/)
+})
+
+test('search spans the metadata fields too (000106 adds zh copy)', () => {
+  assert.match(source, /skill\.name,/)
+  assert.match(source, /skill\.zh_name,/)
+  assert.match(source, /skill\.description,/)
+  assert.match(source, /skill\.zh_description,/)
+  assert.match(source, /skill\.version,/)
+  assert.match(source, /skill\.category,/)
+  assert.match(source, /skill\.author,/)
+})
+
+test('category chips quick-filter the list (000106)', () => {
+  assert.match(source, /CATEGORY_ALL = '__all__'/)
+  assert.match(source, /const skillCategories = computed/)
+  assert.match(source, /class="category-chip"/)
+  assert.match(source, /skillLibrary\.categoryFilterAll/)
+  assert.match(source, /skillLibrary\.uncategorized/)
+  assert.match(source, /skillLibrary\.countLabel/)
+})
+
+test('cards prefer the Chinese display metadata and clamp the description (000106)', () => {
+  assert.match(source, /const cardTitle = \(skill: PlatformSkill\) => skill\.zh_name \|\| skill\.name/)
+  assert.match(source, /cardDescExcerpt/)
+  assert.match(source, /full\.slice\(0, 40\)/)
+  assert.match(source, /skill-card__subname/)
+})
+
+test('push results dialog closes via its confirm button and explains installs', () => {
+  // 000106 修复：tdesign 的 confirm 按钮点击只发 @confirm，不自动关弹窗。
+  assert.match(source, /@confirm="pushResultVisible = false"/)
+  assert.match(source, /skillLibrary\.pushNoteInstall/)
+})
+
+test('the category manager dialog is wired in (000104)', () => {
+  assert.match(source, /SkillCategoryManagerDialog/)
+  assert.match(source, /skillLibrary\.categoryManager/)
+  assert.match(source, /@changed="loadSkills"/)
+})

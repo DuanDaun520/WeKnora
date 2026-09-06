@@ -101,6 +101,11 @@
                 <span class="service-card__sep">·</span>
                 <span class="service-card__desc" :title="service.description">{{ service.description }}</span>
               </template>
+              <!-- 分类：与 Skills/MCP 浏览页同一分组目录 -->
+              <template v-if="service.category">
+                <span class="service-card__sep">·</span>
+                <span class="service-card__desc" :title="service.category">{{ service.category }}</span>
+              </template>
             </div>
             <div v-if="service.url" class="service-card__url" :title="service.url">
               {{ service.url }}

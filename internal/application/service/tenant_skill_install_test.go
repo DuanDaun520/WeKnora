@@ -2782,6 +2782,19 @@ func (r *installSkillRepo) SetCatalogSourcePlatformSkill(
 	return nil
 }
 
+func (r *installSkillRepo) UpdateCatalogCategory(
+	_ context.Context, _ uint64, catalogID, category string,
+) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if row, ok := r.catalogs[catalogID]; ok {
+		cp := *row
+		cp.Category = category
+		r.catalogs[catalogID] = &cp
+	}
+	return nil
+}
+
 func (r *installSkillRepo) DeleteCatalog(_ context.Context, _ uint64, catalogID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

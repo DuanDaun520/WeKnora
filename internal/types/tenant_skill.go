@@ -155,9 +155,22 @@ type TenantSkillCatalogEntity struct {
 	// library (000098); empty = workspace self-built. Provenance only — the
 	// row is an ordinary catalog row the workspace fully owns.
 	SourcePlatformSkillID string `gorm:"type:varchar(36)"`
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
-	DeletedAt            gorm.DeletedAt
+	// Category groups the skill in the Skills/MCP browser. Empty = uncategorized.
+	Category string `gorm:"type:varchar(255);not null;default:''"`
+	// Author is the skill's author metadata, parsed from SKILL.md frontmatter
+	// or carried over from the platform skill on materialize. Empty = unknown.
+	Author string `gorm:"type:varchar(255);not null;default:''"`
+	// Visible is the space-level visibility switch (000108). false hides the
+	// skill from the Skills/MCP browser, the agent-editor picker and @mention /
+	// runtime of this workspace; management pages pass include_hidden to keep
+	// listing it so it stays controllable. Push re-registers write it back from
+	// the loaded row, so a platform update never resurrects a hidden skill.
+	Visible bool `gorm:"column:visible;not null;default:true"`
+	// CreatedBy records who registered the skill; stamped on create only.
+	CreatedBy string `gorm:"type:varchar(36);not null;default:''"`
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt
 }
 
 // TableName pins the table so GORM's pluralizer cannot drift.

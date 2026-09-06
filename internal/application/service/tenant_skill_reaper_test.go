@@ -969,6 +969,9 @@ func (r *reaperSkillStore) UpdateCatalog(context.Context, *types.TenantSkillCata
 func (r *reaperSkillStore) SetCatalogSourcePlatformSkill(context.Context, uint64, string, string) error {
 	panic("SetCatalogSourcePlatformSkill is outside the reaper surface")
 }
+func (r *reaperSkillStore) UpdateCatalogCategory(context.Context, uint64, string, string) error {
+	panic("UpdateCatalogCategory is outside the reaper surface")
+}
 func (r *reaperSkillStore) DeleteCatalog(context.Context, uint64, string) error {
 	panic("DeleteCatalog is outside the reaper surface")
 }

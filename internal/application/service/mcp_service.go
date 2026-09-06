@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/logger"
@@ -62,6 +63,17 @@ func (s *mcpServiceService) CreateMCPService(ctx context.Context, service *types
 	// Platform-owned row: workspaces see it through assignments, never
 	// through tenant ownership.
 	service.TenantID = 0
+
+	// Record the creator for the Skills/MCP browser card. Synthetic
+	// (API-key) principals leave it empty so the row stays platform-owned —
+	// same rule as agents and skill catalog rows.
+	if uid, ok := types.UserIDFromContext(ctx); ok && !types.IsSyntheticUserID(uid) {
+		service.CreatedBy = uid
+	}
+	service.Category = strings.TrimSpace(service.Category)
+	if len(service.Category) > 255 {
+		return fmt.Errorf("category is too long")
+	}
 
 	// Set timestamps
 	service.CreatedAt = time.Now()
@@ -241,6 +253,15 @@ func (s *mcpServiceService) UpdateMCPService(
 	}
 	if updateFields["enabled"] {
 		existing.Enabled = service.Enabled
+	}
+	// Category follows the presence map so a partial PUT cannot wipe it, and
+	// an explicit "" clears it (back to uncategorized).
+	if updateFields["category"] {
+		category := strings.TrimSpace(service.Category)
+		if len(category) > 255 {
+			return fmt.Errorf("category is too long")
+		}
+		existing.Category = category
 	}
 	if service.TransportType != "" {
 		existing.TransportType = service.TransportType

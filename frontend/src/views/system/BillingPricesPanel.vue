@@ -1,10 +1,12 @@
 <template>
   <div class="billing-prices-panel">
     <div class="section-header billing-header">
-      <div>
-        <h2>{{ t('usageStats.prices.title') }}</h2>
-        <p class="section-description">{{ t('usageStats.prices.desc') }}</p>
-      </div>
+      <template v-if="!embedded">
+        <div>
+          <h2>{{ t('usageStats.prices.title') }}</h2>
+          <p class="section-description">{{ t('usageStats.prices.desc') }}</p>
+        </div>
+      </template>
       <t-button theme="primary" @click="openCreate">
         <template #icon><t-icon name="add" /></template>
         {{ t('usageStats.prices.add') }}
@@ -30,6 +32,9 @@
         size="medium"
         hover
       >
+        <template #model_id="{ row }">
+          <span class="model-cell-name">{{ modelDisplayName(row.model_id) }}</span>
+        </template>
         <template #enabled="{ row }">
           <t-tag size="small" variant="light" :theme="row.enabled ? 'success' : 'default'">
             {{ row.enabled ? t('usageStats.prices.enabled') : t('usageStats.prices.disabled') }}
@@ -57,7 +62,7 @@
     <!-- 新增 / 编辑单价 -->
     <t-dialog
       v-model:visible="dialogVisible"
-      :header="editing ? t('usageStats.prices.editTitle', { model: form.model_id }) : t('usageStats.prices.createTitle')"
+      :header="editing ? t('usageStats.prices.editTitle', { model: modelDisplayName(form.model_id) }) : t('usageStats.prices.createTitle')"
       :confirm-btn="{ content: t('common.save'), loading: saving }"
       :cancel-btn="t('common.cancel')"
       width="620px"
@@ -78,7 +83,7 @@
           >
             <t-option v-for="m in modelOptions" :key="m.value" :value="m.value" :label="m.label" />
           </t-select>
-          <t-input v-else v-model="form.model_id" disabled />
+          <t-input v-else :value="modelDisplayName(form.model_id)" disabled />
         </div>
 
         <p class="billing-form-hint">{{ t('usageStats.prices.perMHint') }}</p>
@@ -141,6 +146,10 @@ const PRICE_FIELDS = [
 
 type PriceFieldKey = (typeof PRICE_FIELDS)[number]['key']
 
+// 嵌入模式：AI用量统计面板以弹窗引入本面板时隐藏自身的大标题/描述，
+// 只保留操作按钮与表格（弹窗标题由外层提供）。
+defineProps<{ embedded?: boolean }>()
+
 const { t } = useI18n()
 const prices = ref<ModelPrice[]>([])
 const models = ref<ModelConfig[]>([])
@@ -173,8 +182,17 @@ const modelOptions = computed(() =>
   })),
 )
 
+// 单价行按 model_id 关联平台模型目录显示展示名/名称；目录中找不到的手填
+// id 原样展示——表格不再暴露一列难以辨识的模型代号。
+function modelDisplayName(modelId: string): string {
+  if (!modelId) return '—'
+  const m = models.value.find((x) => x.id === modelId || x.name === modelId)
+  if (!m) return modelId
+  return m.display_name || m.name
+}
+
 const columns = computed(() => [
-  { colKey: 'model_id', title: t('usageStats.prices.model'), width: 200, ellipsis: true },
+  { colKey: 'model_id', title: t('usageStats.prices.model'), width: 240, ellipsis: true },
   { colKey: 'price_input_per_m', title: t('usageStats.prices.field.price_input_per_m'), align: 'right' },
   { colKey: 'price_output_per_m', title: t('usageStats.prices.field.price_output_per_m'), align: 'right' },
   { colKey: 'price_cached_per_m', title: t('usageStats.prices.field.price_cached_per_m'), align: 'right' },
@@ -276,6 +294,11 @@ onMounted(() => {
   border: 1px solid var(--td-component-stroke);
   border-radius: var(--td-radius-medium);
   overflow: hidden;
+}
+
+.model-cell-name {
+  font-weight: 500;
+  color: var(--td-text-color-primary);
 }
 
 .billing-branch {

@@ -280,8 +280,17 @@ func (s *userService) buildMembershipsForUser(
 		}
 		name := ""
 		if activeTenant != nil && m.TenantID == activeTenant.ID {
+			// A disabled workspace is not a selectable destination for
+			// ordinary members; system admins keep it in the list so they
+			// can still navigate there to repair it.
+			if !user.IsSystemAdmin && activeTenant.Status == types.TenantStatusDisabled {
+				continue
+			}
 			name = activeTenant.Name
 		} else if t, ok := tenantByID[m.TenantID]; ok && t != nil {
+			if !user.IsSystemAdmin && t.Status == types.TenantStatusDisabled {
+				continue
+			}
 			name = t.Name
 		}
 		// Drop memberships whose tenant row is gone (deleted tenant or
@@ -731,16 +740,16 @@ func (s *userService) resolveLoginTenantID(ctx context.Context, user *types.User
 	}
 	preferred := *pref
 
-	// Tenant must still exist.
-	if s.tenantService != nil {
-		if _, err := s.tenantService.GetTenantByID(ctx, preferred); err != nil {
-			logger.Warnf(ctx,
-				"resolveLoginTenantID: preferred tenant %d not loadable for user %s, "+
-					"clearing preference and falling back to home: %v",
-				preferred, user.ID, err)
-			s.clearLastActiveTenantPreference(ctx, user)
-			return s.homeOrFirstMembershipTenant(ctx, user)
-		}
+	// Tenant must still exist and be usable as a login target. A workspace
+	// disabled by the system admin is skipped for ordinary members just like
+	// a deleted one (the preference is cleared and resolution falls back).
+	if !s.tenantUsableForUser(ctx, preferred, user.IsSystemAdmin) {
+		logger.Warnf(ctx,
+			"resolveLoginTenantID: preferred tenant %d not usable for user %s, "+
+				"clearing preference and falling back to home",
+			preferred, user.ID)
+		s.clearLastActiveTenantPreference(ctx, user)
+		return s.homeOrFirstMembershipTenant(ctx, user)
 	}
 
 	// Membership (or cross-tenant superuser) must still be valid. Mirrors
@@ -793,6 +802,17 @@ func (s *userService) homeOrFirstMembershipTenant(ctx context.Context, user *typ
 	}
 	member, err := s.memberService.GetMembership(ctx, user.ID, user.TenantID)
 	if err == nil && member != nil && member.Status == types.TenantMemberStatusActive {
+		// A disabled home workspace cannot be the session target for an
+		// ordinary member — landing there would block every request. Clear
+		// the stale home pointer and re-resolve to an active workspace.
+		if !s.tenantUsableForUser(ctx, user.TenantID, user.IsSystemAdmin) {
+			logger.Warnf(ctx,
+				"homeOrFirstMembershipTenant: user %s home tenant %d is unavailable or disabled, "+
+					"clearing stale home and re-resolving",
+				user.ID, user.TenantID)
+			s.clearStaleHomeTenant(ctx, user)
+			return s.resolveFirstMembershipTenant(ctx, user)
+		}
 		return user.TenantID
 	}
 	logger.Warnf(ctx,
@@ -805,8 +825,10 @@ func (s *userService) homeOrFirstMembershipTenant(ctx context.Context, user *typ
 
 // clearStaleHomeTenant best-effort zeroes users.tenant_id (and a
 // LastActiveTenantID that pointed at the same workspace) after the home
-// membership is observed to be gone. Failures are logged but never
-// fail login: the in-memory user is already corrected for this request.
+// membership is observed to be gone — or the home workspace was disabled
+// by a system admin and is no longer a usable target for the member.
+// Failures are logged but never fail login: the in-memory user is
+// already corrected for this request.
 func (s *userService) clearStaleHomeTenant(ctx context.Context, user *types.User) {
 	if user == nil {
 		return
@@ -832,6 +854,24 @@ func (s *userService) clearStaleHomeTenant(ctx context.Context, user *types.User
 // join time, so the earliest valid membership is deterministic. Persisting it
 // as home is best-effort: even if the repair write fails, the freshly issued
 // token can still be scoped to the membership and the next login retries.
+// tenantUsableForUser reports whether the workspace may serve as a
+// login / session target for the given user. Two reasons it cannot:
+// the tenant row is gone, or a system admin disabled it from the console.
+// System admins stay exempt from the disabled check so the operator who
+// disabled a workspace can still get back in and re-enable or delete it.
+// A missing tenantService (partial DI graphs) answers true, mirroring the
+// original nil-guard behaviour of the callers.
+func (s *userService) tenantUsableForUser(ctx context.Context, tenantID uint64, systemAdmin bool) bool {
+	if s.tenantService == nil {
+		return true
+	}
+	t, err := s.tenantService.GetTenantByID(ctx, tenantID)
+	if err != nil || t == nil {
+		return false
+	}
+	return systemAdmin || t.Status != types.TenantStatusDisabled
+}
+
 func (s *userService) resolveFirstMembershipTenant(ctx context.Context, user *types.User) uint64 {
 	if user == nil || s.memberService == nil {
 		return 0
@@ -845,12 +885,10 @@ func (s *userService) resolveFirstMembershipTenant(ctx context.Context, user *ty
 		if member == nil || member.TenantID == 0 || member.Status != types.TenantMemberStatusActive {
 			continue
 		}
-		if s.tenantService != nil {
-			if _, err := s.tenantService.GetTenantByID(ctx, member.TenantID); err != nil {
-				logger.Warnf(ctx, "resolveLoginTenantID: tenant %d for tenantless user %s is unavailable: %v",
-					member.TenantID, user.ID, err)
-				continue
-			}
+		if !s.tenantUsableForUser(ctx, member.TenantID, user.IsSystemAdmin) {
+			logger.Warnf(ctx, "resolveLoginTenantID: tenant %d for tenantless user %s is unavailable or disabled",
+				member.TenantID, user.ID)
+			continue
 		}
 
 		user.TenantID = member.TenantID
@@ -995,6 +1033,10 @@ func (s *userService) SwitchTenant(
 	tenant, err := s.tenantService.GetTenantByID(ctx, targetTenantID)
 	if err != nil {
 		return nil, fmt.Errorf("load target workspace: %w", err)
+	}
+	// 已禁用空间不可作为切换目标（系统管理员可在控制台内恢复）。
+	if tenant.Status == types.TenantStatusDisabled && !user.IsSystemAdmin {
+		return nil, errors.New("workspace has been disabled by the system administrator")
 	}
 
 	// Persist before minting tokens so a 200 response is also a

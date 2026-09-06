@@ -75,9 +75,6 @@
             </t-tag>
           </div>
         </template>
-        <template #email="{ row }">
-          <span class="cell-muted">{{ row.email || '—' }}</span>
-        </template>
         <template #state="{ row }">
           <t-tag :theme="row.is_active ? 'success' : 'danger'" size="small" variant="light">
             {{ row.is_active ? $t('systemConsole.users.statusActive') : $t('systemConsole.users.statusDisabled') }}
@@ -105,17 +102,6 @@
           <div class="cell-actions">
             <t-button variant="text" size="small" @click="openBindingsDialog(row)">
               {{ $t('systemConsole.users.bindings') }}
-            </t-button>
-            <t-button variant="text" size="small" @click="openEditDialog(row)">
-              {{ $t('systemConsole.users.edit') }}
-            </t-button>
-            <t-button
-              variant="text"
-              size="small"
-              :disabled="row.id === authStore.currentUserId"
-              @click="openResetDialog(row)"
-            >
-              {{ $t('systemConsole.users.resetPassword') }}
             </t-button>
             <t-dropdown
               :options="rowActionOptions(row)"
@@ -156,17 +142,10 @@
     >
       <div v-if="createResult" class="create-result">
         <t-alert theme="success" :title="$t('systemConsole.create.successTitle')" />
-        <div v-if="createResult.generated_password" class="password-reveal">
-          <div class="password-reveal-label">
-            <t-icon name="lock-on" size="15px" />
-            {{ $t('systemConsole.create.passwordOnce') }}
-          </div>
-          <div class="password-reveal-row">
-            <code class="password-reveal-value">{{ createResult.generated_password }}</code>
-            <t-button size="small" variant="outline" @click="copyText(createResult!.generated_password!)">
-              {{ $t('systemConsole.create.copy') }}
-            </t-button>
-          </div>
+        <div class="create-password-note">
+          <t-icon name="lock-on" size="15px" />
+          <span>{{ $t('systemConsole.create.defaultPasswordNote') }}</span>
+          <code class="create-password-code">{{ createdPassword }}</code>
         </div>
         <div v-if="createResult.bindings?.length" class="bind-results">
           <div
@@ -187,20 +166,15 @@
         <t-form-item :label="$t('systemConsole.create.username')">
           <t-input v-model="createForm.username" :placeholder="$t('systemConsole.create.usernamePlaceholder')" />
         </t-form-item>
-        <t-form-item :label="$t('systemConsole.create.email')">
-          <t-input v-model="createForm.email" :placeholder="$t('systemConsole.create.emailPlaceholder')" />
-        </t-form-item>
-        <t-form-item :label="$t('systemConsole.create.password')">
-          <div class="password-field">
-            <t-input
-              v-model="createForm.password"
-              type="password"
-              :placeholder="$t('systemConsole.create.passwordPlaceholder')"
-            />
-            <t-button variant="outline" @click="createForm.password = generatePassword()">
-              {{ $t('systemConsole.create.generate') }}
-            </t-button>
-          </div>
+        <t-form-item
+          :label="$t('systemConsole.create.password')"
+          :help="$t('systemConsole.create.defaultPasswordHelp')"
+        >
+          <t-input
+            v-model="createForm.password"
+            type="password"
+            :placeholder="$t('systemConsole.create.passwordPlaceholder')"
+          />
         </t-form-item>
         <t-form-item :label="$t('systemConsole.create.tenants')">
           <t-select
@@ -230,9 +204,6 @@
         </t-form-item>
         <t-form-item :label="$t('systemConsole.create.username')">
           <t-input v-model="editForm.username" />
-        </t-form-item>
-        <t-form-item :label="$t('systemConsole.create.email')">
-          <t-input v-model="editForm.email" :placeholder="$t('systemConsole.create.emailPlaceholder')" />
         </t-form-item>
       </t-form>
     </t-dialog>
@@ -340,6 +311,7 @@ import { useAuthStore } from '@/stores/auth'
 import {
   bindUserToTenant,
   createEnterpriseUser,
+  deleteEnterpriseUser,
   listEnterpriseUsers,
   listPlatformTenants,
   listUserBindings,
@@ -372,11 +344,10 @@ const userFilters = reactive({ query: '', status: '' as '' | 'active' | 'disable
 const userColumns = computed<PrimaryTableCol<EnterpriseUserRow>[]>(() => [
   { colKey: 'employee_id', title: t('systemConsole.users.colEmployeeId'), width: 130, ellipsis: true },
   { colKey: 'username', title: t('systemConsole.users.colUsername'), width: 170 },
-  { colKey: 'email', title: t('systemConsole.users.colEmail'), minWidth: 180, ellipsis: true, cell: 'email' } as PrimaryTableCol<EnterpriseUserRow>,
   { colKey: 'state', title: t('systemConsole.users.colState'), width: 90, cell: 'state' } as PrimaryTableCol<EnterpriseUserRow>,
   { colKey: 'bindings', title: t('systemConsole.users.colBindings'), cell: 'bindings' } as PrimaryTableCol<EnterpriseUserRow>,
   { colKey: 'created_at', title: t('systemConsole.users.colCreatedAt'), width: 120, cell: 'created_at' } as PrimaryTableCol<EnterpriseUserRow>,
-  { colKey: 'actions', title: t('systemConsole.users.colActions'), width: 300, align: 'right', cell: 'actions' } as PrimaryTableCol<EnterpriseUserRow>,
+  { colKey: 'actions', title: t('systemConsole.users.colActions'), width: 220, align: 'right', cell: 'actions' } as PrimaryTableCol<EnterpriseUserRow>,
 ])
 
 async function loadUsers() {
@@ -436,11 +407,11 @@ function workspaceRoleLabel(role: string) {
 const createVisible = ref(false)
 const createLoading = ref(false)
 const createResult = ref<CreateEnterpriseUserResponse | null>(null)
+const createdPassword = ref('')
 const createForm = reactive({
   employee_id: '',
   username: '',
-  email: '',
-  password: '',
+  password: 'abc123',
   tenant_ids: [] as number[],
 })
 
@@ -451,28 +422,31 @@ function openCreateDialog() {
 
 function resetCreateForm() {
   createResult.value = null
+  createdPassword.value = ''
   createForm.employee_id = ''
   createForm.username = ''
-  createForm.email = ''
-  createForm.password = ''
+  createForm.password = 'abc123'
   createForm.tenant_ids = []
 }
 
 async function submitCreate() {
   createForm.employee_id = createForm.employee_id.trim()
   createForm.username = createForm.username.trim()
-  createForm.email = createForm.email.trim()
   if (!createForm.employee_id || !createForm.username) {
     MessagePlugin.warning(t('systemConsole.create.missingRequired'))
     return
   }
+  if (!createForm.password) {
+    MessagePlugin.warning(t('systemConsole.create.passwordRequired'))
+    return
+  }
   createLoading.value = true
   try {
+    createdPassword.value = createForm.password
     const resp = await createEnterpriseUser({
       employee_id: createForm.employee_id,
       username: createForm.username,
-      email: createForm.email || undefined,
-      password: createForm.password || undefined,
+      password: createForm.password,
       tenant_ids: createForm.tenant_ids,
     })
     createResult.value = resp
@@ -488,19 +462,17 @@ async function submitCreate() {
 const editVisible = ref(false)
 const editLoading = ref(false)
 const editTargetId = ref('')
-const editForm = reactive({ employee_id: '', username: '', email: '' })
+const editForm = reactive({ employee_id: '', username: '' })
 
 function openEditDialog(row: EnterpriseUserRow) {
   editTargetId.value = row.id
   editForm.employee_id = row.employee_id
   editForm.username = row.username
-  editForm.email = row.email || ''
   editVisible.value = true
 }
 
 async function submitEdit() {
   editForm.username = editForm.username.trim()
-  editForm.email = editForm.email.trim()
   if (!editForm.username) {
     MessagePlugin.warning(t('systemConsole.create.missingRequired'))
     return
@@ -509,7 +481,6 @@ async function submitEdit() {
   try {
     await updateEnterpriseUser(editTargetId.value, {
       username: editForm.username,
-      email: editForm.email,
     })
     MessagePlugin.success(t('systemConsole.messages.opSuccess'))
     editVisible.value = false
@@ -552,39 +523,76 @@ async function submitReset() {
   }
 }
 
-// ---- 行操作：启停 / 系统管理员 ----
+// ---- 行操作菜单：编辑 / 重置密码 / 启停 / 系统管理员 / 硬删除 ----
 function rowActionOptions(row: EnterpriseUserRow) {
-  const options: Array<{ value: string; content: string; theme?: 'default' | 'error' }> = []
+  const self = row.id === authStore.currentUserId
+  const options: Array<{ value: string; content: string; theme?: 'default' | 'error'; disabled?: boolean }> = [
+    { value: 'edit', content: t('systemConsole.users.edit') },
+    { value: 'reset', content: t('systemConsole.users.resetPassword'), disabled: self },
+  ]
   options.push(
     row.is_active
-      ? { value: 'disable', content: t('systemConsole.users.disable'), theme: 'error' }
+      ? { value: 'disable', content: t('systemConsole.users.disable'), theme: 'error', disabled: self }
       : { value: 'enable', content: t('systemConsole.users.enable') },
   )
   if (row.is_system_admin) {
-    options.push({ value: 'revoke', content: t('systemConsole.users.revoke'), theme: 'error' })
+    options.push({ value: 'revoke', content: t('systemConsole.users.revoke'), theme: 'error', disabled: self })
   } else {
     options.push({ value: 'promote', content: t('systemConsole.users.promote') })
   }
+  options.push({
+    value: 'delete',
+    content: t('systemConsole.users.deleteUser'),
+    theme: 'error',
+    disabled: self || row.is_system_admin,
+  })
   return options
 }
 
 async function onRowAction(action: string, row: EnterpriseUserRow) {
   const self = row.id === authStore.currentUserId
-  if (action === 'disable') {
-    if (self) return
-    const ok = await dialogConfirm(t('systemConsole.users.disableConfirm', { name: row.username }))
-    if (!ok) return
-    await mutateUser(() => updateEnterpriseUser(row.id, { is_active: false }))
-  } else if (action === 'enable') {
-    await mutateUser(() => updateEnterpriseUser(row.id, { is_active: true }))
-  } else if (action === 'promote') {
-    const ok = await dialogConfirm(t('systemConsole.users.promoteConfirm', { name: row.username }))
-    if (!ok) return
-    await mutateUser(() => promoteUserToSystemAdmin({ user_id: row.id }))
-  } else if (action === 'revoke') {
-    const ok = await dialogConfirm(t('systemConsole.users.revokeConfirm', { name: row.username }))
-    if (!ok) return
-    await mutateUser(() => revokeSystemAdmin(row.id))
+  switch (action) {
+    case 'edit':
+      openEditDialog(row)
+      return
+    case 'reset':
+      if (!self) openResetDialog(row)
+      return
+    case 'disable':
+      if (self) return
+      {
+        const ok = await dialogConfirm(t('systemConsole.users.disableConfirm', { name: row.username }))
+        if (!ok) return
+        await mutateUser(() => updateEnterpriseUser(row.id, { is_active: false }))
+      }
+      return
+    case 'enable':
+      await mutateUser(() => updateEnterpriseUser(row.id, { is_active: true }))
+      return
+    case 'promote': {
+      const ok = await dialogConfirm(t('systemConsole.users.promoteConfirm', { name: row.username }))
+      if (!ok) return
+      await mutateUser(() => promoteUserToSystemAdmin({ user_id: row.id }))
+      return
+    }
+    case 'revoke': {
+      const ok = await dialogConfirm(t('systemConsole.users.revokeConfirm', { name: row.username }))
+      if (!ok) return
+      await mutateUser(() => revokeSystemAdmin(row.id))
+      return
+    }
+    case 'delete': {
+      if (self || row.is_system_admin) return
+      const ok = await dialogConfirm(
+        t('systemConsole.users.deleteUserConfirm', {
+          name: row.username,
+          employeeId: row.employee_id,
+        }),
+      )
+      if (!ok) return
+      await mutateUser(() => deleteEnterpriseUser(row.id))
+      return
+    }
   }
 }
 
@@ -706,15 +714,6 @@ function generatePassword(): string {
   return chars.join('')
 }
 
-async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text)
-    MessagePlugin.success(t('systemConsole.create.copied'))
-  } catch {
-    MessagePlugin.warning(text)
-  }
-}
-
 function formatDate(value: string): string {
   if (!value) return '—'
   const d = new Date(value)
@@ -773,6 +772,25 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+// 初始密码为固定默认值（abc123）的提示行
+.create-password-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--td-text-color-secondary);
+}
+
+.create-password-code {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px dashed var(--td-brand-color);
+  background: var(--td-brand-color-light);
+  font-size: 14px;
+  letter-spacing: 0.5px;
+  user-select: all;
 }
 
 .password-reveal-label {

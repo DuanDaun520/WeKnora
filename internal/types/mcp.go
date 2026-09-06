@@ -40,9 +40,15 @@ type MCPService struct {
 	StdioConfig    *MCPStdioConfig    `json:"stdio_config,omitempty" gorm:"type:json"`     // Required for stdio transport
 	EnvVars        MCPEnvVars         `json:"env_vars,omitempty"     gorm:"type:json"`     // Environment variables for stdio
 	IsBuiltin      bool               `json:"is_builtin"             gorm:"default:false"` // Whether this is a builtin MCP service (visible to all workspaces)
-	CreatedAt      time.Time          `json:"created_at"`
-	UpdatedAt      time.Time          `json:"updated_at"`
-	DeletedAt      gorm.DeletedAt     `json:"deleted_at"             gorm:"index"`
+	// Category groups this service in the Skills/MCP browser (empty = uncategorized).
+	Category  string `json:"category"    gorm:"type:varchar(255);not null;default:''"`
+	// CreatedBy records who created the service; stamped on create only.
+	CreatedBy string `json:"created_by" gorm:"type:varchar(36);not null;default:''"`
+	// CreatorName is enriched at read time from CreatedBy; never persisted.
+	CreatorName string    `json:"creator_name,omitempty" gorm:"-"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `json:"deleted_at"             gorm:"index"`
 }
 
 // MCPHeaders represents HTTP headers as a map

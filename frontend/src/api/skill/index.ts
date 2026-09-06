@@ -1,4 +1,4 @@
-import { del, get, post, postUpload } from "../../utils/request";
+import { del, get, post, put } from "../../utils/request";
 import type { ConfigSkillFileContent, ConfigSkillFileEntry } from "../system";
 
 // Skill信息
@@ -27,16 +27,19 @@ export interface SkillCatalogItem {
   bundle_sha256?: string;
   /** Present when the row was materialized from a platform skill (000098). */
   source_platform_skill_id?: string;
+  /** Grouping category for the Skills/MCP browser (empty = uncategorized). */
+  category?: string;
+  /** Author metadata — SKILL.md frontmatter or platform push (empty = unknown). */
+  author?: string;
+  /** Space-level visibility (000108). false = hidden from the Skills/MCP browser,
+   * the agent picker and @mention/runtime in this workspace. */
+  visible?: boolean;
+  /** Creator user id + read-time enriched display name. */
+  created_by?: string;
+  creator_name?: string;
   created_at: string;
   updated_at: string;
   installations: SkillCatalogInstall[];
-}
-
-export interface SkillCatalogRegisterResult {
-  id: string;
-  name: string;
-  version?: string;
-  description?: string;
 }
 
 // 获取当前沙箱配置上可执行的 Skills；未传 sandboxConfigId 或
@@ -47,26 +50,19 @@ export function listSkills(sandboxConfigId?: string) {
   });
 }
 
-export function listSkillCatalog() {
-  return get<{ data: SkillCatalogItem[] }>('/api/v1/skills/catalog');
-}
-
-export function registerSkillCatalogFromSource(source: string) {
-  return post<{ data: SkillCatalogRegisterResult }>('/api/v1/skills/catalog', { source }, {
-    timeout: 2 * 60 * 1000,
+// includeHidden keeps 000108-hidden skills in the listing — only the 技能目录
+// management page passes it so a hidden skill stays manageable; every browsing
+// surface (Skills/MCP, agent editor, @mention) reads the default and never
+// sees hidden rows.
+export function listSkillCatalog(includeHidden = false) {
+  return get<{ data: SkillCatalogItem[] }>('/api/v1/skills/catalog', {
+    params: includeHidden ? { include_hidden: '1' } : {},
   });
 }
 
-export function registerSkillCatalogFromFile(
-  file: File,
-  onProgress?: (percent: number) => void,
-) {
-  const form = new FormData();
-  form.append('file', file);
-  return postUpload('/api/v1/skills/catalog', form, (e: any) => {
-    if (e.total) onProgress?.(Math.round((e.loaded * 100) / e.total));
-  }, { timeout: 5 * 60 * 1000 }) as Promise<{ data: SkillCatalogRegisterResult }>;
-}
+// Registration has no tenant-side surface anymore: catalog rows materialize
+// from the platform skill library's workspace assignments. POST
+// /api/v1/skills/catalog (source / zip upload) was removed with it.
 
 export function installSkillCatalog(catalogId: string, sandboxConfigIds: string[]) {
   return post<{ data: { installs: Record<string, string>; errors?: Record<string, string> } }>(
@@ -77,6 +73,17 @@ export function installSkillCatalog(catalogId: string, sandboxConfigIds: string[
 
 export function deleteSkillCatalog(catalogId: string) {
   return del(`/api/v1/skills/catalog/${catalogId}`);
+}
+
+// Edit the grouping category and/or the 000108 space visibility of a catalog
+// row (space admin/owner or system admin). `visible` is optional: omitted keeps
+// the current switch. Category-only callers (Skills/MCP saveCategory) pass no
+// visible and never touch visibility.
+export function updateSkillCatalogMeta(catalogId: string, category: string, visible?: boolean) {
+  return put<{ data: { id: string; category: string; visible: boolean } }>(
+    `/api/v1/skills/catalog/${catalogId}`,
+    visible === undefined ? { category } : { category, visible },
+  );
 }
 
 export function listCatalogSkillFiles(catalogId: string) {

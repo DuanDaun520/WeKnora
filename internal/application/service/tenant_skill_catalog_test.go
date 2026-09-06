@@ -37,11 +37,69 @@ func TestListCatalogGroupsInstallsByDefinition(t *testing.T) {
 	}))
 
 	svc := NewTenantSkillService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
-	list, err := svc.ListCatalog(ctx, 7)
+	list, err := svc.ListCatalog(ctx, 7, false)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	require.Equal(t, "pdf", list[0].Name)
 	require.Len(t, list[0].Installations, 2)
+}
+
+// 000108: a hidden definition disappears from the default catalog listing and
+// its installs stop being offered on the config (ListSkillsByConfig is the
+// runtime/@mention choke point). includeHidden=true keeps it manageable, and
+// SetCatalogVisible toggles back without touching the install.
+func TestCatalogVisibilityFiltersLists(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:catalog-vis?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&types.TenantSkillEntity{}, &types.TenantSkillCatalogEntity{},
+		&types.TenantSkillSnapshotEntity{}, &types.TenantUserEnvVar{},
+	))
+	repo := repository.NewTenantSkillRepository(db)
+	ctx := context.Background()
+
+	require.NoError(t, repo.CreateCatalog(ctx, &types.TenantSkillCatalogEntity{
+		ID: "cat-a", TenantID: 7, Name: "pdf", Description: "extract", Visible: true,
+	}))
+	require.NoError(t, repo.CreateCatalog(ctx, &types.TenantSkillCatalogEntity{
+		ID: "cat-b", TenantID: 7, Name: "hidden-skill", Visible: true,
+	}))
+	require.NoError(t, repo.CreateSkill(ctx, &types.TenantSkillEntity{
+		ID: "sk-b", TenantID: 7, SandboxConfigID: "cfg-a", CatalogID: "cat-b",
+		Name: "hidden-skill", Status: types.SkillStatusReady, Enabled: true,
+	}))
+
+	svc := NewTenantSkillService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	// Hide through the real path (000108): the Create-default is true, hiding
+	// happens via UpdateCatalog, matching how a space admin flips the switch.
+	hidden, err := svc.SetCatalogVisible(ctx, 7, "cat-b", false)
+	require.NoError(t, err)
+	require.False(t, hidden.Visible)
+
+	defs, err := svc.ListCatalog(ctx, 7, false)
+	require.NoError(t, err)
+	require.Len(t, defs, 1, "hidden skill must not appear in the default browsing surface")
+	require.Equal(t, "pdf", defs[0].Name)
+
+	all, err := svc.ListCatalog(ctx, 7, true)
+	require.NoError(t, err)
+	require.Len(t, all, 2, "management page asks include_hidden and sees both")
+
+	rows, err := repo.ListSkillsByConfig(ctx, 7, "cfg-a")
+	require.NoError(t, err)
+	require.Empty(t, rows, "a hidden skill's install must not be offered on the config")
+
+	upd, err := svc.SetCatalogVisible(ctx, 7, "cat-b", true)
+	require.NoError(t, err)
+	require.True(t, upd.Visible)
+
+	defs, err = svc.ListCatalog(ctx, 7, false)
+	require.NoError(t, err)
+	require.Len(t, defs, 2)
+
+	rows, err = repo.ListSkillsByConfig(ctx, 7, "cfg-a")
+	require.NoError(t, err)
+	require.Len(t, rows, 1, "unhiding restores the install to the config offer set")
 }
 
 func TestResolveCatalogFindsLegacySkillID(t *testing.T) {
@@ -91,7 +149,7 @@ func TestListCatalogShowsInstallsWhoseCatalogWasDeleted(t *testing.T) {
 	require.NoError(t, repo.DeleteCatalog(ctx, 7, "cat-gone"))
 
 	svc := NewTenantSkillService(repo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
-	list, err := svc.ListCatalog(ctx, 7)
+	list, err := svc.ListCatalog(ctx, 7, false)
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 	require.Equal(t, "pdf", list[0].Name)

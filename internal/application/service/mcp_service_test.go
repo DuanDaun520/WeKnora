@@ -159,6 +159,7 @@ func TestUpdateMCPService_RespectsScalarFieldPresence(t *testing.T) {
 		wantName        string
 		wantDescription string
 		wantEnabled     bool
+		wantCategory    string
 	}{
 		{
 			name:            "description only",
@@ -167,6 +168,7 @@ func TestUpdateMCPService_RespectsScalarFieldPresence(t *testing.T) {
 			wantName:        "test",
 			wantDescription: "after",
 			wantEnabled:     true,
+			wantCategory:    "before-cat",
 		},
 		{
 			name:            "name only",
@@ -175,6 +177,7 @@ func TestUpdateMCPService_RespectsScalarFieldPresence(t *testing.T) {
 			wantName:        "renamed",
 			wantDescription: "before",
 			wantEnabled:     true,
+			wantCategory:    "before-cat",
 		},
 		{
 			name:            "explicit empty description",
@@ -183,6 +186,7 @@ func TestUpdateMCPService_RespectsScalarFieldPresence(t *testing.T) {
 			wantName:        "test",
 			wantDescription: "",
 			wantEnabled:     true,
+			wantCategory:    "before-cat",
 		},
 		{
 			name:            "explicit disable",
@@ -191,6 +195,36 @@ func TestUpdateMCPService_RespectsScalarFieldPresence(t *testing.T) {
 			wantName:        "test",
 			wantDescription: "before",
 			wantEnabled:     false,
+			wantCategory:    "before-cat",
+		},
+		{
+			name:            "category only",
+			update:          &types.MCPService{Category: "after-cat"},
+			updateFields:    map[string]bool{"category": true},
+			wantName:        "test",
+			wantDescription: "before",
+			wantEnabled:     true,
+			wantCategory:    "after-cat",
+		},
+		{
+			// Explicit "" clears back to uncategorized — same contract as
+			// description, guarded by the presence map.
+			name:            "explicit empty category clears it",
+			update:          &types.MCPService{Category: ""},
+			updateFields:    map[string]bool{"category": true},
+			wantName:        "test",
+			wantDescription: "before",
+			wantEnabled:     true,
+			wantCategory:    "",
+		},
+		{
+			name:            "unrelated update leaves category alone",
+			update:          &types.MCPService{Description: "after", Category: ""},
+			updateFields:    map[string]bool{"description": true},
+			wantName:        "test",
+			wantDescription: "after",
+			wantEnabled:     true,
+			wantCategory:    "before-cat",
 		},
 	}
 
@@ -200,6 +234,7 @@ func TestUpdateMCPService_RespectsScalarFieldPresence(t *testing.T) {
 			svc, repo := newTestService()
 			id := seedService(t, repo, "stored-api", "stored-token")
 			repo.store[id].Description = "before"
+			repo.store[id].Category = "before-cat"
 
 			tt.update.ID = id
 			tt.update.TenantID = 1
@@ -209,6 +244,7 @@ func TestUpdateMCPService_RespectsScalarFieldPresence(t *testing.T) {
 			assert.Equal(t, tt.wantName, got.Name)
 			assert.Equal(t, tt.wantDescription, got.Description)
 			assert.Equal(t, tt.wantEnabled, got.Enabled)
+			assert.Equal(t, tt.wantCategory, got.Category)
 		})
 	}
 }

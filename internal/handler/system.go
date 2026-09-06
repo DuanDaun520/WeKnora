@@ -246,16 +246,34 @@ func systemAuditActorRole(ctx context.Context) string {
 }
 
 // emitAdminAudit writes one audit row for a system-admin lifecycle event
-// (promote / revoke). Best-effort — a nil audit service or a write
-// failure does not bubble up to the caller. Mirrors the failure
-// semantics of tenantMemberService.emitAudit and the system settings
-// audit hook.
+// targeting a user (promote / revoke / disable / delete). Best-effort —
+// a nil audit service or a write failure does not bubble up to the
+// caller. Mirrors the failure semantics of tenantMemberService.emitAudit
+// and the system settings audit hook.
 //
 // `details` may be nil; the JSON `{}` default applies.
 func (h *SystemHandler) emitAdminAudit(
 	ctx context.Context,
 	action types.AuditAction,
 	target *types.User,
+	details map[string]any,
+) {
+	var targetID, targetUserID string
+	if target != nil {
+		targetID = target.ID
+		targetUserID = target.ID
+	}
+	h.emitAdminAuditTargeted(ctx, action, "user", targetID, targetUserID, details)
+}
+
+// emitAdminAuditTargeted is the generic form of emitAdminAudit: it writes
+// a system-scope (tenant_id=0) audit row for the given target type/id.
+// TargetType "user" also carries TargetUserID; "tenant" targets the
+// workspace row identified by TargetID. Best-effort, never bubbles.
+func (h *SystemHandler) emitAdminAuditTargeted(
+	ctx context.Context,
+	action types.AuditAction,
+	targetType, targetID, targetUserID string,
 	details map[string]any,
 ) {
 	if h.auditSvc == nil {
@@ -272,17 +290,15 @@ func (h *SystemHandler) emitAdminAudit(
 		// tenant_id=0 marks the row as system-scope. The audit_logs
 		// table is tenant-scoped; 0 is the convention for platform-wide
 		// events (matches AuditActionSystemSettingChanged).
-		TenantID:    0,
-		ActorUserID: actorID,
-		ActorRole:   systemAuditActorRole(ctx),
-		Action:      action,
-		TargetType:  "user",
-		Outcome:     types.AuditOutcomeSuccess,
-		Details:     detailsJSON,
-	}
-	if target != nil {
-		entry.TargetID = target.ID
-		entry.TargetUserID = target.ID
+		TenantID:     0,
+		ActorUserID:  actorID,
+		ActorRole:    systemAuditActorRole(ctx),
+		Action:       action,
+		TargetType:   targetType,
+		TargetID:     targetID,
+		TargetUserID: targetUserID,
+		Outcome:      types.AuditOutcomeSuccess,
+		Details:      detailsJSON,
 	}
 	_ = h.auditSvc.Log(ctx, entry)
 }
@@ -1362,8 +1378,8 @@ func (h *SystemHandler) PromoteUserToSystemAdmin(c *gin.Context) {
 		// leaves a forensic trail (idempotent=true marks it as noop).
 		h.emitAdminAudit(ctx, types.AuditActionSystemAdminPromoted, user, map[string]any{
 			"target_employee_id": user.EmployeeID,
-			"target_username": user.Username,
-			"idempotent":      true,
+			"target_username":    user.Username,
+			"idempotent":         true,
 		})
 		c.JSON(http.StatusOK, user.ToUserInfo())
 		return
@@ -1378,8 +1394,8 @@ func (h *SystemHandler) PromoteUserToSystemAdmin(c *gin.Context) {
 	logger.Infof(ctx, "User %s (ID: %s) promoted to system admin", user.Username, user.ID)
 	h.emitAdminAudit(ctx, types.AuditActionSystemAdminPromoted, user, map[string]any{
 		"target_employee_id": user.EmployeeID,
-		"target_username": user.Username,
-		"idempotent":      false,
+		"target_username":    user.Username,
+		"idempotent":         false,
 	})
 	c.JSON(http.StatusOK, user.ToUserInfo())
 }
@@ -1422,8 +1438,8 @@ func (h *SystemHandler) RevokeSystemAdmin(c *gin.Context) {
 		logger.Infof(ctx, "System admin privileges revoked from user %s (ID: %s)", user.Username, user.ID)
 		h.emitAdminAudit(ctx, types.AuditActionSystemAdminRevoked, user, map[string]any{
 			"target_employee_id": user.EmployeeID,
-			"target_username": user.Username,
-			"changed":         true,
+			"target_username":    user.Username,
+			"changed":            true,
 		})
 		c.JSON(http.StatusOK, user.ToUserInfo())
 		return
@@ -1441,8 +1457,8 @@ func (h *SystemHandler) RevokeSystemAdmin(c *gin.Context) {
 		logger.Infof(ctx, "Revoke noop (user %s was not a system admin)", user.ID)
 		h.emitAdminAudit(ctx, types.AuditActionSystemAdminRevoked, user, map[string]any{
 			"target_employee_id": user.EmployeeID,
-			"target_username": user.Username,
-			"changed":         false,
+			"target_username":    user.Username,
+			"changed":            false,
 		})
 		c.JSON(http.StatusOK, user.ToUserInfo())
 		return

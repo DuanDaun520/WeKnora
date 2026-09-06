@@ -15,6 +15,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -36,9 +37,11 @@ import (
 
 // systemSkillRows mirrors the platform skill repository, stamping updated_at
 // on the store side like the GORM implementation does — that stamp is what the
-// assignment drift markers are computed from.
+// assignment drift markers are computed from. Categories live in a separate
+// registry (000105), created first, that skills reference by name.
 type systemSkillRows struct {
-	rows []*types.PlatformSkillEntity
+	rows       []*types.PlatformSkillEntity
+	categories []*types.PlatformSkillCategoryEntity
 }
 
 func (r *systemSkillRows) Create(_ context.Context, e *types.PlatformSkillEntity) error {
@@ -87,6 +90,109 @@ func (r *systemSkillRows) Update(_ context.Context, e *types.PlatformSkillEntity
 		}
 	}
 	return nil
+}
+
+func (r *systemSkillRows) UpdateMeta(
+	_ context.Context, id, category, author, zhName, zhDescription string,
+) error {
+	for i, row := range r.rows {
+		if row.ID == id {
+			cp := *row
+			cp.Category, cp.Author = category, author
+			cp.ZhName, cp.ZhDescription = zhName, zhDescription
+			cp.UpdatedAt = time.Now()
+			r.rows[i] = &cp
+			return nil
+		}
+	}
+	return nil
+}
+
+func (r *systemSkillRows) CreateCategory(
+	_ context.Context, e *types.PlatformSkillCategoryEntity,
+) error {
+	cp := *e
+	r.categories = append(r.categories, &cp)
+	return nil
+}
+
+func (r *systemSkillRows) GetCategoryByName(
+	_ context.Context, name string,
+) (*types.PlatformSkillCategoryEntity, error) {
+	for _, c := range r.categories {
+		if c.Name == name {
+			cp := *c
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *systemSkillRows) ListCategories(
+	context.Context,
+) ([]repository.SkillCategoryCount, error) {
+	counts := map[string]int64{}
+	for _, row := range r.rows {
+		if row.Category != "" {
+			counts[row.Category]++
+		}
+	}
+	names := make([]string, 0, len(r.categories))
+	for _, c := range r.categories {
+		names = append(names, c.Name)
+	}
+	sort.Strings(names)
+	out := make([]repository.SkillCategoryCount, 0, len(names))
+	for _, name := range names {
+		out = append(out, repository.SkillCategoryCount{
+			Name: name, Count: counts[name],
+		})
+	}
+	return out, nil
+}
+
+func (r *systemSkillRows) RenameCategory(
+	_ context.Context, from, to string,
+) (int64, error) {
+	var moved int64
+	for _, c := range r.categories {
+		if c.Name == from {
+			c.Name = to
+		}
+	}
+	for i, row := range r.rows {
+		if row.Category != from {
+			continue
+		}
+		cp := *row
+		cp.Category = to
+		cp.UpdatedAt = time.Now()
+		r.rows[i] = &cp
+		moved++
+	}
+	return moved, nil
+}
+
+func (r *systemSkillRows) ClearCategory(_ context.Context, name string) (int64, error) {
+	var cleared int64
+	kept := r.categories[:0]
+	for _, c := range r.categories {
+		if c.Name != name {
+			kept = append(kept, c)
+		}
+	}
+	r.categories = kept
+	for i, row := range r.rows {
+		if row.Category != name {
+			continue
+		}
+		cp := *row
+		cp.Category = ""
+		cp.UpdatedAt = time.Now()
+		r.rows[i] = &cp
+		cleared++
+	}
+	return cleared, nil
 }
 
 func (r *systemSkillRows) SoftDelete(_ context.Context, id string) error {
@@ -258,10 +364,10 @@ type systemSkillHandlerFixture struct {
 
 // compile-time: the stores satisfy what the services need.
 var (
-	_ repository.PlatformSkillRepository         = (*systemSkillRows)(nil)
+	_ repository.PlatformSkillRepository           = (*systemSkillRows)(nil)
 	_ repository.PlatformSkillAssignmentRepository = (*systemSkillAssignmentRows)(nil)
-	_ interfaces.FileService                     = (*systemSkillFileStore)(nil)
-	_ interfaces.StorageBackendResolver          = (*systemSkillResolver)(nil)
+	_ interfaces.FileService                       = (*systemSkillFileStore)(nil)
+	_ interfaces.StorageBackendResolver            = (*systemSkillResolver)(nil)
 )
 
 func newSystemSkillHandlerFixture(t *testing.T) *systemSkillHandlerFixture {
@@ -297,9 +403,14 @@ func newSystemSkillHandlerFixture(t *testing.T) *systemSkillHandlerFixture {
 	{
 		admin.GET("", fx.handler.ListSkills)
 		admin.POST("", fx.handler.CreateSkill)
+		admin.GET("/categories", fx.handler.ListSkillCategories)
+		admin.POST("/categories", fx.handler.CreateSkillCategory)
+		admin.PUT("/categories/rename", fx.handler.RenameSkillCategory)
+		admin.PUT("/categories/remove", fx.handler.RemoveSkillCategory)
 		admin.GET("/:id", fx.handler.GetSkill)
 		admin.PUT("/:id", fx.handler.UpdateSkill)
 		admin.DELETE("/:id", fx.handler.DeleteSkill)
+		admin.PUT("/:id/meta", fx.handler.UpdateSkillMeta)
 		admin.GET("/:id/files", fx.handler.ListSkillFiles)
 		admin.GET("/:id/files/content", fx.handler.GetSkillFile)
 		admin.GET("/:id/tenant-assignments", fx.handler.ListTenantAssignments)
@@ -317,10 +428,17 @@ func systemSkillMD(name, body string) string {
 
 func systemSkillZip(t *testing.T, name, body string) []byte {
 	t.Helper()
+	return systemSkillZipWithManifest(t, systemSkillMD(name, body))
+}
+
+// systemSkillZipWithManifest zips an arbitrary SKILL.md so tests can exercise
+// frontmatter metadata (version/author/category) end to end.
+func systemSkillZipWithManifest(t *testing.T, manifest string) []byte {
+	t.Helper()
 	buf := &bytes.Buffer{}
 	w := zip.NewWriter(buf)
 	for path, content := range map[string]string{
-		"SKILL.md":       systemSkillMD(name, body),
+		"SKILL.md":       manifest,
 		"scripts/run.py": "print('run')\n",
 	} {
 		f, err := w.Create(path)
@@ -332,7 +450,18 @@ func systemSkillZip(t *testing.T, name, body string) []byte {
 	return buf.Bytes()
 }
 
-func systemSkillUploadRequest(t *testing.T, method, path string, archive []byte) *http.Request {
+func systemSkillUploadRequest(
+	t *testing.T, method, path string, archive []byte,
+) *http.Request {
+	t.Helper()
+	return systemSkillUploadRequestWithFields(t, method, path, archive, nil)
+}
+
+// systemSkillUploadRequestWithFields rides extra form fields next to the file
+// field — the category/author of a registration.
+func systemSkillUploadRequestWithFields(
+	t *testing.T, method, path string, archive []byte, fields map[string]string,
+) *http.Request {
 	t.Helper()
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
@@ -340,6 +469,9 @@ func systemSkillUploadRequest(t *testing.T, method, path string, archive []byte)
 	require.NoError(t, err)
 	_, err = part.Write(archive)
 	require.NoError(t, err)
+	for key, value := range fields {
+		require.NoError(t, writer.WriteField(key, value))
+	}
 	require.NoError(t, writer.Close())
 	req := httptest.NewRequest(method, path, body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -391,6 +523,15 @@ func (fx *systemSkillHandlerFixture) updateSkill(t *testing.T, id, name, body st
 	fx.engine.ServeHTTP(w, systemSkillUploadRequest(t, http.MethodPut,
 		"/api/v1/system/admin/skills/"+id, systemSkillZip(t, name, body)))
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+}
+
+// registerCategory pre-registers a category through the real POST route and
+// asserts 201 — skills may only reference categories that exist first (000105).
+func (fx *systemSkillHandlerFixture) registerCategory(t *testing.T, name string) {
+	t.Helper()
+	w, out := fx.do(t, http.MethodPost, "/api/v1/system/admin/skills/categories",
+		map[string]any{"name": name})
+	require.Equal(t, http.StatusCreated, w.Code, "body: %v", out)
 }
 
 func (fx *systemSkillHandlerFixture) assign(
@@ -688,4 +829,283 @@ func TestSystemSkillUnassignBlockedWhileSkillsInstalled(t *testing.T) {
 	stillThere, err := fx.tenantSkills.GetCatalogByName(ctx, 7, "pdf-tools")
 	require.NoError(t, err)
 	require.NotNil(t, stillThere, "the platform surface has no force cascade")
+}
+
+// --- definition metadata (000104): category / author ---
+
+const systemSkillFrontmatterMeta = `
+author: Frontmatter Author
+category: frontmatter-cat
+`
+
+// Empty form fields fall back to the SKILL.md frontmatter values; non-empty
+// form fields override them. Both branches end in the response projection.
+func TestSystemSkillCreateReadsCategoryAndAuthor(t *testing.T) {
+	fx := newSystemSkillHandlerFixture(t)
+	// Categories must exist before skills reference them (000105): the
+	// frontmatter-only fallback and the form override below both name
+	// registered categories.
+	fx.registerCategory(t, "frontmatter-cat")
+	fx.registerCategory(t, "form-cat")
+
+	register := func(name string, fields map[string]string) map[string]any {
+		t.Helper()
+		manifest := "---\nname: " + name +
+			"\ndescription: system handler test skill" + systemSkillFrontmatterMeta + "---\n\nbody v1\n"
+		w := httptest.NewRecorder()
+		fx.engine.ServeHTTP(w, systemSkillUploadRequestWithFields(t, http.MethodPost,
+			"/api/v1/system/admin/skills", systemSkillZipWithManifest(t, manifest), fields))
+		require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+		out := map[string]any{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+		return out["data"].(map[string]any)
+	}
+
+	// No form fields: the frontmatter seeds the metadata.
+	data := register("pdf-tools", nil)
+	require.Equal(t, "frontmatter-cat", data["category"])
+	require.Equal(t, "Frontmatter Author", data["author"])
+
+	// Form fields win over whatever the frontmatter says.
+	data = register("doc-tools", map[string]string{
+		"category": "form-cat", "author": "Form Author",
+	})
+	require.Equal(t, "form-cat", data["category"])
+	require.Equal(t, "Form Author", data["author"])
+}
+
+// Create-first (000105): a form category that is not registered is a 400, and a
+// SKILL.md frontmatter category nobody registered is silently dropped — the
+// skill lands uncategorized rather than minting a new one.
+func TestSystemSkillCreateCategoryMustBeRegistered(t *testing.T) {
+	fx := newSystemSkillHandlerFixture(t)
+
+	w := httptest.NewRecorder()
+	fx.engine.ServeHTTP(w, systemSkillUploadRequestWithFields(t, http.MethodPost,
+		"/api/v1/system/admin/skills", systemSkillZip(t, "pdf-tools", "body v1"),
+		map[string]string{"category": "ghost"}))
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %s", w.Body.String())
+	out := map[string]any{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Equal(t, "category_not_found",
+		out["error"].(map[string]any)["code"])
+
+	// Frontmatter names an unregistered category: registration still succeeds
+	// and the skill is simply uncategorized.
+	manifest := "---\nname: doc-tools\ndescription: system handler test skill" +
+		"\ncategory: ghost\n---\n\nbody v1\n"
+	w = httptest.NewRecorder()
+	fx.engine.ServeHTTP(w, systemSkillUploadRequestWithFields(t, http.MethodPost,
+		"/api/v1/system/admin/skills", systemSkillZipWithManifest(t, manifest), nil))
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	out = map[string]any{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	require.Empty(t, out["data"].(map[string]any)["category"])
+}
+
+// POST /skills/categories is the registry's create surface: duplicates are a
+// 409 and a fresh unused category lists with count 0.
+func TestSystemSkillCategoryCreateEndpoint(t *testing.T) {
+	fx := newSystemSkillHandlerFixture(t)
+
+	w, out := fx.do(t, http.MethodPost, "/api/v1/system/admin/skills/categories",
+		map[string]any{"name": "docs"})
+	require.Equal(t, http.StatusCreated, w.Code, "body: %v", out)
+	require.Equal(t, "docs", out["data"].(map[string]any)["name"])
+
+	w, out = fx.do(t, http.MethodPost, "/api/v1/system/admin/skills/categories",
+		map[string]any{"name": "docs"})
+	require.Equal(t, http.StatusConflict, w.Code, "body: %v", out)
+	require.Equal(t, "category_exists", out["error"].(map[string]any)["code"])
+
+	w, _ = fx.do(t, http.MethodPost, "/api/v1/system/admin/skills/categories",
+		map[string]any{"name": "   "})
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	w, out = fx.do(t, http.MethodGet, "/api/v1/system/admin/skills/categories", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, []any{map[string]any{"name": "docs", "count": float64(0)}},
+		out["data"], "a freshly created, unused category still lists")
+}
+
+// The length cap is enforced on both content types before any fetch: the JSON
+// branch 400s without network I/O.
+func TestSystemSkillCreateMetaTooLongIs400(t *testing.T) {
+	fx := newSystemSkillHandlerFixture(t)
+	long := strings.Repeat("x", 256)
+
+	w := httptest.NewRecorder()
+	fx.engine.ServeHTTP(w, systemSkillUploadRequestWithFields(t, http.MethodPost,
+		"/api/v1/system/admin/skills", systemSkillZip(t, "pdf-tools", "body v1"),
+		map[string]string{"category": long}))
+	require.Equal(t, http.StatusBadRequest, w.Code)
+
+	w, out := fx.do(t, http.MethodPost, "/api/v1/system/admin/skills",
+		map[string]any{"source": "https://example.com/skill.zip", "author": long})
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Contains(t, out["error"].(map[string]any)["message"], "too long")
+}
+
+func TestSystemSkillMetaPresenceSemantics(t *testing.T) {
+	fx := newSystemSkillHandlerFixture(t)
+	fx.registerCategory(t, "docs")
+	fx.registerCategory(t, "office")
+	id := fx.createSkill(t, "pdf-tools", "body v1")
+
+	meta := func(t *testing.T, body map[string]any) map[string]any {
+		w, out := fx.do(t, http.MethodPut, "/api/v1/system/admin/skills/"+id+"/meta", body)
+		require.Equal(t, http.StatusOK, w.Code, "body: %v", out)
+		return out["data"].(map[string]any)
+	}
+
+	// Baseline: a fresh registration is uncategorized with no author.
+	w, out := fx.do(t, http.MethodGet, "/api/v1/system/admin/skills/"+id, nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Empty(t, out["data"].(map[string]any)["category"])
+
+	// Set both.
+	data := meta(t, map[string]any{"category": "docs", "author": "Alice"})
+	require.Equal(t, "docs", data["category"])
+	require.Equal(t, "Alice", data["author"])
+
+	// An absent field keeps its value; a present one replaces it.
+	data = meta(t, map[string]any{"category": "office"})
+	require.Equal(t, "office", data["category"])
+	require.Equal(t, "Alice", data["author"])
+	data = meta(t, map[string]any{"author": "Bob"})
+	require.Equal(t, "office", data["category"])
+	require.Equal(t, "Bob", data["author"])
+
+	// An explicit empty string clears back to uncategorized / unknown.
+	data = meta(t, map[string]any{"category": "", "author": ""})
+	require.Empty(t, data["category"])
+	require.Empty(t, data["author"])
+
+	// A non-empty category must be registered (000105).
+	w, out = fx.do(t, http.MethodPut, "/api/v1/system/admin/skills/"+id+"/meta",
+		map[string]any{"category": "ghost"})
+	require.Equal(t, http.StatusBadRequest, w.Code, "body: %v", out)
+	require.Equal(t, "category_not_found", out["error"].(map[string]any)["code"])
+
+	w, _ = fx.do(t, http.MethodPut, "/api/v1/system/admin/skills/missing/meta",
+		map[string]any{"category": "docs"})
+	require.Equal(t, http.StatusNotFound, w.Code)
+
+	w, _ = fx.do(t, http.MethodPut, "/api/v1/system/admin/skills/"+id+"/meta",
+		map[string]any{"category": strings.Repeat("x", 256)})
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestSystemSkillCategoryDirectoryAndBulkOps(t *testing.T) {
+	fx := newSystemSkillHandlerFixture(t)
+	fx.registerCategory(t, "docs")
+	fx.registerCategory(t, "office")
+	createCategorized := func(name, category string) string {
+		t.Helper()
+		fields := map[string]string{}
+		if category != "" {
+			fields["category"] = category
+		}
+		w := httptest.NewRecorder()
+		fx.engine.ServeHTTP(w, systemSkillUploadRequestWithFields(t, http.MethodPost,
+			"/api/v1/system/admin/skills", systemSkillZip(t, name, "body v1"), fields))
+		require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+		out := map[string]any{}
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+		return out["data"].(map[string]any)["id"].(string)
+	}
+	idDocsA := createCategorized("pdf-tools", "docs")
+	createCategorized("doc-tools", "docs")
+	createCategorized("sheet-tools", "office")
+	createCategorized("misc-tools", "")
+
+	w, out := fx.do(t, http.MethodGet, "/api/v1/system/admin/skills/categories", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, []any{
+		map[string]any{"name": "docs", "count": float64(2)},
+		map[string]any{"name": "office", "count": float64(1)},
+	}, out["data"], "sorted, counted, and uncategorized rows stay out")
+
+	// A rename moves every skill of the category and lights drift on their
+	// assignments — the metadata reaches workspaces through push.
+	fx.assign(t, idDocsA, 7)
+	time.Sleep(2 * time.Millisecond) // separate the meta stamp from PushedAt
+	w, out = fx.do(t, http.MethodPut, "/api/v1/system/admin/skills/categories/rename",
+		map[string]any{"from": "docs", "to": "文档"})
+	require.Equal(t, http.StatusOK, w.Code)
+	require.EqualValues(t, 2, out["renamed"])
+	w, out = fx.do(t, http.MethodGet, "/api/v1/system/admin/skills/"+idDocsA, nil)
+	require.Equal(t, "文档", out["data"].(map[string]any)["category"])
+	w, out = fx.do(t, http.MethodGet,
+		"/api/v1/system/admin/skills/"+idDocsA+"/tenant-assignments", nil)
+	require.True(t, out["data"].([]any)[0].(map[string]any)["drift"].(bool),
+		"a category rename is a drift driver")
+
+	w, out = fx.do(t, http.MethodPut, "/api/v1/system/admin/skills/categories/remove",
+		map[string]any{"name": "文档"})
+	require.Equal(t, http.StatusOK, w.Code)
+	require.EqualValues(t, 2, out["cleared"])
+	w, out = fx.do(t, http.MethodGet, "/api/v1/system/admin/skills/categories", nil)
+	require.Equal(t, []any{
+		map[string]any{"name": "office", "count": float64(1)},
+	}, out["data"])
+
+	w, _ = fx.do(t, http.MethodPut, "/api/v1/system/admin/skills/categories/rename",
+		map[string]any{"from": "office", "to": "office"})
+	require.Equal(t, http.StatusBadRequest, w.Code, "a rename onto itself is a 400")
+	w, _ = fx.do(t, http.MethodPut, "/api/v1/system/admin/skills/categories/remove",
+		map[string]any{"name": "   "})
+	require.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// The registration metadata flows into the materialized workspace catalog row.
+func TestSystemSkillAssignmentMaterializesMetadata(t *testing.T) {
+	fx := newSystemSkillHandlerFixture(t)
+	fx.registerCategory(t, "docs")
+	w := httptest.NewRecorder()
+	fx.engine.ServeHTTP(w, systemSkillUploadRequestWithFields(t, http.MethodPost,
+		"/api/v1/system/admin/skills", systemSkillZip(t, "pdf-tools", "body v1"),
+		map[string]string{"category": "docs", "author": "Alice"}))
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	out := map[string]any{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	id := out["data"].(map[string]any)["id"].(string)
+
+	fx.assign(t, id, 7)
+
+	cat, err := fx.tenantSkills.GetCatalogByName(context.Background(), 7, "pdf-tools")
+	require.NoError(t, err)
+	require.NotNil(t, cat)
+	require.Equal(t, "docs", cat.Category, "the assignment carries the category")
+	require.Equal(t, "Alice", cat.Author, "the assignment carries the author")
+}
+
+// A bundle re-register replaces the bundle facts but never the admin-managed
+// metadata — that has its own endpoint and its own drift.
+func TestSystemSkillBundleReregisterKeepsMeta(t *testing.T) {
+	fx := newSystemSkillHandlerFixture(t)
+	fx.registerCategory(t, "docs")
+	w := httptest.NewRecorder()
+	fx.engine.ServeHTTP(w, systemSkillUploadRequestWithFields(t, http.MethodPost,
+		"/api/v1/system/admin/skills", systemSkillZip(t, "pdf-tools", "body v1"),
+		map[string]string{"category": "docs", "author": "Alice"}))
+	require.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+	out := map[string]any{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &out))
+	id := out["data"].(map[string]any)["id"].(string)
+
+	// The v2 bundle ships different frontmatter author/category on purpose:
+	// neither may clobber the admin-managed values.
+	manifest := "---\nname: pdf-tools\ndescription: system handler test skill" +
+		systemSkillFrontmatterMeta + "---\n\nbody v2\n"
+	w = httptest.NewRecorder()
+	fx.engine.ServeHTTP(w, systemSkillUploadRequest(t, http.MethodPut,
+		"/api/v1/system/admin/skills/"+id, systemSkillZipWithManifest(t, manifest)))
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	w, out = fx.do(t, http.MethodGet, "/api/v1/system/admin/skills/"+id, nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	data := out["data"].(map[string]any)
+	require.Equal(t, "docs", data["category"])
+	require.Equal(t, "Alice", data["author"])
 }

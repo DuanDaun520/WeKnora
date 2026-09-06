@@ -1060,3 +1060,307 @@ func (h *SystemHandler) CreatePlatformTenant(c *gin.Context) {
 	logger.Infof(ctx, "System admin created workspace ID: %d, name: %s", created.ID, secutils.SanitizeForLog(created.Name))
 	c.JSON(http.StatusCreated, created)
 }
+
+// userIsSoleWorkspaceAdmin reports whether the user is the last remaining
+// workspace admin of any of their bound workspaces. Hard-deleting such a
+// user would strand that workspace without an administrator — the same
+// invariant UnbindUserFromTenant enforces per-binding (409).
+func (h *SystemHandler) userIsSoleWorkspaceAdmin(ctx context.Context, userID string) bool {
+	if h.memberSvc == nil {
+		return false
+	}
+	members, err := h.memberSvc.ListByUser(ctx, userID)
+	if err != nil {
+		return false
+	}
+	for _, m := range members {
+		if m == nil || m.Role.Level() < types.TenantRoleAdmin.Level() {
+			continue
+		}
+		hasOthers, err := h.workspaceHasOtherAdmins(ctx, m.TenantID, userID)
+		if err != nil {
+			continue
+		}
+		if !hasOthers {
+			return true
+		}
+	}
+	return false
+}
+
+// DeleteEnterpriseUser godoc
+// @Summary      Hard-delete a user (SystemAdmin)
+// @Description  Permanently remove a user: every workspace binding is
+// @Description  removed first (rbac.member_removed audit rows), sessions
+// @Description  revoked, then the users row is deleted. Deleting your own
+// @Description  account or a system admin is rejected; deleting a user
+// @Description  who is the sole workspace admin of some workspace is
+// @Description  rejected (409) until another admin is designated.
+// @Tags         System Admin
+// @Produce      json
+// @Param        user_id path string true "User ID"
+// @Success      200  {object}  map[string]interface{}  "User deleted"
+// @Failure      400  {object}  map[string]interface{}  "Cannot delete your own account"
+// @Failure      403  {object}  map[string]interface{}  "Forbidden: not a system admin"
+// @Failure      404  {object}  map[string]interface{}  "User not found"
+// @Failure      409  {object}  map[string]interface{}  "System admin or sole workspace admin"
+// @Router       /system/admin/users/{user_id} [delete]
+func (h *SystemHandler) DeleteEnterpriseUser(c *gin.Context) {
+	ctx := logger.CloneContext(c.Request.Context())
+
+	userID := c.Param("user_id")
+	user, err := h.userSvc.GetUserByID(ctx, userID)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+	callerID, _ := types.UserIDFromContext(ctx)
+	if callerID == user.ID {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete your own account here"})
+		return
+	}
+	if user.IsSystemAdmin {
+		c.JSON(http.StatusConflict, gin.H{"error": "Revoke this user's system admin role before deleting the account"})
+		return
+	}
+
+	// The member service is required: without it the user's bindings could
+	// not be removed, leaving orphan membership rows behind a deleted user.
+	if !h.requireMemberService(c) {
+		return
+	}
+	if h.userIsSoleWorkspaceAdmin(ctx, user.ID) {
+		c.JSON(http.StatusConflict, gin.H{"error": "This user is the only workspace admin of one or more workspaces; designate another admin before deleting"})
+		return
+	}
+
+	// Remove every binding first: TenantMemberService emits the
+	// rbac.member_removed audit rows and cleans up stale home pointers.
+	bindingsRemoved := 0
+	if members, err := h.memberSvc.ListByUser(ctx, user.ID); err == nil {
+		for _, m := range members {
+			if m == nil {
+				continue
+			}
+			if err := h.memberSvc.RemoveMember(ctx, user.ID, m.TenantID); err != nil {
+				logger.Warnf(ctx, "DeleteEnterpriseUser: failed to remove binding user=%s tenant=%d: %v",
+					user.ID, m.TenantID, err)
+				continue
+			}
+			bindingsRemoved++
+		}
+	}
+
+	if h.tokenRepo != nil {
+		if err := h.tokenRepo.RevokeTokensByUserID(ctx, user.ID); err != nil {
+			logger.Warnf(ctx, "DeleteEnterpriseUser: failed to revoke sessions for user %s: %v", user.ID, err)
+		}
+	}
+
+	if err := h.userSvc.DeleteUser(ctx, user.ID); err != nil {
+		logger.Errorf(ctx, "Failed to hard-delete user %s: %v", user.ID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete user"})
+		return
+	}
+
+	logger.Infof(ctx, "System admin hard-deleted user %s (employee ID: %s, bindings removed: %d)",
+		user.ID, user.EmployeeID, bindingsRemoved)
+	h.emitAdminAudit(ctx, types.AuditActionSystemUserDeleted, user, map[string]any{
+		"target_employee_id": user.EmployeeID,
+		"target_username":    user.Username,
+		"bindings_removed":   bindingsRemoved,
+	})
+	c.JSON(http.StatusOK, gin.H{"message": "User deleted"})
+}
+
+// EnterpriseUpdateTenantRequest is the PATCH-style body for
+// PUT /system/admin/tenants/:tenant_id. Nil fields are left unchanged;
+// Status may be "active" or "disabled".
+type EnterpriseUpdateTenantRequest struct {
+	Name           *string `json:"name"`
+	Description    *string `json:"description"`
+	StorageQuotaGB *int64  `json:"storage_quota_gb"`
+	Status         *string `json:"status"`
+}
+
+// UpdatePlatformTenant godoc
+// @Summary      Edit / enable or disable a workspace (SystemAdmin)
+// @Description  Update a workspace's name, description, storage quota, or
+// @Description  lifecycle status (active ⇄ disabled). Disabling a
+// @Description  workspace blocks every ordinary member and API key from
+// @Description  operating inside it (system admins keep access); its data
+// @Description  is untouched. Storage quota is bytes; pass the desired GB
+// @Description  value in storage_quota_gb (positive integers only).
+// @Tags         System Admin
+// @Accept       json
+// @Produce      json
+// @Param        tenant_id path string true "Workspace ID"
+// @Param        request body EnterpriseUpdateTenantRequest true "Fields to update"
+// @Success      200  {object}  types.Tenant  "Updated workspace"
+// @Failure      400  {object}  map[string]interface{}  "Invalid request"
+// @Failure      403  {object}  map[string]interface{}  "Forbidden: not a system admin"
+// @Failure      404  {object}  map[string]interface{}  "Workspace not found"
+// @Router       /system/admin/tenants/{tenant_id} [put]
+func (h *SystemHandler) UpdatePlatformTenant(c *gin.Context) {
+	ctx := logger.CloneContext(c.Request.Context())
+
+	tenantID, err := strconv.ParseUint(c.Param("tenant_id"), 10, 64)
+	if err != nil || tenantID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid workspace ID"})
+		return
+	}
+	tenant, err := h.tenantSvc.GetTenantByID(ctx, tenantID)
+	if err != nil || tenant == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
+		return
+	}
+
+	var req EnterpriseUpdateTenantRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid workspace update request"})
+		return
+	}
+
+	changed := map[string]bool{}
+	if req.Name != nil {
+		name := secutils.SanitizeForLog(strings.TrimSpace(*req.Name))
+		if n := utf8.RuneCountInString(name); n < 1 || n > 100 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Workspace name must be 1-100 characters"})
+			return
+		}
+		tenant.Name = name
+		changed["name"] = true
+	}
+	if req.Description != nil {
+		desc := secutils.SanitizeForLog(strings.TrimSpace(*req.Description))
+		if n := utf8.RuneCountInString(desc); n > 500 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Workspace description must be at most 500 characters"})
+			return
+		}
+		tenant.Description = desc
+		changed["description"] = true
+	}
+	if req.StorageQuotaGB != nil {
+		// Mirrors BulkSetStorageQuota's contract: the quota must be
+		// positive. A zero/omitted value would also be skipped by the
+		// repository's Updates(struct) zero-value behaviour, so we reject
+		// it up front instead of silently keeping the old quota.
+		if *req.StorageQuotaGB < 1 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Storage quota must be at least 1 GB"})
+			return
+		}
+		tenant.StorageQuota = *req.StorageQuotaGB * 1024 * 1024 * 1024
+		changed["storage_quota"] = true
+	}
+	disabling, enabling := false, false
+	if req.Status != nil {
+		switch strings.TrimSpace(*req.Status) {
+		case types.TenantStatusActive:
+			enabling = tenant.Status == types.TenantStatusDisabled
+			tenant.Status = types.TenantStatusActive
+			changed["status"] = true
+		case types.TenantStatusDisabled:
+			disabling = tenant.Status != types.TenantStatusDisabled
+			tenant.Status = types.TenantStatusDisabled
+			changed["status"] = true
+		default:
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Status must be \"active\" or \"disabled\""})
+			return
+		}
+	}
+
+	// Nothing to change is still a valid no-op: answer with the current row.
+	if len(changed) == 0 {
+		c.JSON(http.StatusOK, tenant)
+		return
+	}
+
+	updated, err := h.tenantSvc.UpdateTenant(ctx, tenant)
+	if err != nil {
+		logger.Errorf(ctx, "Failed to update workspace %d: %v", tenantID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update workspace"})
+		return
+	}
+
+	details := map[string]any{
+		"target_tenant_name": secutils.SanitizeForLog(updated.Name),
+	}
+	if len(changed) > 0 {
+		names := make([]string, 0, len(changed))
+		for k := range changed {
+			names = append(names, k)
+		}
+		details["changed_fields"] = names
+	}
+	if disabling {
+		details["disabled"] = true
+		logger.Infof(ctx, "System admin disabled workspace ID: %d, name: %s", tenantID, secutils.SanitizeForLog(updated.Name))
+	} else if enabling {
+		details["enabled"] = true
+		logger.Infof(ctx, "System admin re-enabled workspace ID: %d, name: %s", tenantID, secutils.SanitizeForLog(updated.Name))
+	} else {
+		logger.Infof(ctx, "System admin updated workspace ID: %d, name: %s", tenantID, secutils.SanitizeForLog(updated.Name))
+	}
+	h.emitAdminAuditTargeted(ctx, types.AuditActionSystemTenantUpdated,
+		"tenant", strconv.FormatUint(tenantID, 10), "", details)
+	c.JSON(http.StatusOK, updated)
+}
+
+// DeletePlatformTenant godoc
+// @Summary      Delete a workspace (SystemAdmin)
+// @Description  Hard-delete an empty workspace. A workspace that still
+// @Description  has members is rejected with 409 — unbind every member
+// @Description  first. Workspaces that already store knowledge bases or
+// @Description  other tenant data are rejected the same way by the member
+// @Description  guard; deletion is scoped to the platform-level catalog.
+// @Tags         System Admin
+// @Produce      json
+// @Param        tenant_id path string true "Workspace ID"
+// @Success      200  {object}  map[string]interface{}  "Workspace deleted"
+// @Failure      400  {object}  map[string]interface{}  "Invalid workspace ID"
+// @Failure      403  {object}  map[string]interface{}  "Forbidden: not a system admin"
+// @Failure      404  {object}  map[string]interface{}  "Workspace not found"
+// @Failure      409  {object}  map[string]interface{}  "Workspace still has members"
+// @Router       /system/admin/tenants/{tenant_id} [delete]
+func (h *SystemHandler) DeletePlatformTenant(c *gin.Context) {
+	ctx := logger.CloneContext(c.Request.Context())
+
+	tenantID, err := strconv.ParseUint(c.Param("tenant_id"), 10, 64)
+	if err != nil || tenantID == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid workspace ID"})
+		return
+	}
+	tenant, err := h.tenantSvc.GetTenantByID(ctx, tenantID)
+	if err != nil || tenant == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Workspace not found"})
+		return
+	}
+
+	// Only empty workspaces may be hard-deleted: members must be unbound
+	// first, which keeps the "last workspace admin" invariants observable.
+	if h.memberSvc != nil {
+		members, err := h.memberSvc.ListByTenant(ctx, tenantID)
+		if err != nil {
+			logger.Errorf(ctx, "Failed to check workspace members (tenant=%d): %v", tenantID, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete workspace"})
+			return
+		}
+		if len(members) > 0 {
+			c.JSON(http.StatusConflict, gin.H{"error": "Cannot delete a workspace that still has members; unbind all members first"})
+			return
+		}
+	}
+
+	if err := h.tenantSvc.DeleteTenant(ctx, tenantID); err != nil {
+		logger.Errorf(ctx, "Failed to delete workspace %d: %v", tenantID, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete workspace"})
+		return
+	}
+
+	logger.Infof(ctx, "System admin deleted workspace ID: %d, name: %s", tenantID, secutils.SanitizeForLog(tenant.Name))
+	h.emitAdminAuditTargeted(ctx, types.AuditActionSystemTenantDeleted,
+		"tenant", strconv.FormatUint(tenantID, 10), "", map[string]any{
+			"target_tenant_name": secutils.SanitizeForLog(tenant.Name),
+		})
+	c.JSON(http.StatusOK, gin.H{"message": "Workspace deleted"})
+}

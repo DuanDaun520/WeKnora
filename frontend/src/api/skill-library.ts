@@ -18,6 +18,14 @@ export interface PlatformSkill {
   /** Provenance only — '@owner/slug', a URL, or 'upload'. Never re-fetched. */
   source?: string
   bundle_sha256?: string
+  /** Admin-managed grouping category (empty = uncategorized). */
+  category?: string
+  /** Admin-managed author metadata (empty = unknown). */
+  author?: string
+  /** Admin-managed Chinese display name (000106); empty falls back to `name`. */
+  zh_name?: string
+  /** Admin-managed Chinese description (000106); empty falls back to `description`. */
+  zh_description?: string
   /** Always present (possibly empty) — the assigned workspace list. */
   assignments: PlatformSkillAssignment[]
   created_at?: string
@@ -105,21 +113,25 @@ export async function getPlatformSkill(id: string): Promise<PlatformSkill> {
   return response.data
 }
 
-// Register a new platform skill from a source reference (ClawHub slug / URL)
-export async function createPlatformSkillFromSource(
-  source: string,
-): Promise<PlatformSkill> {
-  const response: any = await post(BASE, { source }, { timeout: 2 * 60 * 1000 })
-  return response.data
-}
-
-// Register a new platform skill from an uploaded zip
+// Registration is zip-upload only: the "from source" fetch (public registry /
+// git URL) was dropped from the console UI — it pulls from the public network,
+// which does not fit the deployment. Empty category/author on upload fall back
+// to the SKILL.md frontmatter values; empty zh_name/zh_description mean "no
+// Chinese copy yet" (SKILL.md has no zh values to fall back to).
 export async function createPlatformSkillFromFile(
   file: File,
   onProgress?: (percent: number) => void,
+  category?: string,
+  author?: string,
+  zhName?: string,
+  zhDescription?: string,
 ): Promise<PlatformSkill> {
   const form = new FormData()
   form.append('file', file)
+  form.append('category', category || '')
+  form.append('author', author || '')
+  form.append('zh_name', zhName || '')
+  form.append('zh_description', zhDescription || '')
   const response: any = await postUpload(BASE, form, (e: any) => {
     if (e.total) onProgress?.(Math.round((e.loaded * 100) / e.total))
   }, { timeout: 5 * 60 * 1000 })
@@ -127,19 +139,10 @@ export async function createPlatformSkillFromFile(
 }
 
 /**
- * Re-register a skill's bundle (same name — renaming is a new skill). Edits
- * do NOT propagate to assigned workspaces: they light drift markers that the
- * explicit push action clears.
+ * Re-register a skill's bundle from an uploaded zip (same name — renaming is
+ * a new skill). Edits do NOT propagate to assigned workspaces: they light
+ * drift markers that the explicit push action clears.
  */
-export async function updatePlatformSkillFromSource(
-  id: string,
-  source: string,
-): Promise<PlatformSkill> {
-  const response: any = await put(`${BASE}/${id}`, { source }, { timeout: 2 * 60 * 1000 })
-  return response.data
-}
-
-// Re-register a skill's bundle from an uploaded zip
 export async function updatePlatformSkillFromFile(
   id: string,
   file: File,
@@ -160,6 +163,83 @@ export async function updatePlatformSkillFromFile(
  */
 export async function deletePlatformSkill(id: string): Promise<void> {
   await del(`${BASE}/${id}`)
+}
+
+/**
+ * Body of the meta PUT: all fields are always sent (an explicit "" clears back
+ * to uncategorized / unknown author / no Chinese copy); the caller decides
+ * whether to call at all by diffing against the values it opened with.
+ */
+export interface PlatformSkillMetaInput {
+  category: string
+  author: string
+  zh_name: string
+  zh_description: string
+}
+
+/**
+ * Rewrite the admin-managed metadata (category/author + 000106 Chinese display
+ * fields). Separate from the bundle re-register, which never touches these
+ * columns. The updated_at bump lights drift on every assignment — push carries
+ * the new values into the materialized workspace rows.
+ */
+export async function updatePlatformSkillMeta(
+  id: string,
+  meta: PlatformSkillMetaInput,
+): Promise<PlatformSkill> {
+  const response: any = await put(`${BASE}/${id}/meta`, meta)
+  return response.data
+}
+
+/** One registered category (000105): created in the category manager first,
+ * skills then only reference names that exist. */
+export interface PlatformSkillCategory {
+  id: string
+  name: string
+}
+
+/** One registry row plus how many live skills reference it. */
+export interface PlatformSkillCategoryCount {
+  name: string
+  count: number
+}
+
+// List every registered category with its usage count (a fresh, unused one
+// included)
+export async function listSkillCategories(): Promise<PlatformSkillCategoryCount[]> {
+  const response: any = await get(`${BASE}/categories`)
+  if (response && Array.isArray(response.data)) {
+    return response.data
+  }
+  return []
+}
+
+/**
+ * Register a category. Categories are managed independently and created HERE
+ * first — the register/edit drawer only lists registered names and never mints
+ * a new one.
+ */
+export async function createSkillCategory(name: string): Promise<PlatformSkillCategory> {
+  const response: any = await post(`${BASE}/categories`, { name })
+  return response.data
+}
+
+/**
+ * Rename one registered category and move every referencing skill onto the new
+ * name. Affected rows drift until pushed — returns how many skills moved.
+ */
+export async function renameSkillCategory(from: string, to: string): Promise<number> {
+  const response: any = await put(`${BASE}/categories/rename`, { from, to })
+  return response?.renamed ?? 0
+}
+
+/**
+ * Delete one registered category and send its skills back to uncategorized.
+ * Affected rows drift until pushed — returns how many skills were cleared.
+ */
+export async function removeSkillCategory(name: string): Promise<number> {
+  const response: any = await put(`${BASE}/categories/remove`, { name })
+  return response?.cleared ?? 0
 }
 
 // List the skill's assigned workspaces (drift markers included)

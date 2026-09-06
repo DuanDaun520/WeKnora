@@ -88,6 +88,12 @@ func isTenantOptionalAPI(path, method string) bool {
 	// RequireSystemAdmin 守卫，tenantless 会话仅携带身份。
 	case strings.HasPrefix(path, "/api/v1/system/admin"):
 		return true
+	// 部署能力清单是全局只读元数据，与具体空间无关：tenantless 的系统
+	// 管理员进控制台也要能拉取（否则前端能力快照永远为空，docker 等
+	// 严格判 false 的入口会被误判为未启用）。路由守卫自身用
+	// ViewerOrSystemAdmin 放行无角色但具 SystemAdmin 身份的会话。
+	case path == "/api/v1/system/capabilities" && method == http.MethodGet:
+		return true
 	default:
 		return false
 	}
@@ -261,6 +267,12 @@ func authenticateJWTUser(
 			return false
 		}
 	}
+	// 已禁用空间（JWT 仍指向它时）对非系统管理员一律拦截；系统管理员
+	// 放行以便从控制台恢复。
+	if disabledTenantBlocks(user, tenant) {
+		writeDisabledTenant(c, targetTenantID, user.ID)
+		return false
+	}
 
 	// 解析当前空间内的角色 (issue #1303)
 	role, ok := resolveTenantRole(ctx, memberService, user, targetTenantID, crossTenantSwitch, cfg)
@@ -287,6 +299,30 @@ func authenticateJWTUser(
 		SystemAdmin: user.IsSystemAdmin,
 	})
 	return true
+}
+
+// disabledTenantBlocks reports whether a request resolving to the given
+// workspace must be refused because the workspace is disabled. Workspaces
+// carry Status="disabled" when a system admin disables them from the
+// console (PUT /system/admin/tenants/:id). A disabled workspace is
+// off-limits to every non-system-admin caller; system admins keep access
+// so the operator who disabled it can still reach the console to
+// re-enable or delete it.
+func disabledTenantBlocks(user *types.User, tenant *types.Tenant) bool {
+	if tenant == nil || tenant.Status != types.TenantStatusDisabled {
+		return false
+	}
+	if user != nil && user.IsSystemAdmin {
+		return false
+	}
+	return true
+}
+
+func writeDisabledTenant(c *gin.Context, tenantID uint64, userID string) {
+	logger.Warnf(c.Request.Context(),
+		"Refusing request to disabled workspace %d from user %q", tenantID, userID)
+	c.JSON(http.StatusForbidden, gin.H{"error": "Forbidden: this workspace has been disabled by the system administrator"})
+	c.Abort()
 }
 
 // resolveTargetTenant decides which tenant this request operates in.
@@ -350,6 +386,11 @@ func resolveTargetTenant(
 			c.Abort()
 			return 0, nil, false, false
 		}
+		// 已禁用空间只放行系统管理员（便于其进控制台恢复/删除）。
+		if disabledTenantBlocks(user, targetTenant) {
+			writeDisabledTenant(c, parsedTenantID, user.ID)
+			return 0, nil, false, false
+		}
 		logger.Infof(ctx, "User %s switching to tenant %d", user.ID, parsedTenantID)
 		return parsedTenantID, targetTenant, parsedTenantID != user.TenantID, true
 	}
@@ -384,7 +425,7 @@ func resolveFirstMembershipTarget(
 			continue
 		}
 		tenant, err := tenantService.GetTenantByID(ctx, member.TenantID)
-		if err == nil && tenant != nil {
+		if err == nil && tenant != nil && tenant.Status != types.TenantStatusDisabled {
 			return member.TenantID
 		}
 	}
@@ -520,6 +561,11 @@ func attachAPIKeyAuthContext(
 		logger.Warnf(c.Request.Context(), "[auth] API key tenant lookup failed: tenant=%d err=%v", tenantID, err)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized: invalid API key"})
 		c.Abort()
+		return
+	}
+	// 已禁用空间：tenant-owned API key 一律拦截（无系统管理员豁免）。
+	if t.Status == types.TenantStatusDisabled {
+		writeDisabledTenant(c, tenantID, "")
 		return
 	}
 

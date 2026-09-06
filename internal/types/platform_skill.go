@@ -29,6 +29,19 @@ type PlatformSkillEntity struct {
 	// Source is provenance only ("@owner/slug", a URL, or "upload"): shown in
 	// the console, never re-fetched automatically.
 	Source string `gorm:"type:varchar(1024)"`
+	// Category/Author are admin-managed definition metadata (000104): seeded
+	// from SKILL.md frontmatter or the register form on create, edited only
+	// through the meta endpoint, never touched by a bundle re-register. Edits
+	// bump updated_at so assignment drift routes them through push.
+	Category string `gorm:"type:varchar(255);not null;default:''"`
+	Author   string `gorm:"type:varchar(255);not null;default:''"`
+	// ZhName/ZhDescription are Chinese display metadata (000106), also
+	// admin-managed like category/author above. The console card titles the
+	// skill with zh_name and summarizes it with the first 40 chars of
+	// zh_description, each falling back to the SKILL.md value when empty.
+	// SKILL.md has no counterpart to seed them, so empty stays empty.
+	ZhName        string `gorm:"type:varchar(255);not null;default:''"`
+	ZhDescription string `gorm:"type:text;not null;default:''"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -62,3 +75,23 @@ type PlatformSkillAssignmentEntity struct {
 func (PlatformSkillAssignmentEntity) TableName() string {
 	return "platform_skill_assignments"
 }
+
+// PlatformSkillCategoryEntity is one row of the category registry (000105).
+// Categories are created FIRST in the console's「分类管理」dialog and skills then
+// only pick from the registry (the register drawer is not creatable anymore), so
+// this table — not platform_skills.category — is the vocabulary source. A skill
+// references a category by NAME (platform_skills.category remains a plain
+// string, empty = uncategorized): there is deliberately no foreign key, because
+// deleting a category clears that string on its skills rather than cascading.
+type PlatformSkillCategoryEntity struct {
+	ID   string `gorm:"type:varchar(36);primaryKey"`
+	Name string `gorm:"type:varchar(255);not null"`
+	// Unique among live rows only — enforced by the partial unique index in
+	// migration 000105 (soft-deleted rows keep the name claimable again).
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+}
+
+// TableName pins the table so GORM's pluralizer cannot drift.
+func (PlatformSkillCategoryEntity) TableName() string { return "platform_skill_categories" }

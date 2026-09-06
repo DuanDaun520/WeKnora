@@ -18,6 +18,11 @@ func TestTenantOptionalAPISurface(t *testing.T) {
 		{http.MethodPut, "/api/v1/auth/me", true},
 		{http.MethodPut, "/api/v1/auth/me/preferences", true},
 		{http.MethodPost, "/api/v1/tenants", true},
+		// Deployment-wide capability snapshot: the console's tenantless system
+		// admin must be able to fetch it before any workspace is bound, or the
+		// docker strict gate reads a missing key as disabled.
+		{http.MethodGet, "/api/v1/system/capabilities", true},
+		{http.MethodPost, "/api/v1/system/capabilities", false},
 		{http.MethodGet, "/api/v1/knowledge-bases", false},
 		{http.MethodGet, "/api/v1/tenants", false},
 	}

@@ -209,7 +209,7 @@ func RegisterSystemRoutes(
 ) {
 	systemRoutes := g.apiKeyGroup(r.Group("/system"), apiKeyManageVectorStores(apiKeyFullAccess()))
 	{
-		systemRoutes.With(apiKeyAny()).GET("/capabilities", g.Viewer(), handler.GetDeploymentCapabilities)
+		systemRoutes.With(apiKeyAny()).GET("/capabilities", g.ViewerOrSystemAdmin(), handler.GetDeploymentCapabilities)
 		systemRoutes.GET("/info", g.Viewer(), handler.GetSystemInfo)
 		systemRoutes.GET("/parser-engines", g.Viewer(), handler.ListParserEngines)
 		systemRoutes.POST("/parser-engines/check", g.SystemAdmin(), handler.CheckParserEngines)
@@ -264,12 +264,22 @@ func RegisterSystemAdminRoutes(
 		adminRoutes.GET("/users", handler.ListEnterpriseUsers)
 		adminRoutes.POST("/users", handler.CreateEnterpriseUser)
 		adminRoutes.PUT("/users/:user_id", handler.UpdateEnterpriseUser)
+		// Hard delete: every binding is removed first (rbac.member_removed
+		// rows), then the users row itself. Deleting a system admin or the
+		// caller is rejected.
+		adminRoutes.DELETE("/users/:user_id", handler.DeleteEnterpriseUser)
 		adminRoutes.POST("/users/:user_id/reset-password", handler.ResetEnterpriseUserPassword)
 		adminRoutes.GET("/users/:user_id/bindings", handler.ListUserBindings)
 		adminRoutes.POST("/users/:user_id/bindings", handler.BindUserToTenant)
 		adminRoutes.DELETE("/users/:user_id/bindings/:tenant_id", handler.UnbindUserFromTenant)
 		adminRoutes.GET("/tenants", handler.ListPlatformTenants)
 		adminRoutes.POST("/tenants", handler.CreatePlatformTenant)
+		// Workspace lifecycle: edit name/description/storage quota and toggle
+		// active ⇄ disabled (PUT), or hard delete an empty workspace (DELETE).
+		// Static siblings above (/tenants/apply-default-storage-quota) keep
+		// resolving ahead of the :tenant_id wildcard in gin's radix tree.
+		adminRoutes.PUT("/tenants/:tenant_id", handler.UpdatePlatformTenant)
+		adminRoutes.DELETE("/tenants/:tenant_id", handler.DeletePlatformTenant)
 		// Two-level workspace roles: the workspace member roster and the
 		// 空间管理员/普通用户 designation surface of the admin console.
 		adminRoutes.GET("/tenants/:tenant_id/members", handler.ListWorkspaceMembers)

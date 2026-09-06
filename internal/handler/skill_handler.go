@@ -5,7 +5,9 @@ import (
 	"net/http"
 
 	"github.com/Tencent/WeKnora/internal/application/service"
+	"github.com/Tencent/WeKnora/internal/logger"
 	"github.com/Tencent/WeKnora/internal/types"
+	"github.com/Tencent/WeKnora/internal/types/interfaces"
 	"github.com/gin-gonic/gin"
 )
 
@@ -20,12 +22,17 @@ type usableSkillLister interface {
 type SkillHandler struct {
 	usableSkills usableSkillLister
 	catalog      skillCatalogService
+	// users resolves CreatedBy ids into display names for catalog listings.
+	// May be nil in tests that skip creator enrichment.
+	users interfaces.UserService
 }
 
 type skillCatalogService interface {
-	ListCatalog(ctx context.Context, tenantID uint64) ([]service.SkillCatalogView, error)
-	RegisterCatalogFromArchive(ctx context.Context, tenantID uint64, archive []byte) (*types.TenantSkillCatalogEntity, error)
-	RegisterCatalogFromSource(ctx context.Context, tenantID uint64, source string) (*types.TenantSkillCatalogEntity, error)
+	// includeHidden=false hides space-hidden skills (000108) from the browsing
+	// surface; the 技能目录 management page passes true.
+	ListCatalog(ctx context.Context, tenantID uint64, includeHidden bool) ([]service.SkillCatalogView, error)
+	UpdateCatalogMeta(ctx context.Context, tenantID uint64, catalogID, category string) (*types.TenantSkillCatalogEntity, error)
+	SetCatalogVisible(ctx context.Context, tenantID uint64, catalogID string, visible bool) (*types.TenantSkillCatalogEntity, error)
 	InstallCatalogToConfigs(ctx context.Context, tenantID uint64, catalogID string, configIDs []string) (*service.CatalogInstallResult, error)
 	DeleteCatalog(ctx context.Context, tenantID uint64, catalogID string) error
 	ListCatalogFiles(ctx context.Context, tenantID uint64, catalogID string) ([]service.SkillFileEntry, error)
@@ -33,11 +40,48 @@ type skillCatalogService interface {
 }
 
 // NewSkillHandler creates a new skill handler. catalog may be nil in tests
-// that only exercise the chat picker.
-func NewSkillHandler(usableSkills usableSkillLister, catalog skillCatalogService) *SkillHandler {
+// that only exercise the chat picker; users may be nil to skip enrichment.
+func NewSkillHandler(usableSkills usableSkillLister, catalog skillCatalogService, users interfaces.UserService) *SkillHandler {
 	return &SkillHandler{
 		usableSkills: usableSkills,
 		catalog:      catalog,
+		users:        users,
+	}
+}
+
+// enrichSkillCreatorNames resolves view.CreatedBy into CreatorName in place.
+// Views are a value slice, so we write back by index. Failures are swallowed —
+// the listing stays usable without display names. Mirrors enrichAgentCreatorNames.
+func enrichSkillCreatorNames(ctx context.Context, userSvc interfaces.UserService, rows []service.SkillCatalogView) {
+	if userSvc == nil || len(rows) == 0 {
+		return
+	}
+	idSet := make(map[string]struct{}, len(rows))
+	for i := range rows {
+		if rows[i].CreatedBy == "" {
+			continue
+		}
+		idSet[rows[i].CreatedBy] = struct{}{}
+	}
+	if len(idSet) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	users, err := userSvc.GetUsersByIDs(ctx, ids)
+	if err != nil {
+		logger.Warnf(ctx, "Failed to resolve skill creator names: %v", err)
+		return
+	}
+	for i := range rows {
+		if rows[i].CreatedBy == "" {
+			continue
+		}
+		if u, ok := users[rows[i].CreatedBy]; ok && u != nil {
+			rows[i].CreatorName = pickUserDisplayName(u)
+		}
 	}
 }
 

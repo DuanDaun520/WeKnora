@@ -1,8 +1,6 @@
 package handler
 
 import (
-	stderrors "errors"
-	"io"
 	"net/http"
 	"strings"
 
@@ -10,8 +8,6 @@ import (
 
 	"github.com/Tencent/WeKnora/internal/application/service"
 	apperrors "github.com/Tencent/WeKnora/internal/errors"
-	"github.com/Tencent/WeKnora/internal/types"
-	secutils "github.com/Tencent/WeKnora/internal/utils"
 )
 
 // ListCatalog godoc
@@ -28,98 +24,84 @@ func (h *SkillHandler) ListCatalog(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"success": true, "data": []any{}})
 		return
 	}
-	rows, err := h.catalog.ListCatalog(c.Request.Context(), sandboxConfigTenantID(c))
+	// include_hidden=1 keeps space-hidden skills (000108) in the listing for the
+	// 技能目录 management page; everyone else (Skills/MCP browse, agent editor,
+	// @mention) reads the default and never sees hidden rows.
+	includeHidden := c.Query("include_hidden") == "1" || c.Query("include_hidden") == "true"
+	rows, err := h.catalog.ListCatalog(c.Request.Context(), sandboxConfigTenantID(c), includeHidden)
 	if err != nil {
 		_ = c.Error(err)
 		return
 	}
+	enrichSkillCreatorNames(c.Request.Context(), h.users, rows)
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": rows})
 }
 
-// RegisterCatalog godoc
-// @Summary      Add a skill to the workspace catalog
-// @Description  Records a skill without installing it. Send a zip as multipart field "file", or JSON {"source":"..."}.
+// RegisterCatalog was removed: workspaces no longer register their own skills.
+// Catalog rows only materialize from the platform skill library's workspace
+// assignments (see PlatformSkillService), so the tenant-side HTTP surface for
+// self-registration (zip upload / source fetch) is gone.
+
+type catalogInstallRequest struct {
+	SandboxConfigIDs []string `json:"sandbox_config_ids"`
+}
+
+// UpdateCatalogMeta godoc
+// @Summary      Edit the category / space visibility of a catalog skill
+// @Description  Rewrites only the browser-facing category and the 000108 space-visible
+// @Description  switch; bundle and provenance stay untouched.
 // @Tags         Skills
 // @Accept       json
-// @Accept       multipart/form-data
 // @Produce      json
-// @Success      201  {object}  map[string]interface{}
-// @Router       /skills/catalog [post]
-func (h *SkillHandler) RegisterCatalog(c *gin.Context) {
+// @Param        id   path  string  true  "Catalog skill ID"
+// @Success      200  {object}  map[string]interface{}
+// @Router       /skills/catalog/{id} [put]
+func (h *SkillHandler) UpdateCatalogMeta(c *gin.Context) {
 	if h.catalog == nil {
 		_ = c.Error(apperrors.NewInternalServerError("skill catalog is not configured"))
 		return
 	}
-	maxBytes := secutils.GetMaxSkillBundleSize()
-	limitSkillUploadBody(c, maxBytes)
-
-	if strings.HasPrefix(c.ContentType(), "application/json") {
-		h.registerCatalogFromSource(c)
-		return
-	}
-
-	file, header, err := c.Request.FormFile("file")
-	if err != nil {
-		if isRequestBodyTooLarge(err) {
-			_ = c.Error(skillTooLargeError())
-			return
-		}
-		_ = c.Error(apperrors.NewBadRequestError("file is required"))
-		return
-	}
-	defer func() { _ = file.Close() }()
-	if header.Size > maxBytes {
-		_ = c.Error(skillTooLargeError())
-		return
-	}
-	archive, err := io.ReadAll(io.LimitReader(file, maxBytes+1))
-	if err != nil {
-		_ = c.Error(apperrors.NewBadRequestError("failed to read the uploaded skill bundle"))
-		return
-	}
-	if int64(len(archive)) > maxBytes {
-		_ = c.Error(skillTooLargeError())
-		return
-	}
-
-	cat, err := h.catalog.RegisterCatalogFromArchive(
-		c.Request.Context(), sandboxConfigTenantID(c), archive,
-	)
-	if err != nil {
-		respondSkillServiceError(c, err)
-		return
-	}
-	c.JSON(http.StatusCreated, gin.H{"success": true, "data": catalogIDResponse(cat)})
-}
-
-func (h *SkillHandler) registerCatalogFromSource(c *gin.Context) {
-	var req skillSourceRequest
+	limitJSONBody(c, skillSourceJSONMaxBytes)
+	var req catalogMetaUpdateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		var tooLarge *http.MaxBytesError
-		if stderrors.As(err, &tooLarge) {
-			_ = c.Error(skillSourceRequestTooLargeError())
+		if isRequestBodyTooLarge(err) {
+			_ = c.Error(skillJSONRequestTooLargeError())
 			return
 		}
-		_ = c.Error(apperrors.NewBadRequestError("invalid skill source request"))
+		_ = c.Error(apperrors.NewBadRequestError("invalid category request"))
 		return
 	}
-	source := strings.TrimSpace(req.Source)
-	if source == "" {
-		_ = c.Error(apperrors.NewBadRequestError("source is required"))
+	if len(strings.TrimSpace(req.Category)) > 255 {
+		_ = c.Error(apperrors.NewBadRequestError("category is too long"))
 		return
 	}
-	cat, err := h.catalog.RegisterCatalogFromSource(
-		c.Request.Context(), sandboxConfigTenantID(c), source,
-	)
+	ctx := c.Request.Context()
+	tenantID := sandboxConfigTenantID(c)
+	catalogID := c.Param("id")
+
+	cat, err := h.catalog.UpdateCatalogMeta(ctx, tenantID, catalogID, req.Category)
 	if err != nil {
 		respondSkillServiceError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, gin.H{"success": true, "data": catalogIDResponse(cat)})
+	if req.Visible != nil && cat.Visible != *req.Visible {
+		cat, err = h.catalog.SetCatalogVisible(ctx, tenantID, catalogID, *req.Visible)
+		if err != nil {
+			respondSkillServiceError(c, err)
+			return
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{
+		"id":       cat.ID,
+		"category": cat.Category,
+		"visible":  cat.Visible,
+	}})
 }
 
-type catalogInstallRequest struct {
-	SandboxConfigIDs []string `json:"sandbox_config_ids"`
+type catalogMetaUpdateRequest struct {
+	Category string `json:"category"`
+	// Visible is optional: absent keeps the current space visibility.
+	Visible *bool `json:"visible"`
 }
 
 // InstallCatalog godoc
@@ -231,16 +213,4 @@ func (h *SkillHandler) GetCatalogFile(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": file})
-}
-
-func catalogIDResponse(cat *types.TenantSkillCatalogEntity) gin.H {
-	if cat == nil {
-		return gin.H{}
-	}
-	return gin.H{
-		"id":          cat.ID,
-		"name":        cat.Name,
-		"version":     cat.Version,
-		"description": cat.Description,
-	}
 }

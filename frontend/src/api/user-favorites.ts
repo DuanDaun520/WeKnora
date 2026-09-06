@@ -8,7 +8,9 @@
 
 import { get, post, del } from '@/utils/request'
 
-export type FavoriteResourceType = 'kb' | 'agent'
+// Keep in sync with types.IsValidFavoriteResourceType (internal/types/
+// user_resource_favorite.go) — the server rejects anything not on that list.
+export type FavoriteResourceType = 'kb' | 'agent' | 'skill' | 'mcp'
 
 export interface FavoriteEntry {
   user_id: string

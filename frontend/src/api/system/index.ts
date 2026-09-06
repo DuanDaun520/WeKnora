@@ -599,6 +599,37 @@ export async function createPlatformTenant(
   return response as unknown as PlatformTenant
 }
 
+/** PATCH-style body for PUT /system/admin/tenants/:id. Nil fields are left
+ *  unchanged; status toggles active ⇄ disabled. */
+export interface UpdatePlatformTenantRequest {
+  name?: string
+  description?: string
+  /** Positive GB. */
+  storage_quota_gb?: number
+  status?: 'active' | 'disabled'
+}
+
+/** 200 with the updated tenant row. */
+export async function updatePlatformTenant(
+  tenantId: number,
+  req: UpdatePlatformTenantRequest,
+): Promise<PlatformTenant> {
+  const response = await put(`/api/v1/system/admin/tenants/${tenantId}`, req)
+  return response as unknown as PlatformTenant
+}
+
+/** Hard-delete a (memberless) workspace. */
+export async function deletePlatformTenant(tenantId: number): Promise<{ message: string }> {
+  const response = await del(`/api/v1/system/admin/tenants/${tenantId}`)
+  return response as unknown as { message: string }
+}
+
+/** Hard-delete a user: every binding is removed first, then the row. */
+export async function deleteEnterpriseUser(userId: string): Promise<{ message: string }> {
+  const response = await del(`/api/v1/system/admin/users/${encodeURIComponent(userId)}`)
+  return response as unknown as { message: string }
+}
+
 // ---- Two-level workspace roles (空间管理员 / 普通用户) ----
 
 /** The two workspace roles the system admin can designate. */

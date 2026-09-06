@@ -217,6 +217,15 @@ func (g *rbacGuards) AdminOrSystemAdmin() gin.HandlerFunc {
 	return middleware.RequireRoleOrSystemAdmin(types.TenantRoleAdmin, g.cfg)
 }
 
+// ViewerOrSystemAdmin applies the read floor (Viewer) while also letting
+// platform system administrators through even when they hold no tenant
+// membership. Used for deployment-wide read metadata such as
+// /system/capabilities, which the console must be able to fetch before the
+// tenantless admin has any bound workspace.
+func (g *rbacGuards) ViewerOrSystemAdmin() gin.HandlerFunc {
+	return middleware.RequireRoleOrSystemAdmin(types.TenantRoleViewer, g.cfg)
+}
+
 func (g *rbacGuards) Owner() gin.HandlerFunc {
 	return middleware.RequireRole(types.TenantRoleOwner, g.cfg)
 }

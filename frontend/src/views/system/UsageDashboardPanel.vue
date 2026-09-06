@@ -1,8 +1,14 @@
 <template>
   <div class="usage-dashboard-panel">
-    <div class="section-header">
-      <h2>{{ t('usageStats.adminTitle') }}</h2>
-      <p class="section-description">{{ t('usageStats.adminDesc') }}</p>
+    <div class="section-header usage-header">
+      <div>
+        <h2>{{ t('usageStats.adminTitle') }}</h2>
+        <p class="section-description">{{ t('usageStats.adminDesc') }}</p>
+      </div>
+      <t-button variant="outline" @click="pricesVisible = true">
+        <template #icon><t-icon name="money-circle" /></template>
+        {{ t('usageStats.prices.menuLabel') }}
+      </t-button>
     </div>
 
     <t-tabs v-model="view">
@@ -118,6 +124,18 @@
         />
       </div>
     </div>
+
+    <!-- 模型单价：从「模型」菜单收敛进看板内，以弹窗弹出配置（不再单独占菜单）。 -->
+    <t-dialog
+      v-model:visible="pricesVisible"
+      :header="t('usageStats.prices.title')"
+      :footer="false"
+      width="960px"
+      destroy-on-close
+      @close="pricesVisible = false"
+    >
+      <BillingPricesPanel embedded />
+    </t-dialog>
   </div>
 </template>
 
@@ -128,6 +146,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import UsageSummarySection from '@/views/settings/usage/UsageSummarySection.vue'
+import BillingPricesPanel from './BillingPricesPanel.vue'
 import {
   getAdminUsageRecords,
   getAdminUsageSummary,
@@ -144,6 +163,8 @@ const USAGE_CATEGORIES = ['chat', 'embedding', 'rerank', 'vlm', 'asr'] as const
 const { t } = useI18n()
 const view = ref<'dashboard' | 'records'>('dashboard')
 const level = ref<AdminLevel>('platform')
+// 模型单价配置弹窗（已从控制台独立菜单收敛进看板内）。
+const pricesVisible = ref(false)
 
 // 下钻过滤：输入与已应用分离，点「应用」才生效（避免每敲一个字符重拉）。
 const drillTenantId = ref('')
@@ -249,6 +270,13 @@ watch(view, (v) => {
 .usage-dashboard-panel {
   display: flex;
   flex-direction: column;
+  gap: 16px;
+}
+
+.usage-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
   gap: 16px;
 }
 

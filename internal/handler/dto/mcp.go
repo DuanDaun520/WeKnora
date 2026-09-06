@@ -35,6 +35,10 @@ type MCPServiceResponse struct {
 	StdioConfig    *types.MCPStdioConfig    `json:"stdio_config,omitempty"`
 	EnvVars        types.MCPEnvVars         `json:"env_vars,omitempty"`
 	IsBuiltin      bool                     `json:"is_builtin"`
+	// Category/CreatedBy/CreatorName feed the Skills/MCP browser cards.
+	Category    string `json:"category"`
+	CreatedBy   string `json:"created_by,omitempty"`
+	CreatorName string `json:"creator_name,omitempty"`
 	CreatedAt      time.Time                `json:"created_at"`
 	UpdatedAt      time.Time                `json:"updated_at"`
 	// Credentials is the per-field "configured?" map. Embedded on the main
@@ -87,6 +91,9 @@ func NewMCPServiceResponse(ctx context.Context, svc *types.MCPService) *MCPServi
 		StdioConfig:    svc.StdioConfig,
 		EnvVars:        svc.EnvVars,
 		IsBuiltin:      svc.IsBuiltin,
+		Category:       svc.Category,
+		CreatedBy:      svc.CreatedBy,
+		CreatorName:    svc.CreatorName,
 		CreatedAt:      svc.CreatedAt,
 		UpdatedAt:      svc.UpdatedAt,
 	}

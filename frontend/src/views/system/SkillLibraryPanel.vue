@@ -11,6 +11,10 @@
           <template #icon><t-icon name="refresh" /></template>
           {{ t('skillLibrary.refresh') }}
         </t-button>
+        <t-button variant="outline" @click="categoryManagerVisible = true">
+          <template #icon><t-icon name="folder" /></template>
+          {{ t('skillLibrary.categoryManager') }}
+        </t-button>
         <t-button theme="primary" @click="openCreate">
           <template #icon><t-icon name="add" /></template>
           {{ t('skillLibrary.addSkill') }}
@@ -27,6 +31,30 @@
       >
         <template #prefix-icon><t-icon name="search" /></template>
       </t-input>
+    </div>
+
+    <!-- 分类快速过滤（000106）：chips 从当前列表派生，与用户侧 SkillsMcpList
+         同款交互 —— 全部分类 + 在用的分类 + （若有）未分类。 -->
+    <div v-if="skills.length" class="category-row">
+      <button
+        type="button"
+        class="category-chip"
+        :class="{ active: activeCategory === CATEGORY_ALL }"
+        @click="activeCategory = CATEGORY_ALL"
+      >
+        {{ t('skillLibrary.categoryFilterAll') }}
+      </button>
+      <button
+        v-for="cat in skillCategories"
+        :key="cat"
+        type="button"
+        class="category-chip"
+        :class="{ active: activeCategory === cat }"
+        @click="activeCategory = cat"
+      >
+        {{ cat === '' ? t('skillLibrary.uncategorized') : cat }}
+      </button>
+      <span class="count-label">{{ t('skillLibrary.countLabel', { count: filteredSkills.length }) }}</span>
     </div>
 
     <div v-if="loading" class="loading-container">
@@ -55,9 +83,17 @@
       >
         <div class="skill-card__body">
           <div class="skill-card__header">
-            <h3 class="skill-card__title" :title="skill.name">{{ skill.name }}</h3>
+            <h3 class="skill-card__title" :title="cardTitle(skill)">{{ cardTitle(skill) }}</h3>
             <span v-if="skill.version" class="skill-card__version" :title="skill.version">
               {{ skill.version }}
+            </span>
+            <!-- 分类 pill：与空间技能目录卡同款（点击卡片进编辑抽屉可改） -->
+            <span
+              v-if="skill.category"
+              class="skill-card__category"
+              :title="skill.category"
+            >
+              {{ skill.category }}
             </span>
             <div class="skill-card__actions" @click.stop>
               <t-tooltip :content="t('skillLibrary.browseFiles')">
@@ -84,11 +120,22 @@
               </t-dropdown>
             </div>
           </div>
-          <div v-if="skill.description" class="skill-card__desc" :title="skill.description">
-            {{ skill.description }}
+          <div v-if="cardTitle(skill) !== skill.name" class="skill-card__subname" :title="skill.name">
+            {{ skill.name }}
           </div>
-          <div v-if="skill.updated_at" class="skill-card__time">
-            {{ t('skillLibrary.updatedAt') }}：{{ formatTime(skill.updated_at) }}
+          <!-- 描述展示：中文描述(000106)优先，空则回落 SKILL.md description；卡片只
+               显示前 40 字，完整文本在 title tooltip 里。 -->
+          <div v-if="cardDescExcerpt(skill)" class="skill-card__desc" :title="cardDescFull(skill)">
+            {{ cardDescExcerpt(skill) }}
+          </div>
+          <div v-if="skill.updated_at || skill.author" class="skill-card__time">
+            <template v-if="skill.updated_at">
+              {{ t('skillLibrary.updatedAt') }}：{{ formatTime(skill.updated_at) }}
+            </template>
+            <template v-if="skill.updated_at && skill.author"> · </template>
+            <span v-if="skill.author" class="skill-card__author" :title="skill.author">
+              {{ skill.author }}
+            </span>
           </div>
           <div class="skill-card__assignments">
             <template v-if="skill.assignments?.length">
@@ -132,7 +179,14 @@
       :skill-name="filesSkillName"
     />
 
-    <!-- 推送结果：逐空间状态，被阻止的行带原因 -->
+    <!-- 分类管理：派生目录 + 批量重命名 / 删除 -->
+    <SkillCategoryManagerDialog
+      v-model:visible="categoryManagerVisible"
+      @changed="loadSkills"
+    />
+
+    <!-- 推送结果：逐空间状态，被阻止的行带原因。底部「关闭」是 confirm 按钮，
+         须显式把它关掉（tdesign 的 confirm 不自动 emit update:visible）。 -->
     <t-dialog
       v-model:visible="pushResultVisible"
       :header="t('skillLibrary.pushResultTitle')"
@@ -140,6 +194,7 @@
       :cancel-btn="null"
       width="560px"
       attach="body"
+      @confirm="pushResultVisible = false"
     >
       <div class="push-summary">
         <t-tag theme="success" variant="light">
@@ -152,6 +207,10 @@
           {{ t('skillLibrary.pushBlockedCount') }}：{{ pushResultSummary.blocked }}
         </t-tag>
       </div>
+      <!-- 000106 引导：推送只同步定义，到用户环境可选用还需空间侧安装到沙箱。 -->
+      <p v-if="pushResultSummary.updated + pushResultSummary.healed > 0" class="push-note">
+        {{ t('skillLibrary.pushNoteInstall') }}
+      </p>
       <div class="push-rows">
         <div v-for="row in pushResultRows" :key="row.tenant_id" class="push-row">
           <span class="push-row__name" :title="row.tenant_name || `#${row.tenant_id}`">
@@ -172,6 +231,7 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import PlatformSkillDrawer from '@/components/PlatformSkillDrawer.vue'
 import SkillFilesDrawer from '@/components/SkillFilesDrawer.vue'
+import SkillCategoryManagerDialog from '@/views/system/SkillCategoryManagerDialog.vue'
 import { useConfirmDelete } from '@/components/settings/useConfirmDelete'
 import {
   deletePlatformSkill,
@@ -187,20 +247,60 @@ const confirmDelete = useConfirmDelete()
 const skills = ref<PlatformSkill[]>([])
 const loading = ref(false)
 
-// ---- 工具栏筛选（仅搜索；技能没有类型维度）----
+// ---- 工具栏筛选：关键词搜索 + 分类快速过滤（000106）----
 const searchQuery = ref('')
+const CATEGORY_ALL = '__all__'
+const activeCategory = ref<string>(CATEGORY_ALL)
 
-const hasActiveFilter = computed(() => !!searchQuery.value.trim())
+const hasActiveFilter = computed(
+  () => !!searchQuery.value.trim() || activeCategory.value !== CATEGORY_ALL,
+)
+
+// 分类 chips 从当前列表派生（与用户侧 SkillsMcpList 同款）：只出现有技能在用
+// 的分类，'' 代表未分类。登记表里 0 用量的分类不在这里刷存在感。
+const skillCategories = computed(() => {
+  const names = new Set<string>()
+  let hasUncategorized = false
+  for (const skill of skills.value) {
+    const cat = skill.category || ''
+    if (cat === '') hasUncategorized = true
+    else names.add(cat)
+  }
+  const sorted = [...names].sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'))
+  if (hasUncategorized) sorted.push('')
+  return sorted
+})
 
 const filteredSkills = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return skills.value
-  return skills.value.filter((skill) =>
-    [skill.name, skill.version, skill.description].some(
-      (field) => (field || '').toLowerCase().includes(q),
-    ),
-  )
+  return skills.value.filter((skill) => {
+    if (
+      activeCategory.value !== CATEGORY_ALL &&
+      (skill.category || '') !== activeCategory.value
+    ) {
+      return false
+    }
+    if (!q) return true
+    return [
+      skill.name,
+      skill.zh_name,
+      skill.description,
+      skill.zh_description,
+      skill.version,
+      skill.category,
+      skill.author,
+    ].some((field) => (field || '').toLowerCase().includes(q))
+  })
 })
+
+// 卡片标题/描述：中文展示元数据（000106）为空时回落 SKILL.md 的 name/
+// description；描述在卡片只显示前 40 字，完整文本留在 title tooltip。
+const cardTitle = (skill: PlatformSkill) => skill.zh_name || skill.name
+const cardDescFull = (skill: PlatformSkill) => skill.zh_description || skill.description || ''
+const cardDescExcerpt = (skill: PlatformSkill) => {
+  const full = cardDescFull(skill).trim()
+  return full.length > 40 ? `${full.slice(0, 40)}…` : full
+}
 
 // ---- 抽屉 ----
 const drawerVisible = ref(false)
@@ -210,6 +310,9 @@ const editing = ref<PlatformSkill | null>(null)
 const filesVisible = ref(false)
 const filesSkillId = ref('')
 const filesSkillName = ref('')
+
+// ---- 分类管理弹窗：重命名/删除批量改技能行并点亮 drift，changed 后重拉 ----
+const categoryManagerVisible = ref(false)
 
 // ---- 推送结果对话框 ----
 const pushResultVisible = ref(false)
@@ -449,6 +552,22 @@ onMounted(() => {
   white-space: nowrap;
 }
 
+// 分类 pill：与空间技能目录卡（SkillCatalogSettings）同款
+.skill-card__category {
+  flex-shrink: 0;
+  max-width: 120px;
+  padding: 0 6px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 3px;
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondarycontainer);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .skill-card__actions {
   flex-shrink: 0;
   display: flex;
@@ -479,20 +598,40 @@ onMounted(() => {
   opacity: 1;
 }
 
-.skill-card__desc {
+// 中文名存在时，英文 SKILL.md 名作为副信息小字（000106）
+.skill-card__subname {
   font-size: 12px;
-  line-height: 1.4;
-  color: var(--td-text-color-secondary);
+  color: var(--td-text-color-placeholder);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
 }
 
+// 描述摘要：最多两行（前 40 字），超出折叠；完整文本在 title tooltip
+.skill-card__desc {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--td-text-color-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-width: 0;
+  word-break: break-all;
+}
+
 .skill-card__time {
   font-size: 11px;
   line-height: 1.4;
   color: var(--td-text-color-placeholder);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-card__author {
+  color: var(--td-text-color-secondary);
 }
 
 // 已分配空间 chips：drift 的行带琥珀点（技能编辑过、还没推送）
@@ -529,11 +668,58 @@ onMounted(() => {
   vertical-align: middle;
 }
 
+// ---- 分类快速过滤 chips（000106，同用户侧 SkillsMcpList 交互）----
+.category-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 0 10px;
+}
+
+.category-chip {
+  padding: 2px 10px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 12px;
+  background: var(--td-bg-color-container);
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--td-text-color-secondary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+
+  &:hover {
+    border-color: var(--td-brand-color-5, var(--td-brand-color));
+  }
+
+  &.active {
+    background: var(--td-brand-color);
+    border-color: var(--td-brand-color);
+    color: #fff;
+  }
+}
+
+.count-label {
+  margin-left: 4px;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+}
+
 // ---- 推送结果对话框 ----
 .push-summary {
   display: flex;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+}
+
+.push-note {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--td-brand-color-light, rgba(0, 95, 255, 0.08));
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--td-text-color-secondary);
 }
 
 .push-rows {

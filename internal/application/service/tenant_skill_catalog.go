@@ -29,24 +29,46 @@ type SkillCatalogInstallView struct {
 
 // SkillCatalogView is a tenant skill definition plus its sandbox installations.
 type SkillCatalogView struct {
-	ID            string                    `json:"id"`
-	Name          string                    `json:"name"`
-	Version       string                    `json:"version,omitempty"`
-	Description   string                    `json:"description,omitempty"`
-	BundleSHA256  string                    `json:"bundle_sha256,omitempty"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Version      string `json:"version,omitempty"`
+	Description  string `json:"description,omitempty"`
+	BundleSHA256 string `json:"bundle_sha256,omitempty"`
 	// SourcePlatformSkillID is set when the definition was materialized from
 	// the platform skill library (000098); empty = workspace self-built. The
 	// synthetic projection of install rows never carries it.
-	SourcePlatformSkillID string                    `json:"source_platform_skill_id,omitempty"`
-	CreatedAt             time.Time                 `json:"created_at"`
-	UpdatedAt             time.Time                 `json:"updated_at"`
-	Installations         []SkillCatalogInstallView `json:"installations"`
+	SourcePlatformSkillID string `json:"source_platform_skill_id,omitempty"`
+	// Category/Author/CreatedBy/CreatorName feed the Skills/MCP browser cards.
+	// CreatorName is enriched by the handler (not persisted on the entity).
+	Category string `json:"category,omitempty"`
+	Author   string `json:"author,omitempty"`
+	// Visible is the space-level switch (000108). false = hidden from the
+	// Skills/MCP browser, the agent picker and @mention/runtime; management
+	// surfaces request include_hidden and read this to badge the row.
+	Visible       bool                      `json:"visible"`
+	CreatedBy     string                    `json:"created_by,omitempty"`
+	CreatorName   string                    `json:"creator_name,omitempty"`
+	CreatedAt     time.Time                 `json:"created_at"`
+	UpdatedAt     time.Time                 `json:"updated_at"`
+	Installations []SkillCatalogInstallView `json:"installations"`
+}
+
+// CatalogMeta is optional registration metadata threaded into catalog
+// upserts. Variadic so existing callers (platform skill library) stay
+// unchanged; an empty meta registers like before.
+type CatalogMeta struct {
+	Category  string
+	Author    string
+	CreatedBy string
 }
 
 // ListCatalog returns every workspace skill definition and which sandbox
-// configs currently carry an installation of it.
+// configs currently carry an installation of it. Definitions a space admin has
+// hidden (000108) are excluded from this browsing surface by default; the
+// 技能目录 management page passes includeHidden=true so hidden rows keep
+// appearing there and stay manageable.
 func (s *TenantSkillService) ListCatalog(
-	ctx context.Context, tenantID uint64,
+	ctx context.Context, tenantID uint64, includeHidden bool,
 ) ([]SkillCatalogView, error) {
 	catalogs, err := s.skills.ListCatalogsByTenant(ctx, tenantID)
 	if err != nil {
@@ -87,8 +109,16 @@ func (s *TenantSkillService) ListCatalog(
 	out := make([]SkillCatalogView, 0, len(catalogs)+len(unattached))
 	seenName := make(map[string]struct{}, len(catalogs))
 	seenCatalog := make(map[string]struct{}, len(catalogs))
+	// Hidden (000108) rows are skipped entirely — catalog row AND its installs —
+	// so a hidden skill cannot leak back through the synthetic "unattached"
+	// projection below.
+	hiddenCatalog := make(map[string]struct{})
 	for _, cat := range catalogs {
 		if cat == nil {
+			continue
+		}
+		if !includeHidden && !cat.Visible {
+			hiddenCatalog[cat.ID] = struct{}{}
 			continue
 		}
 		seenName[cat.Name] = struct{}{}
@@ -97,8 +127,11 @@ func (s *TenantSkillService) ListCatalog(
 	}
 	// Installs whose catalog row was deleted (or never existed) would otherwise
 	// vanish: they are not unattached (catalog_id is set) and they are not
-	// rendered under any live definition.
+	// rendered under any live definition. Hidden rows are dropped instead.
 	for catalogID, rows := range byCatalog {
+		if _, hidden := hiddenCatalog[catalogID]; hidden {
+			continue
+		}
 		if _, ok := seenCatalog[catalogID]; ok {
 			continue
 		}
@@ -120,7 +153,7 @@ func (s *TenantSkillService) ListCatalog(
 		synthetic := &types.TenantSkillCatalogEntity{
 			ID: row.ID, TenantID: row.TenantID, Name: row.Name, Version: row.Version,
 			Description: row.Description, BundleSHA256: row.BundleSHA256,
-			CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+			Visible: true, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 		}
 		out = append(out, catalogView(synthetic, []*types.TenantSkillEntity{row}, configByID))
 	}
@@ -139,6 +172,10 @@ func catalogView(
 		Description:           cat.Description,
 		BundleSHA256:          cat.BundleSHA256,
 		SourcePlatformSkillID: cat.SourcePlatformSkillID,
+		Category:              cat.Category,
+		Author:                cat.Author,
+		Visible:               cat.Visible,
+		CreatedBy:             cat.CreatedBy,
 		CreatedAt:             cat.CreatedAt,
 		UpdatedAt:             cat.UpdatedAt,
 		Installations:         make([]SkillCatalogInstallView, 0, len(installs)),
@@ -172,24 +209,24 @@ func installView(
 // RegisterCatalogFromArchive records a skill definition without installing it
 // onto any sandbox. Re-uploading the same name updates the stored bundle.
 func (s *TenantSkillService) RegisterCatalogFromArchive(
-	ctx context.Context, tenantID uint64, archive []byte,
+	ctx context.Context, tenantID uint64, archive []byte, meta ...CatalogMeta,
 ) (*types.TenantSkillCatalogEntity, error) {
 	bundle, err := ParseSkillBundle(archive)
 	if err != nil {
 		return nil, err
 	}
-	return s.upsertCatalogFromBundle(ctx, tenantID, bundle, archive, true)
+	return s.upsertCatalogFromBundle(ctx, tenantID, bundle, archive, true, meta...)
 }
 
 // RegisterCatalogFromSource fetches a public skill and records it in the catalog.
 func (s *TenantSkillService) RegisterCatalogFromSource(
-	ctx context.Context, tenantID uint64, source string,
+	ctx context.Context, tenantID uint64, source string, meta ...CatalogMeta,
 ) (*types.TenantSkillCatalogEntity, error) {
 	bundle, archive, err := fetchNormalizedSkillBundle(ctx, source, s.sourceHTTP)
 	if err != nil {
 		return nil, err
 	}
-	return s.upsertCatalogFromBundle(ctx, tenantID, bundle, archive, true)
+	return s.upsertCatalogFromBundle(ctx, tenantID, bundle, archive, true, meta...)
 }
 
 // CatalogInstallResult is the per-sandbox outcome of one catalog install call.
@@ -281,7 +318,7 @@ func (s *TenantSkillService) DeleteCatalog(
 }
 
 func (s *TenantSkillService) upsertCatalogFromBundle(
-	ctx context.Context, tenantID uint64, bundle *SkillBundle, archive []byte, requireStore bool,
+	ctx context.Context, tenantID uint64, bundle *SkillBundle, archive []byte, requireStore bool, meta ...CatalogMeta,
 ) (*types.TenantSkillCatalogEntity, error) {
 	existing, err := s.skills.GetCatalogByName(ctx, tenantID, bundle.Name)
 	if err != nil {
@@ -305,6 +342,30 @@ func (s *TenantSkillService) upsertCatalogFromBundle(
 		existing.Instructions = bundle.Instructions
 		existing.BundleSHA256 = bundle.SHA256
 		existing.UpdatedAt = now
+		// Re-registration may re-categorize: explicit meta wins, then the
+		// bundle's own frontmatter; an empty result keeps the current value.
+		// The original creator is never rewritten.
+		category, author := "", ""
+		for _, m := range meta {
+			if m.Category != "" {
+				category = m.Category
+			}
+			if m.Author != "" {
+				author = m.Author
+			}
+		}
+		if category == "" {
+			category = bundle.Category
+		}
+		if author == "" {
+			author = bundle.Author
+		}
+		if category != "" {
+			existing.Category = category
+		}
+		if author != "" {
+			existing.Author = author
+		}
 		if err := s.skills.UpdateCatalog(ctx, existing); err != nil {
 			// The stored definition still names the old archive, so leave that
 			// archive alone. The object just written is the leak, and it is the
@@ -324,6 +385,19 @@ func (s *TenantSkillService) upsertCatalogFromBundle(
 		Version: bundle.Version, Description: bundle.Description,
 		Instructions: bundle.Instructions,
 		CreatedAt:    now, UpdatedAt: now,
+	}
+	// SKILL.md frontmatter seeds category/author; explicit meta (register
+	// form or platform-skill materialize) overrides either.
+	row.Category = bundle.Category
+	row.Author = bundle.Author
+	for _, m := range meta {
+		if m.Category != "" {
+			row.Category = m.Category
+		}
+		if m.Author != "" {
+			row.Author = m.Author
+		}
+		row.CreatedBy = m.CreatedBy
 	}
 	stored, _, err := s.storeCatalogBundle(ctx, tenantID, row, archive, requireStore)
 	if err != nil {
@@ -349,9 +423,58 @@ func (s *TenantSkillService) upsertCatalogFromBundle(
 		if ref := strings.TrimSpace(row.BundleRef); ref != "" {
 			s.deleteBundleBestEffort(ctx, tenantID, ref)
 		}
-		return s.upsertCatalogFromBundle(ctx, tenantID, bundle, archive, requireStore)
+		return s.upsertCatalogFromBundle(ctx, tenantID, bundle, archive, requireStore, meta...)
 	}
 	return row, nil
+}
+
+// UpdateCatalogMeta rewrites only the category of a catalog skill. It refuses
+// the synthetic projections ListCatalog can emit (install rows whose catalog
+// row is gone): those have no durable row to update.
+func (s *TenantSkillService) UpdateCatalogMeta(
+	ctx context.Context, tenantID uint64, catalogID, category string,
+) (*types.TenantSkillCatalogEntity, error) {
+	catalog, err := s.skills.GetCatalog(ctx, tenantID, catalogID)
+	if err != nil {
+		return nil, err
+	}
+	if catalog == nil {
+		return nil, apperrors.NewNotFoundError("skill not found")
+	}
+	category = strings.TrimSpace(category)
+	if len(category) > 255 {
+		return nil, apperrors.NewBadRequestError("category is too long")
+	}
+	if err := s.skills.UpdateCatalogCategory(ctx, tenantID, catalogID, category); err != nil {
+		return nil, err
+	}
+	catalog.Category = category
+	return catalog, nil
+}
+
+// SetCatalogVisible hides or reveals a catalog skill in this workspace (000108).
+// Hiding keeps the row, its archive and its installs; it only stops the skill
+// from being offered (Skills/MCP browser, agent picker, @mention/runtime — the
+// ListSkillsByConfig choke point filters hidden rows). The write goes through
+// UpdateCatalog with the loaded row, so provenance and other fields survive.
+func (s *TenantSkillService) SetCatalogVisible(
+	ctx context.Context, tenantID uint64, catalogID string, visible bool,
+) (*types.TenantSkillCatalogEntity, error) {
+	catalog, err := s.skills.GetCatalog(ctx, tenantID, catalogID)
+	if err != nil {
+		return nil, err
+	}
+	if catalog == nil {
+		return nil, apperrors.NewNotFoundError("skill not found")
+	}
+	if catalog.Visible == visible {
+		return catalog, nil
+	}
+	catalog.Visible = visible
+	if err := s.skills.UpdateCatalog(ctx, catalog); err != nil {
+		return nil, err
+	}
+	return catalog, nil
 }
 
 // catalogBundleReplacement is the archive a definition just stopped naming.

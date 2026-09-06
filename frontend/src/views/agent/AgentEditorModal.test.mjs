@@ -150,10 +150,10 @@ test('the publish-channel row is hidden from basic info', () => {
   assert.match(source, /loadAgentIntegrationCounts/)
 })
 
-test('skill install actions follow the backend system-admin gate', () => {  // 000099：登记/安装后端是 g.SystemAdmin()，编辑器内直装按钮与「管理技能」
-  // 深链同步收紧——canInstallSkills 只认 isSystemAdmin，openSkillSettings
-  // 直指空间 Settings 的 skill-catalog 并带沙箱预选。
-  assert.match(source, /canInstallSkills = computed\(\(\) => authStore\.isSystemAdmin\)/)
+test('skill install actions follow the space-admin-or-system-admin gate', () => {  // 000107：技能安装后端放宽到 AdminOrSystemAdmin，编辑器内直装按钮与「管理技能」
+  // canInstallSkills = 本空间 admin/owner 或系统管理员（hasRole 对系统管理员旁路）；
+  // openSkillSettings 直指空间 Settings 的 skill-catalog 并带沙箱预选。
+  assert.match(source, /canInstallSkills = computed\(\(\) => authStore\.hasRole\('admin'\)\)/)
   assert.match(source, /openSettings\('skill-catalog'/)
 })
 
@@ -197,17 +197,14 @@ test('referenced entities fall back to names instead of raw ids', () => {
   assert.match(source, /webSearchProvidersLoaded/)
 })
 
-test('sandbox management links are system-admin only', () => {
-  // 000100：「管理沙箱」「管理技能」整组链接仅系统管理员可见；普通成员
-  // 看到 sandboxManagedHint（由系统管理员统一配置）。
-  assert.match(source, /<div v-if="canInstallSkills" class="sandbox-select-links">/)
+test('sandbox management links split console mgmt from skill installs (000107)', () => {
+  // 「管理沙箱」指向平台控制台的沙箱连接，仍仅系统管理员（canManageSandboxConsole）；
+  // 「管理技能」指向本空间技能目录，本空间 admin/owner 以上（canInstallSkills）可见；
+  // 两者都不满足才显示由管理员统一配置的提示。
+  assert.match(source, /const canManageSandboxConsole = computed\(\(\) => authStore\.isSystemAdmin\)/)
+  assert.match(source, /v-if="canManageSandboxConsole"[\s\S]*?uiStore\.openSettings\('sandbox'\)/)
   assert.match(source, /v-else class="desc">\{\{ \$t\('agent\.editor\.sandboxManagedHint'\) \}\}/)
-  const linksBlock = source.match(
-    /<div v-if="canInstallSkills" class="sandbox-select-links">([\s\S]*?)<\/div>/,
-  )
-  assert.ok(linksBlock, 'expected the admin-only sandbox links block')
-  assert.match(linksBlock[1], /uiStore\.openSettings\('sandbox'\)/)
-  assert.match(linksBlock[1], /goSkillSettings/)
+  assert.match(source, /@click\.prevent="openSkillSettings"/)
 })
 
 test('creating an agent defaults to quick-answer with an empty name', () => {

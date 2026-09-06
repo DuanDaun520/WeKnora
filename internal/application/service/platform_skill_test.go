@@ -10,12 +10,14 @@ import (
 	"fmt"
 	"io"
 	"mime/multipart"
+	"sort"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Tencent/WeKnora/internal/application/repository"
 	"github.com/Tencent/WeKnora/internal/types"
 	"github.com/Tencent/WeKnora/internal/types/interfaces"
 )
@@ -30,10 +32,11 @@ func (c *platformTestClock) advance(d time.Duration) {
 }
 
 type fakePlatformSkillsRepo struct {
-	rows      []*types.PlatformSkillEntity
-	now       func() time.Time
-	createErr error
-	updateErr error
+	rows       []*types.PlatformSkillEntity
+	categories []*types.PlatformSkillCategoryEntity
+	now        func() time.Time
+	createErr  error
+	updateErr  error
 }
 
 func (f *fakePlatformSkillsRepo) Create(
@@ -98,6 +101,113 @@ func (f *fakePlatformSkillsRepo) Update(
 		}
 	}
 	return nil
+}
+
+// UpdateMeta stamps updated_at like Update does — the meta edit is a drift
+// driver too. It only rewrites the metadata columns, never the bundle facts.
+func (f *fakePlatformSkillsRepo) UpdateMeta(
+	_ context.Context, id, category, author, zhName, zhDescription string,
+) error {
+	for i, r := range f.rows {
+		if r.ID == id {
+			cp := *r
+			cp.Category, cp.Author = category, author
+			cp.ZhName, cp.ZhDescription = zhName, zhDescription
+			cp.UpdatedAt = f.now()
+			f.rows[i] = &cp
+			return nil
+		}
+	}
+	return nil
+}
+
+func (f *fakePlatformSkillsRepo) CreateCategory(
+	_ context.Context, e *types.PlatformSkillCategoryEntity,
+) error {
+	cp := *e
+	f.categories = append(f.categories, &cp)
+	return nil
+}
+
+func (f *fakePlatformSkillsRepo) GetCategoryByName(
+	_ context.Context, name string,
+) (*types.PlatformSkillCategoryEntity, error) {
+	for _, c := range f.categories {
+		if c.Name == name {
+			cp := *c
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
+
+// ListCategories mirrors the real registry LEFT JOIN: every registered category
+// (fresh, unused ones included) with the count of live skills referencing it.
+func (f *fakePlatformSkillsRepo) ListCategories(
+	context.Context,
+) ([]repository.SkillCategoryCount, error) {
+	counts := map[string]int64{}
+	for _, r := range f.rows {
+		if r.Category != "" {
+			counts[r.Category]++
+		}
+	}
+	names := make([]string, 0, len(f.categories))
+	for _, c := range f.categories {
+		names = append(names, c.Name)
+	}
+	sort.Strings(names)
+	out := make([]repository.SkillCategoryCount, 0, len(names))
+	for _, name := range names {
+		out = append(out, repository.SkillCategoryCount{Name: name, Count: counts[name]})
+	}
+	return out, nil
+}
+
+func (f *fakePlatformSkillsRepo) RenameCategory(
+	_ context.Context, from, to string,
+) (int64, error) {
+	var moved int64
+	for _, c := range f.categories {
+		if c.Name == from {
+			c.Name = to
+		}
+	}
+	for i, r := range f.rows {
+		if r.Category != from {
+			continue
+		}
+		cp := *r
+		cp.Category = to
+		cp.UpdatedAt = f.now()
+		f.rows[i] = &cp
+		moved++
+	}
+	return moved, nil
+}
+
+func (f *fakePlatformSkillsRepo) ClearCategory(
+	_ context.Context, name string,
+) (int64, error) {
+	var cleared int64
+	kept := f.categories[:0]
+	for _, c := range f.categories {
+		if c.Name != name {
+			kept = append(kept, c)
+		}
+	}
+	f.categories = kept
+	for i, r := range f.rows {
+		if r.Category != name {
+			continue
+		}
+		cp := *r
+		cp.Category = ""
+		cp.UpdatedAt = f.now()
+		f.rows[i] = &cp
+		cleared++
+	}
+	return cleared, nil
 }
 
 func (f *fakePlatformSkillsRepo) SoftDelete(_ context.Context, id string) error {
@@ -344,8 +454,8 @@ func platformSkillMD(name, body string) string {
 func platformSkillZip(t *testing.T, name, body string) []byte {
 	t.Helper()
 	return zipBundle(t, map[string]string{
-		"SKILL.md":           platformSkillMD(name, body),
-		"scripts/run.py":     "print('run')\n",
+		"SKILL.md":       platformSkillMD(name, body),
+		"scripts/run.py": "print('run')\n",
 	})
 }
 
@@ -357,6 +467,15 @@ func (fx *platformSkillFixture) registerSkill(
 		context.Background(), platformSkillZip(t, name, body), "upload")
 	require.NoError(t, err)
 	return skill
+}
+
+// registerCategory pre-registers a category (000105): skills may only reference
+// categories that exist in the registry, so tests that assert a category lands
+// on a skill must create it first.
+func (fx *platformSkillFixture) registerCategory(t *testing.T, name string) {
+	t.Helper()
+	_, err := fx.svc.CreateCategory(context.Background(), name)
+	require.NoError(t, err)
 }
 
 func (fx *platformSkillFixture) assign(
@@ -758,4 +877,277 @@ func TestPushPinsInstallsToTheReplacedBundle(t *testing.T) {
 	require.Equal(t, oldSHA, pinned.BundleSHA256)
 	require.NotContains(t, fx.files.deletedRefs(), oldRef,
 		"an archive a live install was built from must survive the push")
+}
+
+// --- definition metadata (000104): category / author ---
+
+// platformSkillMDWithMeta builds a manifest whose frontmatter carries
+// author/category, so tests can pin the form-vs-frontmatter precedence.
+func platformSkillMDWithMeta(name string) string {
+	return "---\nname: " + name + "\ndescription: platform test skill\n" +
+		"author: FM Author\ncategory: fm-cat\n---\n\nbody v1\n"
+}
+
+// platformSkillZipWithMeta zips a skill whose frontmatter names the given
+// category (no author), for frontmatter-category handling tests.
+func platformSkillZipWithMeta(t *testing.T, name, category string) []byte {
+	t.Helper()
+	manifest := "---\nname: " + name + "\ndescription: platform test skill\n" +
+		"category: " + category + "\n---\n\nbody v1\n"
+	return zipBundle(t, map[string]string{
+		"SKILL.md":       manifest,
+		"scripts/run.py": "print('run')\n",
+	})
+}
+
+// Explicit registration metadata wins; whatever it leaves empty falls back to
+// the SKILL.md frontmatter values.
+func TestPlatformSkillCreateMetaPrecedence(t *testing.T) {
+	fx := newPlatformSkillFixture(t)
+	ctx := context.Background()
+	fx.registerCategory(t, "docs")
+	fx.registerCategory(t, "fm-cat")
+	zipWithMeta := func(name string) []byte {
+		return zipBundle(t, map[string]string{
+			"SKILL.md":       platformSkillMDWithMeta(name),
+			"scripts/run.py": "print('run')\n",
+		})
+	}
+
+	overridden, err := fx.svc.CreateFromArchive(ctx, zipWithMeta("pdf-tools"),
+		"upload", PlatformSkillMeta{Category: "docs", Author: "Alice"})
+	require.NoError(t, err)
+	require.Equal(t, "docs", overridden.Category)
+	require.Equal(t, "Alice", overridden.Author)
+
+	fallback, err := fx.svc.CreateFromArchive(ctx, zipWithMeta("doc-tools"), "upload")
+	require.NoError(t, err)
+	require.Equal(t, "fm-cat", fallback.Category)
+	require.Equal(t, "FM Author", fallback.Author)
+}
+
+// A form category that is not registered is refused outright (the drawer is not
+// creatable), while a SKILL.md frontmatter category nobody registered is
+// silently dropped — the skill lands uncategorized instead of minting one.
+func TestPlatformSkillUnregisteredCategoryHandling(t *testing.T) {
+	fx := newPlatformSkillFixture(t)
+	ctx := context.Background()
+	fx.registerCategory(t, "docs")
+
+	_, err := fx.svc.CreateFromArchive(ctx, platformSkillZip(t, "pdf-tools", "v1"),
+		"upload", PlatformSkillMeta{Category: "ghost"})
+	require.ErrorIs(t, err, ErrPlatformSkillCategoryNotFound)
+
+	_, err = fx.svc.CreateFromArchive(ctx, platformSkillZip(t, "pdf-tools", "v1"),
+		"upload", PlatformSkillMeta{Category: "docs"})
+	require.NoError(t, err)
+
+	frontmatterOnly, err := fx.svc.CreateFromArchive(ctx,
+		platformSkillZipWithMeta(t, "doc-tools", "fm-ghost"), "upload")
+	require.NoError(t, err)
+	require.Empty(t, frontmatterOnly.Category,
+		"an unregistered frontmatter category must not be stored")
+}
+
+// A meta edit alone is a drift driver exactly like a bundle edit, and the push
+// carries the new category/author into the materialized workspace row — even
+// though the bundle bytes never changed.
+func TestPlatformSkillMetaEditDrivesDriftAndPushPropagates(t *testing.T) {
+	fx := newPlatformSkillFixture(t)
+	ctx := context.Background()
+	fx.registerCategory(t, "docs")
+	skill := fx.registerSkill(t, "pdf-tools", "body v1")
+	fx.assign(t, skill.ID, 7)
+	require.False(t, fx.assignmentsOf(t, skill.ID)[0].Drift)
+
+	fx.clock.advance(2 * time.Millisecond)
+	category, author := "docs", "Alice"
+	updated, err := fx.svc.UpdateMeta(ctx, skill.ID, &category, &author, nil, nil)
+	require.NoError(t, err)
+	require.True(t, updated.UpdatedAt.After(skill.UpdatedAt),
+		"the repo-side bump is what the drift markers are computed from")
+	require.True(t, fx.assignmentsOf(t, skill.ID)[0].Drift,
+		"a meta edit lights the marker without any bundle change")
+
+	outcomes, err := fx.svc.Push(ctx, skill.ID)
+	require.NoError(t, err)
+	require.Equal(t, "updated", platformPushByTenant(outcomes, 7).Status)
+	require.False(t, fx.assignmentsOf(t, skill.ID)[0].Drift)
+
+	row := fx.catalogOf(t, 7, "pdf-tools")
+	require.Equal(t, "docs", row.Category)
+	require.Equal(t, "Alice", row.Author)
+	require.Equal(t, skill.BundleSHA256, row.BundleSHA256,
+		"a meta push re-registers the same bundle, not a new one")
+}
+
+// A meta edit that changes nothing must not fake a drift: the no-op
+// short-circuit keeps updated_at where it was.
+func TestPlatformSkillMetaNoopKeepsUpdatedAt(t *testing.T) {
+	fx := newPlatformSkillFixture(t)
+	ctx := context.Background()
+	skill := fx.registerSkill(t, "pdf-tools", "body v1")
+	stored, err := fx.skillRepo.GetByID(ctx, skill.ID)
+	require.NoError(t, err)
+
+	fx.clock.advance(2 * time.Millisecond)
+	sameCategory, sameAuthor := stored.Category, stored.Author
+	updated, err := fx.svc.UpdateMeta(ctx, skill.ID, &sameCategory, &sameAuthor, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, stored.UpdatedAt, updated.UpdatedAt,
+		"a no-op meta edit must not stamp updated_at")
+}
+
+// A bundle re-register never touches the admin-managed metadata, even when the
+// new archive ships different frontmatter values.
+func TestPlatformSkillBundleReregisterKeepsMeta(t *testing.T) {
+	fx := newPlatformSkillFixture(t)
+	ctx := context.Background()
+	fx.registerCategory(t, "docs")
+	skill, err := fx.svc.CreateFromArchive(ctx,
+		platformSkillZip(t, "pdf-tools", "body v1"), "upload",
+		PlatformSkillMeta{Category: "docs", Author: "Alice"})
+	require.NoError(t, err)
+
+	fx.clock.advance(2 * time.Millisecond)
+	updated, err := fx.svc.UpdateFromArchive(ctx, skill.ID,
+		platformSkillZip(t, "pdf-tools", "body v2"), "upload")
+	require.NoError(t, err)
+	require.Equal(t, "docs", updated.Category)
+	require.Equal(t, "Alice", updated.Author)
+	require.NotEqual(t, skill.BundleSHA256, updated.BundleSHA256,
+		"the bundle itself did change")
+}
+
+func TestPlatformSkillCategoryDirectoryBulkOps(t *testing.T) {
+	fx := newPlatformSkillFixture(t)
+	ctx := context.Background()
+	fx.registerCategory(t, "docs")
+	fx.registerCategory(t, "office")
+	registerCategorized := func(name, category string) {
+		t.Helper()
+		meta := PlatformSkillMeta{Category: category}
+		if category == "" {
+			meta = PlatformSkillMeta{}
+		}
+		_, err := fx.svc.CreateFromArchive(ctx,
+			platformSkillZip(t, name, "body v1"), "upload", meta)
+		require.NoError(t, err)
+	}
+	requireCategories := func(want []repository.SkillCategoryCount) {
+		t.Helper()
+		rows, err := fx.svc.ListCategories(ctx)
+		require.NoError(t, err)
+		require.Equal(t, want, rows)
+	}
+
+	registerCategorized("pdf-tools", "docs")
+	registerCategorized("doc-tools", "docs")
+	registerCategorized("sheet-tools", "office")
+	registerCategorized("misc-tools", "")
+	requireCategories([]repository.SkillCategoryCount{
+		{Name: "docs", Count: 2}, {Name: "office", Count: 1},
+	})
+
+	moved, err := fx.svc.RenameCategory(ctx, "docs", "文档")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, moved)
+	requireCategories([]repository.SkillCategoryCount{
+		{Name: "office", Count: 1}, {Name: "文档", Count: 2},
+	})
+
+	cleared, err := fx.svc.RemoveCategory(ctx, "office")
+	require.NoError(t, err)
+	require.EqualValues(t, 1, cleared)
+	requireCategories([]repository.SkillCategoryCount{
+		{Name: "文档", Count: 2},
+	})
+}
+
+// The registry owns the vocabulary: creation refuses a duplicate live name,
+// rename refuses onto an existing one, and renaming an unknown category is a
+// not-found. A freshly created (unused) category still lists with count 0.
+func TestPlatformSkillCategoryRegistryValidation(t *testing.T) {
+	fx := newPlatformSkillFixture(t)
+	ctx := context.Background()
+	fx.registerCategory(t, "docs")
+	fx.registerCategory(t, "office")
+
+	_, err := fx.svc.CreateCategory(ctx, "docs")
+	require.ErrorIs(t, err, ErrPlatformSkillCategoryExists)
+
+	created, err := fx.svc.CreateCategory(ctx, "未用分类")
+	require.NoError(t, err)
+	require.Equal(t, "未用分类", created.Name)
+	rows, err := fx.svc.ListCategories(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []repository.SkillCategoryCount{
+		{Name: "docs", Count: 0}, {Name: "office", Count: 0}, {Name: "未用分类", Count: 0},
+	}, rows)
+
+	_, err = fx.svc.RenameCategory(ctx, "docs", "office")
+	require.ErrorIs(t, err, ErrPlatformSkillCategoryExists)
+
+	_, err = fx.svc.RenameCategory(ctx, "ghost", "文档")
+	require.ErrorIs(t, err, ErrPlatformSkillCategoryNotFound)
+}
+
+// An UpdateMeta that sets an unregistered category is refused too: only an
+// explicit "" (clearing to uncategorized) or a registered name passes.
+func TestPlatformSkillMetaRejectsUnregisteredCategory(t *testing.T) {
+	fx := newPlatformSkillFixture(t)
+	ctx := context.Background()
+	fx.registerCategory(t, "docs")
+	skill := fx.registerSkill(t, "pdf-tools", "body v1")
+
+	category := "ghost"
+	_, err := fx.svc.UpdateMeta(ctx, skill.ID, &category, nil, nil, nil)
+	require.ErrorIs(t, err, ErrPlatformSkillCategoryNotFound)
+
+	category = "docs"
+	updated, err := fx.svc.UpdateMeta(ctx, skill.ID, &category, nil, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "docs", updated.Category)
+
+	empty := ""
+	updated, err = fx.svc.UpdateMeta(ctx, skill.ID, &empty, nil, nil, nil)
+	require.NoError(t, err)
+	require.Empty(t, updated.Category)
+}
+
+// The 000106 Chinese display fields ride the create meta and the meta endpoint
+// like category/author: set on create, editable (and clearable) through
+// UpdateMeta, untouched by a bundle re-register.
+func TestPlatformSkillZhMetaRoundtrip(t *testing.T) {
+	fx := newPlatformSkillFixture(t)
+	ctx := context.Background()
+
+	created, err := fx.svc.CreateFromArchive(ctx,
+		platformSkillZip(t, "pdf-tools", "v1"), "upload",
+		PlatformSkillMeta{ZhName: "PDF 工具", ZhDescription: "处理 PDF 的技能"})
+	require.NoError(t, err)
+	require.Equal(t, "PDF 工具", created.ZhName)
+	require.Equal(t, "处理 PDF 的技能", created.ZhDescription)
+
+	zhName, zhDesc := "中文名已改", "更长的中文描述"
+	updated, err := fx.svc.UpdateMeta(ctx, created.ID, nil, nil, &zhName, &zhDesc)
+	require.NoError(t, err)
+	require.Equal(t, zhName, updated.ZhName)
+	require.Equal(t, zhDesc, updated.ZhDescription)
+
+	empty := ""
+	cleared, err := fx.svc.UpdateMeta(ctx, created.ID, nil, nil, &empty, &empty)
+	require.NoError(t, err)
+	require.Empty(t, cleared.ZhName)
+	require.Empty(t, cleared.ZhDescription)
+
+	// A bundle re-register never clobbers the Chinese copy.
+	zhName = "保留"
+	noop, err := fx.svc.UpdateMeta(ctx, created.ID, nil, nil, &zhName, nil)
+	require.NoError(t, err)
+	rebundled, err := fx.svc.UpdateFromArchive(ctx, created.ID,
+		platformSkillZip(t, "pdf-tools", "v2"), "upload")
+	require.NoError(t, err)
+	require.Equal(t, "保留", rebundled.ZhName)
+	require.NotEqual(t, noop.BundleSHA256, rebundled.BundleSHA256)
 }

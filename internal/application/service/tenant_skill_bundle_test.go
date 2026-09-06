@@ -242,6 +242,55 @@ Use scripts/extract.py to pull text out of a PDF.
 		require.Equal(t, "1.2.3", bundle.Version)
 	})
 
+	t.Run("reads author and category frontmatter", func(t *testing.T) {
+		data := zipBundle(t, map[string]string{
+			"SKILL.md": `---
+name: pdf-tools
+version: 1.2.3
+author: Alice Chen
+category: 文档处理
+description: Extract text from PDF files
+---
+
+Use scripts/extract.py to pull text out of a PDF.
+`,
+		})
+
+		bundle, err := ParseSkillBundle(data)
+
+		require.NoError(t, err)
+		require.Equal(t, "Alice Chen", bundle.Author)
+		require.Equal(t, "文档处理", bundle.Category)
+	})
+
+	// Third-party skills carry non-scalar author/category values (lists, maps).
+	// Those degrade to "" instead of failing the registration — the metadata is
+	// optional, the bundle is not.
+	t.Run("degrades non-scalar author and category to empty", func(t *testing.T) {
+		data := zipBundle(t, map[string]string{
+			"SKILL.md": `---
+name: pdf-tools
+author:
+  - Alice
+  - Bob
+category:
+  docs: true
+description: Extract text from PDF files
+---
+
+Use scripts/extract.py to pull text out of a PDF.
+`,
+		})
+
+		bundle, err := ParseSkillBundle(data)
+
+		require.NoError(t, err)
+		require.Empty(t, bundle.Author)
+		require.Empty(t, bundle.Category)
+		require.Equal(t, "pdf-tools", bundle.Name,
+			"the rest of the skill parses normally")
+	})
+
 	t.Run("uses slug when name is a display title", func(t *testing.T) {
 		data := zipBundle(t, map[string]string{
 			"SKILL.md": `---
@@ -317,6 +366,30 @@ Use the scripts in this skill.
 		require.Equal(t, "pdf-tools", bundle.Name)
 		require.Contains(t, bundle.Files, "scripts/extract.py",
 			"paths must be relative to the skill root, not to the archive root")
+	})
+
+	t.Run("strips OS metadata entries around a wrapped skill directory", func(t *testing.T) {
+		// macOS Finder zip of a skill folder: __MACOSX/ AppleDouble sidecars,
+		// a stray root .DS_Store and an in-dir ._ sidecar alongside the skill.
+		data := zipBundle(t, map[string]string{
+			"ml-classification/SKILL.md":          validSkillMD,
+			"ml-classification/scripts/train.py":  "print('fit')\n",
+			"ml-classification/.DS_Store":         "junk",
+			"ml-classification/._SKILL.md":        "junk sidecar",
+			".DS_Store":                           "junk",
+			"__MACOSX/ml-classification/._SKILL.md": "junk sidecar",
+		})
+
+		bundle, err := ParseSkillBundle(data)
+
+		require.NoError(t, err)
+		require.Equal(t, "pdf-tools", bundle.Name)
+		require.Contains(t, bundle.Files, "scripts/train.py")
+		for _, junk := range []string{
+			".DS_Store", "._SKILL.md", "__MACOSX/ml-classification/._SKILL.md",
+		} {
+			require.NotContains(t, bundle.Files, junk)
+		}
 	})
 
 	t.Run("remote options re-root a nested unique skill and drop extras", func(t *testing.T) {

@@ -13,6 +13,14 @@ import (
 	"gorm.io/gorm"
 )
 
+// Tenant lifecycle statuses (Tenant.Status). "active" is the normal state;
+// "disabled" is set by the system admin from the admin console and blocks
+// every authenticated request into that workspace (see the auth middleware).
+const (
+	TenantStatusActive    = "active"
+	TenantStatusDisabled  = "disabled"
+)
+
 // retrieverEngineMapping maps RETRIEVE_DRIVER values to retriever engine configurations
 var retrieverEngineMapping = map[string][]RetrieverEngineParams{
 	"postgres": {

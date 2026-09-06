@@ -8,6 +8,10 @@ import "time"
 const (
 	ResourceTypeKB    = "kb"
 	ResourceTypeAgent = "agent"
+	// Skill catalog items are identified by catalog id; MCP services by
+	// service id. Both live on the Skills/MCP browser page.
+	ResourceTypeSkill = "skill"
+	ResourceTypeMCP   = "mcp"
 )
 
 // UserResourceFavorite is a per-(user, tenant) star on a single resource.
@@ -33,7 +37,7 @@ func (UserResourceFavorite) TableName() string {
 // the table and break the frontend's segmented view).
 func IsValidFavoriteResourceType(t string) bool {
 	switch t {
-	case ResourceTypeKB, ResourceTypeAgent:
+	case ResourceTypeKB, ResourceTypeAgent, ResourceTypeSkill, ResourceTypeMCP:
 		return true
 	default:
 		return false

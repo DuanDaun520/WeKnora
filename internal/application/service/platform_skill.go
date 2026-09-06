@@ -77,6 +77,19 @@ var ErrPlatformSkillNameImmutable = stderrors.New(
 var errPlatformSkillCatalogTaken = stderrors.New(
 	"workspace already has a self-built skill with this name")
 
+// ErrPlatformSkillCategoryNotFound marks a non-empty category that has no
+// registry row (000105). Categories are created FIRST in the category manager
+// and the register drawer is no longer creatable, so a miss is API/UI
+// staleness — never a silent new category. SKILL.md frontmatter categories
+// are the one lenient path: honored only when registered, dropped otherwise.
+var ErrPlatformSkillCategoryNotFound = stderrors.New(
+	"category is not registered; create it in the category manager first")
+
+// ErrPlatformSkillCategoryExists refuses creating a category (or renaming one)
+// onto a name another live category already holds.
+var ErrPlatformSkillCategoryExists = stderrors.New(
+	"a category with this name already exists")
+
 // PlatformSkillAssignmentsExistError refuses to delete a platform skill that
 // still has live assignments. The admin unassignes (guarded) first; there is
 // no purge-on-delete because materialized rows are real workspace catalog
@@ -265,34 +278,46 @@ func (s *PlatformSkillService) List(
 	return s.skills.List(ctx)
 }
 
+// PlatformSkillMeta is optional registration metadata threaded into creates.
+// Variadic so existing callers stay unchanged; an empty meta registers with
+// the SKILL.md frontmatter values alone. ZhName/ZhDescription (000106) have no
+// frontmatter counterpart: empty means "no Chinese copy yet", and the console
+// falls back to the SKILL.md name/description until one is set.
+type PlatformSkillMeta struct {
+	Category      string
+	Author        string
+	ZhName        string
+	ZhDescription string
+}
+
 // CreateFromArchive registers a new platform skill from an uploaded zip.
 // source is provenance only ("upload" or a pasted locator) and is never
 // re-fetched.
 func (s *PlatformSkillService) CreateFromArchive(
-	ctx context.Context, archive []byte, source string,
+	ctx context.Context, archive []byte, source string, meta ...PlatformSkillMeta,
 ) (*types.PlatformSkillEntity, error) {
 	bundle, err := ParseSkillBundle(archive)
 	if err != nil {
 		return nil, err
 	}
-	return s.create(ctx, bundle, archive, source)
+	return s.create(ctx, bundle, archive, source, meta...)
 }
 
 // CreateFromSource registers a new platform skill by fetching a public source
 // (ClawHub / GitHub / git host / direct zip) through the same normalized
 // fetch the workspace install flow uses.
 func (s *PlatformSkillService) CreateFromSource(
-	ctx context.Context, source string,
+	ctx context.Context, source string, meta ...PlatformSkillMeta,
 ) (*types.PlatformSkillEntity, error) {
 	bundle, archive, err := fetchNormalizedSkillBundle(ctx, source, s.sourceHTTP)
 	if err != nil {
 		return nil, err
 	}
-	return s.create(ctx, bundle, archive, source)
+	return s.create(ctx, bundle, archive, source, meta...)
 }
 
 func (s *PlatformSkillService) create(
-	ctx context.Context, bundle *SkillBundle, archive []byte, source string,
+	ctx context.Context, bundle *SkillBundle, archive []byte, source string, meta ...PlatformSkillMeta,
 ) (*types.PlatformSkillEntity, error) {
 	existing, err := s.skills.GetByName(ctx, bundle.Name)
 	if err != nil {
@@ -309,6 +334,41 @@ func (s *PlatformSkillService) create(
 		Instructions: bundle.Instructions,
 		BundleSHA256: bundle.SHA256,
 		Source:       strings.TrimSpace(source),
+	}
+	// Definition metadata (000105): a form-provided category must ALREADY be
+	// registered — the drawer is not creatable, so a miss is staleness, not a
+	// new category. SKILL.md frontmatter only seeds what the form left empty,
+	// and then only when that category is registered too: otherwise the skill
+	// lands uncategorized rather than quietly minting a registry name nobody
+	// created.
+	for _, m := range meta {
+		if m.Category != "" {
+			if err := s.requireRegisteredCategory(ctx, m.Category); err != nil {
+				return nil, err
+			}
+			skill.Category = m.Category
+		}
+		if m.Author != "" {
+			skill.Author = m.Author
+		}
+		// 000106: Chinese display copy rides the same create; empty means "not
+		// provided yet" (SKILL.md has no zh_name/zh_description to fall back to).
+		if m.ZhName != "" {
+			skill.ZhName = m.ZhName
+		}
+		if m.ZhDescription != "" {
+			skill.ZhDescription = m.ZhDescription
+		}
+	}
+	if skill.Category == "" && bundle.Category != "" {
+		if err := s.requireRegisteredCategory(ctx, bundle.Category); err == nil {
+			skill.Category = bundle.Category
+		} else if !stderrors.Is(err, ErrPlatformSkillCategoryNotFound) {
+			return nil, err
+		}
+	}
+	if skill.Author == "" {
+		skill.Author = bundle.Author
 	}
 	if err := s.storeArchive(ctx, skill, archive); err != nil {
 		return nil, err
@@ -383,6 +443,9 @@ func (s *PlatformSkillService) update(
 	skill.Description = bundle.Description
 	skill.Instructions = bundle.Instructions
 	skill.BundleSHA256 = bundle.SHA256
+	// Category/author stay untouched by a bundle re-register: they are
+	// admin-managed metadata (the repository's column list keeps them out)
+	// and are edited only through UpdateMeta.
 	if trimmed := strings.TrimSpace(source); trimmed != "" {
 		skill.Source = trimmed
 	}
@@ -395,6 +458,139 @@ func (s *PlatformSkillService) update(
 	// Re-read so the response carries the DB-side updated_at the drift
 	// markers are computed from.
 	return s.skills.GetByID(ctx, id)
+}
+
+// UpdateMeta rewrites the admin-managed definition metadata: category/author
+// plus the 000106 Chinese display fields. A nil pointer keeps the current
+// value; a present string (including "") replaces it. The repository's
+// updated_at stamp lights drift on every assignment so a push carries the new
+// metadata into the materialized workspace rows — unlike update() above, which
+// never touches these columns.
+func (s *PlatformSkillService) UpdateMeta(
+	ctx context.Context, id string, category, author, zhName, zhDescription *string,
+) (*types.PlatformSkillEntity, error) {
+	skill, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	nextCategory, nextAuthor := skill.Category, skill.Author
+	nextZhName, nextZhDescription := skill.ZhName, skill.ZhDescription
+	if category != nil {
+		nextCategory = strings.TrimSpace(*category)
+	}
+	if author != nil {
+		nextAuthor = strings.TrimSpace(*author)
+	}
+	if zhName != nil {
+		nextZhName = strings.TrimSpace(*zhName)
+	}
+	if zhDescription != nil {
+		nextZhDescription = strings.TrimSpace(*zhDescription)
+	}
+	// A non-empty target category must be registered (000105); an explicit ""
+	// clears back to uncategorized and always stays allowed.
+	if nextCategory != "" {
+		if err := s.requireRegisteredCategory(ctx, nextCategory); err != nil {
+			return nil, err
+		}
+	}
+	if nextCategory == skill.Category && nextAuthor == skill.Author &&
+		nextZhName == skill.ZhName && nextZhDescription == skill.ZhDescription {
+		return skill, nil
+	}
+	if err := s.skills.UpdateMeta(
+		ctx, id, nextCategory, nextAuthor, nextZhName, nextZhDescription); err != nil {
+		return nil, err
+	}
+	logger.Infof(ctx, "[platform-skill] updated meta of %s (%q)", id, skill.Name)
+	return s.skills.GetByID(ctx, id)
+}
+
+// ListCategories returns the category registry with per-name usage counts —
+// the console's category-manager directory.
+func (s *PlatformSkillService) ListCategories(
+	ctx context.Context,
+) ([]repository.SkillCategoryCount, error) {
+	return s.skills.ListCategories(ctx)
+}
+
+// CreateCategory registers one category in the console's category manager.
+// Categories are created here — never by registering a skill — and become the
+// vocabulary skills reference. A duplicate live name is a conflict.
+func (s *PlatformSkillService) CreateCategory(
+	ctx context.Context, name string,
+) (*types.PlatformSkillCategoryEntity, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, apperrors.NewBadRequestError("category name is required")
+	}
+	existing, err := s.skills.GetCategoryByName(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if existing != nil {
+		return nil, ErrPlatformSkillCategoryExists
+	}
+	e := &types.PlatformSkillCategoryEntity{ID: uuid.NewString(), Name: name}
+	if err := s.skills.CreateCategory(ctx, e); err != nil {
+		return nil, err
+	}
+	logger.Infof(ctx, "[platform-skill] registered category %q", name)
+	return e, nil
+}
+
+// requireRegisteredCategory verifies a non-empty category names a live registry
+// row. Skill writes (register form, meta edit) call it so no write can mint an
+// unregistered category; only SKILL.md frontmatter is allowed to silently drop
+// one.
+func (s *PlatformSkillService) requireRegisteredCategory(
+	ctx context.Context, name string,
+) error {
+	row, err := s.skills.GetCategoryByName(ctx, name)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return ErrPlatformSkillCategoryNotFound
+	}
+	return nil
+}
+
+// RenameCategory renames one registry category and moves every referencing
+// skill onto the new name. The target must be a fresh name — renaming onto an
+// existing category would merge two registry rows under one name. The count is
+// how many skills (and therefore assignments) went drifting.
+func (s *PlatformSkillService) RenameCategory(
+	ctx context.Context, from, to string,
+) (int64, error) {
+	from, to = strings.TrimSpace(from), strings.TrimSpace(to)
+	if from == "" || to == "" || from == to {
+		return 0, apperrors.NewBadRequestError("invalid category rename")
+	}
+	src, err := s.skills.GetCategoryByName(ctx, from)
+	if err != nil {
+		return 0, err
+	}
+	if src == nil {
+		return 0, ErrPlatformSkillCategoryNotFound
+	}
+	dst, err := s.skills.GetCategoryByName(ctx, to)
+	if err != nil {
+		return 0, err
+	}
+	if dst != nil {
+		return 0, ErrPlatformSkillCategoryExists
+	}
+	return s.skills.RenameCategory(ctx, from, to)
+}
+
+// RemoveCategory deletes one registry category and sends its skills back to
+// uncategorized. Lenient about an already-deleted name: clearing orphaned
+// strings is still worth doing.
+func (s *PlatformSkillService) RemoveCategory(
+	ctx context.Context, name string,
+) (int64, error) {
+	return s.skills.ClearCategory(ctx, strings.TrimSpace(name))
 }
 
 // Delete removes a platform skill, but only with no live assignments: each
@@ -624,7 +820,13 @@ func (s *PlatformSkillService) materialize(
 	if err != nil {
 		return nil, err
 	}
-	catalog, err := s.catalogSvc.RegisterCatalogFromArchive(ctx, tenantID, archive)
+	// The platform definition's category/author ride along: they are part of
+	// what "assigned this skill" means to a workspace's browser page.
+	catalog, err := s.catalogSvc.RegisterCatalogFromArchive(
+		ctx, tenantID, archive, CatalogMeta{
+			Category: skill.Category,
+			Author:   skill.Author,
+		})
 	if err != nil {
 		return nil, err
 	}
@@ -811,12 +1013,18 @@ func (s *PlatformSkillService) pushRow(
 	}
 	// Row still ours: re-register the current platform bytes through the
 	// workspace path (store + pin replaced bundles + same-digest short circuit).
+	// Meta rides along like on first materialize — a push is exactly how
+	// category/author edits reach the workspace rows.
 	archive, err := s.archive(ctx, skill)
 	if err != nil {
 		outcome.Message = err.Error()
 		return outcome
 	}
-	if _, err := s.catalogSvc.RegisterCatalogFromArchive(ctx, row.TenantID, archive); err != nil {
+	if _, err := s.catalogSvc.RegisterCatalogFromArchive(
+		ctx, row.TenantID, archive, CatalogMeta{
+			Category: skill.Category,
+			Author:   skill.Author,
+		}); err != nil {
 		outcome.Status, outcome.Code = assignmentOutcomeError(err)
 		outcome.Message = err.Error()
 		return outcome

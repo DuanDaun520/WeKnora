@@ -90,11 +90,13 @@ type TenantSkillRepository interface {
 	GetCatalogByName(ctx context.Context, tenantID uint64, name string) (*types.TenantSkillCatalogEntity, error)
 	// ListCatalogsByTenant returns every live catalog row of one workspace.
 	ListCatalogsByTenant(ctx context.Context, tenantID uint64) ([]*types.TenantSkillCatalogEntity, error)
-	// UpdateCatalog writes mutable definition fields (bundle, description, version).
-	// It deliberately does not list source_platform_skill_id: GORM map-updates
-	// only touch the listed keys, so pushes re-registering a materialized row
-	// keep its provenance intact.
+	// UpdateCatalog writes mutable definition fields (bundle, description,
+	// version, category). It deliberately does not list source_platform_skill_id
+	// or created_by: GORM map-updates only touch the listed keys, so pushes
+	// re-registering a materialized row keep its provenance and creator intact.
 	UpdateCatalog(ctx context.Context, e *types.TenantSkillCatalogEntity) error
+	// UpdateCatalogCategory rewrites only the browser-facing category.
+	UpdateCatalogCategory(ctx context.Context, tenantID uint64, catalogID, category string) error
 	// SetCatalogSourcePlatformSkill is the ONLY writer of the provenance
 	// column (000098): the platform surface stamps it right after a catalog
 	// row is materialized from a platform skill. An empty platformSkillID
@@ -149,14 +151,27 @@ func (r *tenantSkillRepository) GetSkillByName(
 	return &e, nil
 }
 
+// ListSkillsByConfig returns the installed skills of one sandbox config that
+// are still visible in this workspace (000108). A skill whose catalog row was
+// deliberately hidden is excluded here — this is the single choke point every
+// runtime/@mention reader (effectiveTenantSkills) and the per-config panels go
+// through, so a hidden skill disappears from both the agent's view and the
+// settings list. Rows with no catalog link (pre-catalog installs) and rows of
+// a soft-deleted catalog row are kept, because nothing about their visibility
+// was decided and uninstalling them must stay possible.
 func (r *tenantSkillRepository) ListSkillsByConfig(
 	ctx context.Context, tenantID uint64, configID string,
 ) ([]*types.TenantSkillEntity, error) {
 	var list []*types.TenantSkillEntity
 	err := r.db.WithContext(ctx).
-		Where("tenant_id = ? AND sandbox_config_id = ?", tenantID, configID).
-		Order("created_at ASC").
-		Find(&list).Error
+		Table("tenant_skills AS s").
+		Select("s.*").
+		Joins("LEFT JOIN tenant_skill_catalog AS c ON c.id = s.catalog_id AND c.tenant_id = s.tenant_id").
+		Where("s.tenant_id = ? AND s.sandbox_config_id = ? AND s.deleted_at IS NULL AND "+
+			"(s.catalog_id = '' OR s.catalog_id IS NULL OR c.id IS NULL OR c.deleted_at IS NOT NULL OR c.visible = TRUE)",
+			tenantID, configID).
+		Order("s.created_at ASC").
+		Scan(&list).Error
 	if err != nil {
 		return nil, err
 	}
@@ -472,9 +487,27 @@ func (r *tenantSkillRepository) UpdateCatalog(ctx context.Context, e *types.Tena
 			"version":       e.Version,
 			"description":   e.Description,
 			"instructions":  e.Instructions,
+			"category":      e.Category,
+			"author":        e.Author,
+			"visible":       e.Visible,
 			"bundle_ref":    e.BundleRef,
 			"bundle_sha256": e.BundleSHA256,
 			"updated_at":    time.Now(),
+		}).Error
+}
+
+// UpdateCatalogCategory writes the category column alone. Same isolation idea
+// as SetCatalogSourcePlatformSkill: an inline category edit must not be able
+// to clobber bundle/description fields mid re-register.
+func (r *tenantSkillRepository) UpdateCatalogCategory(
+	ctx context.Context, tenantID uint64, catalogID, category string,
+) error {
+	return r.db.WithContext(ctx).
+		Model(&types.TenantSkillCatalogEntity{}).
+		Where("tenant_id = ? AND id = ?", tenantID, catalogID).
+		Updates(map[string]any{
+			"category":   category,
+			"updated_at": time.Now(),
 		}).Error
 }
 

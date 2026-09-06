@@ -151,6 +151,10 @@ func (r *mcpServiceRepository) Update(ctx context.Context, service *types.MCPSer
 	// Description can be empty, so we check if it's different from existing
 	// For now, we'll always update it if provided
 	updateMap["description"] = service.Description
+	// Category follows the same always-write pattern: the service layer has
+	// already merged the incoming value into `existing` (presence-map
+	// guarded), so what lands here is the intended final value.
+	updateMap["category"] = service.Category
 
 	if service.TransportType != "" {
 		updateMap["transport_type"] = service.TransportType

@@ -60,10 +60,9 @@
         <SandboxConnectionsPanel v-else-if="currentSection === 'sandbox-connections'" />
         <!-- 技能库 000098 平台化：平台级技能注册 + 按空间物化分配，无空间选择栏 -->
         <SkillLibraryPanel v-else-if="currentSection === 'skill-library'" />
-        <!-- 用量看板（Token统计与计费设计.md §5.3）：平台总览/按空间/按用户 + 台账明细 -->
+        <!-- AI用量统计（Token统计与计费设计.md §5.3）：平台总览/按空间/按用户 + 台账明细，
+             并入「模型」菜单分组；模型单价配置在面板内以弹窗打开。 -->
         <UsageDashboardPanel v-else-if="currentSection === 'usage'" />
-        <!-- 模型单价配置：金额 = 当前单价 × 全部历史用量 -->
-        <BillingPricesPanel v-else-if="currentSection === 'billing-prices'" />
 
         <!-- 按空间代管面板：未选目标空间时给引导，选中后渲染管理页 -->
         <template v-else-if="isManagedSection(currentSection)">
@@ -104,7 +103,6 @@ import McpSettings from './McpSettings.vue'
 import SandboxConnectionsPanel from './SandboxConnectionsPanel.vue'
 import SkillLibraryPanel from './SkillLibraryPanel.vue'
 import UsageDashboardPanel from './UsageDashboardPanel.vue'
-import BillingPricesPanel from './BillingPricesPanel.vue'
 import ManagedWorkspaceBar from './ManagedWorkspaceBar.vue'
 
 const { t } = useI18n()
@@ -127,7 +125,6 @@ type ConsoleSection =
   | 'skill-library'
   | 'mcp'
   | 'usage'
-  | 'billing-prices'
 
 // 按空间代管的三个面板：数据仍归属各空间，系统管理员选目标空间后管理。
 // 网络搜索（000095）与 MCP 服务（000096）平台化后是平台目录 + 分配制，
@@ -152,7 +149,6 @@ const VALID_SECTIONS: ConsoleSection[] = [
   'skill-library',
   'mcp',
   'usage',
-  'billing-prices',
 ]
 
 function isManagedSection(key: ConsoleSection): boolean {
@@ -169,20 +165,20 @@ function isSectionSupported(key: ConsoleSection): boolean {
 }
 
 const menuGroups = computed<MenuGroup[]>(() => {
+  // 注：ollama 运行时菜单当前被隐藏（保留渲染分支与深链支持）；模型
+  // 单价已并入 AI用量统计面板（弹窗），不再占用独立菜单项。
   const all: MenuItem[] = [
     { key: 'users', icon: 'user', label: t('systemConsole.menu.users') },
     { key: 'tenants', icon: 'system-sum', label: t('systemConsole.menu.tenants') },
     { key: 'models', icon: 'ai', label: t('systemConsole.menu.models') },
-    { key: 'ollama', icon: 'cloud', label: t('systemConsole.menu.ollama') },
+    { key: 'usage', icon: 'chart-bar', label: t('usageStats.adminMenu') },
+    { key: 'skill-library', icon: 'root-list', label: t('settings.skillLibrary') },
+    { key: 'mcp', icon: 'tools', label: t('settings.mcpService') },
     { key: 'websearch', icon: 'search', label: t('settings.webSearchConfig') },
+    { key: 'sandbox-connections', icon: 'link', label: t('settings.sandboxConnections') },
     { key: 'vectorstore', icon: 'data-base', label: t('settings.vectorStoreEngine') },
     { key: 'parser', icon: 'file-search', label: t('settings.parserEngine') },
     { key: 'storage', icon: 'cloud', label: t('settings.storageEngine') },
-    { key: 'sandbox-connections', icon: 'link', label: t('settings.sandboxConnections') },
-    { key: 'skill-library', icon: 'root-list', label: t('settings.skillLibrary') },
-    { key: 'mcp', icon: 'tools', label: t('settings.mcpService') },
-    { key: 'usage', icon: 'chart-bar', label: t('usageStats.adminMenu') },
-    { key: 'billing-prices', icon: 'money-circle', label: t('usageStats.prices.menuLabel') },
   ]
   const visible = all.filter((item) => isSectionSupported(item.key))
   const pick = (keys: ConsoleSection[]) =>
@@ -194,20 +190,16 @@ const menuGroups = computed<MenuGroup[]>(() => {
       items: pick(['users', 'tenants']),
     },
     {
+      // 模型分组：模型配置 + AI用量统计（原「模型与运行时」分组，Ollama
+      // 运行时已隐藏）。
       key: 'runtime',
       label: t('systemConsole.menuGroups.runtime'),
-      items: pick(['models', 'ollama']),
+      items: pick(['models', 'usage']),
     },
     {
       key: 'data_extensions',
       label: t('systemConsole.menuGroups.dataExtensions'),
-      items: pick(['websearch', 'vectorstore', 'parser', 'storage', 'sandbox-connections', 'skill-library', 'mcp']),
-    },
-    {
-      // 统计与计费（Token统计与计费设计.md）：平台级看板 + 单价配置。
-      key: 'billing',
-      label: t('systemConsole.menuGroups.billing'),
-      items: pick(['usage', 'billing-prices']),
+      items: pick(['skill-library', 'mcp', 'websearch', 'sandbox-connections', 'vectorstore', 'parser', 'storage']),
     },
   ].filter((group) => group.items.length > 0)
 })
@@ -364,7 +356,7 @@ async function handleLogout() {
   align-items: stretch;
 }
 
-// 左侧菜单：按「空间与用户 / 模型与运行时 / 数据与扩展」分组平铺。
+// 左侧菜单：按「空间与用户 / 模型 / 数据与扩展」分组平铺。
 .console-menu {
   width: 208px;
   flex: none;

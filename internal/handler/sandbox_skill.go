@@ -345,6 +345,16 @@ type skillSourceRequest struct {
 	// a direct zip/SKILL.md URL. Bare "owner/slug" is rejected: it is both a
 	// ClawHub id and a GitHub repo. The fetch carries no credential.
 	Source string `json:"source"`
+	// Category is the optional Skills/MCP browser grouping (catalog register only).
+	Category string `json:"category"`
+	// Author is optional SKILL.md-style author metadata (platform library
+	// register only); empty falls back to the bundle's frontmatter.
+	Author string `json:"author"`
+	// ZhName/ZhDescription are optional Chinese display metadata (platform
+	// library register only, 000106); empty means "no Chinese copy yet" and the
+	// console falls back to the SKILL.md values.
+	ZhName        string `json:"zh_name"`
+	ZhDescription string `json:"zh_description"`
 }
 
 func (h *SandboxSkillHandler) installFromSource(c *gin.Context) {

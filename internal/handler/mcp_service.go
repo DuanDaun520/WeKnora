@@ -23,6 +23,9 @@ type MCPServiceHandler struct {
 	mcpServiceService      interfaces.MCPServiceService
 	mcpToolApprovalService interfaces.MCPToolApprovalService
 	toolApprovalGate       *approval.Gate
+	// users resolves CreatedBy ids into display names for the Skills/MCP
+	// browser. May be nil in tests that skip creator enrichment.
+	users interfaces.UserService
 }
 
 // NewMCPServiceHandler creates a new MCP service handler
@@ -30,11 +33,49 @@ func NewMCPServiceHandler(
 	mcpServiceService interfaces.MCPServiceService,
 	mcpToolApprovalService interfaces.MCPToolApprovalService,
 	toolApprovalGate *approval.Gate,
+	users interfaces.UserService,
 ) *MCPServiceHandler {
 	return &MCPServiceHandler{
 		mcpServiceService:      mcpServiceService,
 		mcpToolApprovalService: mcpToolApprovalService,
 		toolApprovalGate:       toolApprovalGate,
+		users:                  users,
+	}
+}
+
+// enrichMCPCreatorNames resolves svc.CreatedBy into CreatorName in place.
+// Failures are swallowed — the listing stays usable without display names.
+// Mirrors enrichAgentCreatorNames.
+func enrichMCPCreatorNames(ctx context.Context, userSvc interfaces.UserService, services []*types.MCPService) {
+	if userSvc == nil || len(services) == 0 {
+		return
+	}
+	idSet := make(map[string]struct{}, len(services))
+	for _, svc := range services {
+		if svc == nil || svc.CreatedBy == "" {
+			continue
+		}
+		idSet[svc.CreatedBy] = struct{}{}
+	}
+	if len(idSet) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(idSet))
+	for id := range idSet {
+		ids = append(ids, id)
+	}
+	users, err := userSvc.GetUsersByIDs(ctx, ids)
+	if err != nil {
+		logger.Warnf(ctx, "Failed to resolve MCP creator names: %v", err)
+		return
+	}
+	for _, svc := range services {
+		if svc == nil || svc.CreatedBy == "" {
+			continue
+		}
+		if u, ok := users[svc.CreatedBy]; ok && u != nil {
+			svc.CreatorName = pickUserDisplayName(u)
+		}
 	}
 }
 
@@ -90,6 +131,7 @@ func (h *MCPServiceHandler) CreateMCPService(c *gin.Context) {
 
 	// Response uses dto.MCPServiceResponse which omits secret fields by
 	// construction — no runtime redaction needed.
+	enrichMCPCreatorNames(ctx, h.users, []*types.MCPService{&service})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    dto.NewMCPServiceResponse(ctx, &service),
@@ -123,6 +165,7 @@ func (h *MCPServiceHandler) ListMCPServices(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("Failed to list MCP services: " + err.Error()))
 		return
 	}
+	enrichMCPCreatorNames(ctx, h.users, services)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -159,6 +202,7 @@ func (h *MCPServiceHandler) GetMCPService(c *gin.Context) {
 		c.Error(errors.NewNotFoundError("MCP service not found"))
 		return
 	}
+	enrichMCPCreatorNames(ctx, h.users, []*types.MCPService{service})
 
 	// dto.NewMCPServiceResponse omits secret fields and additionally strips
 	// transport details (URL/Headers/EnvVars/StdioConfig) for builtin services
@@ -223,6 +267,7 @@ func (h *MCPServiceHandler) UpdateMCPService(c *gin.Context) {
 		c.Error(errors.NewInternalServerError("Failed to fetch updated MCP service: " + err.Error()))
 		return
 	}
+	enrichMCPCreatorNames(ctx, h.users, []*types.MCPService{stored})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data":    dto.NewMCPServiceResponse(ctx, stored),
@@ -261,6 +306,10 @@ func parseMCPServiceUpdateBody(
 	if enabled, ok := updateData["enabled"].(bool); ok {
 		service.Enabled = enabled
 		updateFields["enabled"] = true
+	}
+	if category, ok := updateData["category"].(string); ok {
+		service.Category = category
+		updateFields["category"] = true
 	}
 	if transportType, ok := updateData["transport_type"].(string); ok {
 		service.TransportType = types.MCPTransportType(transportType)

@@ -43,6 +43,11 @@ type SkillBundle struct {
 	Version      string
 	Description  string
 	Instructions string
+	// Author/Category are optional SKILL.md frontmatter metadata (000104).
+	// They seed the platform skill's definition metadata and fall back into
+	// workspace catalog rows when no explicit value overrides them.
+	Author   string
+	Category string
 	// SHA256 is over the uploaded bytes, so re-uploading the same archive is
 	// recognisable in the UI and in the ledger, and a ready skill with this
 	// digest can skip a billed snapshot rebuild.
@@ -201,7 +206,26 @@ func inspectSkillZipPath(entry *zip.File) (name string, skip bool, err error) {
 		return "", false, fmt.Errorf("%w: entry %q escapes the archive root",
 			ErrSkillBundleInvalid, entry.Name)
 	}
+	if isOSMetadataZipEntry(name) {
+		return "", true, nil
+	}
 	return name, false, nil
+}
+
+// isOSMetadataZipEntry reports archive entries the OS packer adds around the
+// real content — macOS Finder zips (__MACOSX/, AppleDouble ._* sidecars,
+// .DS_Store) and Windows equivalents. They are never skill files, and without
+// filtering they surface as "files outside the skill directory".
+func isOSMetadataZipEntry(name string) bool {
+	if path.Base(name) == ".DS_Store" || path.Base(name) == "Thumbs.db" ||
+		path.Base(name) == "desktop.ini" {
+		return true
+	}
+	base := path.Base(name)
+	if strings.HasPrefix(base, "._") {
+		return true
+	}
+	return name == "__MACOSX" || strings.HasPrefix(name, "__MACOSX/")
 }
 
 func inspectKeptSkillZipEntry(item skillZipEntry) error {
@@ -310,16 +334,18 @@ func skillBundleFromFiles(archive []byte, files map[string][]byte) (*SkillBundle
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSkillBundleInvalid, err)
 	}
-	version, err := parseSkillBundleVersion(string(manifest))
+	extra, err := parseSkillBundleExtraMeta(string(manifest))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrSkillBundleInvalid, err)
 	}
 
 	return &SkillBundle{
 		Name:                skill.Name,
-		Version:             version,
+		Version:             extra.Version,
 		Description:         skill.Description,
 		Instructions:        skill.Instructions,
+		Author:              extra.Author,
+		Category:            extra.Category,
 		SHA256:              skillArchiveSHA256(archive),
 		Files:               files,
 		FrontmatterRepaired: skill.FrontmatterRepaired,
@@ -390,7 +416,19 @@ func validateSkillEntryName(name string) error {
 	return nil
 }
 
-func parseSkillBundleVersion(manifest string) (string, error) {
+// skillBundleExtraMeta holds the optional SKILL.md frontmatter fields beyond
+// name/description: version plus the 000104 author/category metadata.
+type skillBundleExtraMeta struct {
+	Version  string
+	Author   string
+	Category string
+}
+
+// parseSkillBundleExtraMeta reads version/author/category out of the SKILL.md
+// frontmatter. Author/Category are not part of the skill spec, so their YAML
+// values may be lists or maps on third-party skills — those degrade to ""
+// (frontmatterScalarString) instead of failing the registration.
+func parseSkillBundleExtraMeta(manifest string) (skillBundleExtraMeta, error) {
 	lines := strings.Split(manifest, "\n")
 	frontmatterStart := -1
 	for i, line := range lines {
@@ -403,7 +441,7 @@ func parseSkillBundleVersion(manifest string) (string, error) {
 		}
 	}
 	if frontmatterStart < 0 {
-		return "", nil
+		return skillBundleExtraMeta{}, nil
 	}
 
 	frontmatterEnd := -1
@@ -414,17 +452,33 @@ func parseSkillBundleVersion(manifest string) (string, error) {
 		}
 	}
 	if frontmatterEnd < 0 {
-		return "", nil
+		return skillBundleExtraMeta{}, nil
 	}
 
 	var metadata struct {
-		Version string `yaml:"version"`
+		Version  string `yaml:"version"`
+		Author   any    `yaml:"author"`
+		Category any    `yaml:"category"`
 	}
 	frontmatter := strings.Join(lines[frontmatterStart+1:frontmatterEnd], "\n")
 	if _, err := skills.UnmarshalSkillFrontmatter(frontmatter, &metadata); err != nil {
-		return "", err
+		return skillBundleExtraMeta{}, err
 	}
-	return metadata.Version, nil
+	return skillBundleExtraMeta{
+		Version:  metadata.Version,
+		Author:   frontmatterScalarString(metadata.Author),
+		Category: frontmatterScalarString(metadata.Category),
+	}, nil
+}
+
+// frontmatterScalarString keeps a non-scalar frontmatter value from breaking
+// registration: strings (and YAML scalars decoded as such) pass through
+// trimmed, anything else — lists, maps, null — reads as absent.
+func frontmatterScalarString(value any) string {
+	if s, ok := value.(string); ok {
+		return strings.TrimSpace(s)
+	}
+	return ""
 }
 
 // stripSkillRootPrefix re-roots the archive at the directory holding SKILL.md.

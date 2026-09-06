@@ -668,13 +668,12 @@ const emit = defineEmits<{
   installed: [skillId: string]
 }>()
 
-// 000095 基础设施收权：技能的装卸 / 启停 / 重试 / 密钥写入只归系统管理员。
-// 本面板同时被 SkillCatalogSettings（空间 Settings 技能目录，000099）和
-// AgentEditorModal（工作台）复用，空间侧保留只读视图——状态、进度、
-// 安装时间线、密钥名与是否已配置。后端对应路由已改 g.SystemAdmin()，
-// 这里的 UI 门只是提前对齐 403，避免点开才报错。
+// 000107 技能装卸 / 启停 / 重试 / 密钥写入放宽到本空间 admin/owner 或系统管
+// 理员（后端 AdminOrSystemAdmin，服务按请求空间租户作用域）；直接「上传新技
+// 能」仍只归系统管理员（000099 平台单向分配）。本面板同时被 SkillCatalogSettings
+// （空间 Settings 技能目录）和平台控制台复用；UI 门只是提前对齐后端，避免点开才报错。
 const authStore = useAuthStore()
-const canWrite = computed(() => authStore.isSystemAdmin)
+const canWrite = computed(() => authStore.hasRole('admin'))
 
 const { t } = useI18n()
 const headerActionsTarget = inject(SETTING_DRAWER_HEADER_ACTIONS_ID, '')

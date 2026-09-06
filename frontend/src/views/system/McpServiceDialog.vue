@@ -106,6 +106,17 @@
           />
         </div>
 
+        <!-- 分类：Skills/MCP 浏览页的分组目录。builtin 行后端拒绝更新 → 只读。 -->
+        <div class="form-item">
+          <label class="form-label">{{ t('mcpServiceDialog.category') }}</label>
+          <t-input
+            v-model="formData.category"
+            maxlength="255"
+            :disabled="!!props.service?.is_builtin"
+            :placeholder="t('mcpServiceDialog.categoryPlaceholder')"
+          />
+        </div>
+
         <div class="form-item">
           <label class="form-label">{{ t('mcpServiceDialog.enableService') }}</label>
           <div class="vision-toggle">
@@ -518,6 +529,8 @@ const codeImportPlaceholder = `{
 const formData = ref({
   name: '',
   description: '',
+  // Skills/MCP 浏览页的分组分类；空 = 未分类。
+  category: '',
   enabled: true,
   transport_type: 'sse' as 'sse' | 'http-streamable',
   url: '',
@@ -1021,6 +1034,7 @@ const resetForm = () => {
   formData.value = {
     name: '',
     description: '',
+    category: '',
     enabled: true,
     transport_type: 'sse',
     url: '',
@@ -1046,6 +1060,7 @@ watch(
       formData.value = {
         name: service.name || '',
         description: service.description || '',
+        category: service.category || '',
         enabled: service.enabled ?? true,
         transport_type: transportType as 'sse' | 'http-streamable',
         url: service.url || '',
@@ -1106,6 +1121,8 @@ function buildPayload(asCreate: boolean): Partial<MCPService> {
   const data: Partial<MCPService> = {
     name: formData.value.name,
     description: formData.value.description,
+    // 分类随主表单一起提交：编辑走 presence-map，值未变时是无害回写。
+    category: formData.value.category.trim(),
     enabled: formData.value.enabled,
     transport_type: formData.value.transport_type,
     advanced_config: formData.value.advanced_config,

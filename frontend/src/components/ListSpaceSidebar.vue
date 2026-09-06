@@ -25,7 +25,10 @@
             <span class="icon-label">{{ $t('listSpaceSidebar.recents') }}</span>
           </div>
         </t-tooltip>
-        <t-tooltip :content="tooltipText(workspaceLabel, countMine)" placement="right" :show-arrow="false">
+        <!-- 本空间 + 协作空间 entries are meaningless for resources that
+             live on the workspace itself (skills/MCP services), so callers
+             can hide both with hide-workspace. -->
+        <t-tooltip v-if="!hideWorkspace" :content="tooltipText(workspaceLabel, countMine)" placement="right" :show-arrow="false">
           <div class="icon-item-labeled workspace-item" :class="{ active: selected === 'mine' }"
             @click="select('mine')">
             <t-icon name="system-sum" size="16px" />
@@ -37,7 +40,7 @@
              oscillated between "everything shared to me" and "things I
              can edit", and either reading duplicated information already
              visible on the per-space entries below. -->
-        <template v-if="organizationsWithCount.length">
+        <template v-if="!hideWorkspace && organizationsWithCount.length">
           <div class="icon-strip-divider" />
           <t-tooltip v-for="org in organizationsWithCount" :key="org.id"
             :content="tooltipText(org.name, getOrgCount(org.id))" placement="right" :show-arrow="false">
@@ -100,8 +103,8 @@
           </div>
           <span v-if="countRecents > 0" class="item-count">{{ countRecents }}</span>
         </div>
-        <div v-if="(showFavorites || showRecents)" class="sidebar-divider" />
-        <div class="sidebar-item" :class="{ active: selected === 'mine' }" @click="select('mine')">
+        <div v-if="(showFavorites || showRecents) && !hideWorkspace" class="sidebar-divider" />
+        <div v-if="!hideWorkspace" class="sidebar-item" :class="{ active: selected === 'mine' }" @click="select('mine')">
           <div class="item-left">
             <t-icon name="system-sum" class="item-icon" />
             <span class="item-label">{{ workspaceLabel }}</span>
@@ -110,7 +113,7 @@
         </div>
         <!-- Shared spaces group — per-org entries only; the aggregate
              entry was removed (see collapsed strip for rationale). -->
-        <template v-if="organizationsWithCount.length">
+        <template v-if="!hideWorkspace && organizationsWithCount.length">
           <div class="sidebar-section">
             <span class="section-title">{{ $t('listSpaceSidebar.spaces') }}</span>
           </div>
@@ -172,6 +175,9 @@ const props = withDefaults(
     countCreated?: number
     countJoined?: number
     hideAll?: boolean
+    /** Hide the 本空间 + 协作空间 entries — for resources that belong to
+     *  the workspace itself (skills/MCP) rather than being shared into it. */
+    hideWorkspace?: boolean
     /** Favorites entry. Only meaningful in resource mode. */
     countFavorites?: number
     showFavorites?: boolean
@@ -188,6 +194,7 @@ const props = withDefaults(
     countCreated: undefined,
     countJoined: undefined,
     hideAll: false,
+    hideWorkspace: false,
     countFavorites: 0,
     showFavorites: true,
     countRecents: 0,

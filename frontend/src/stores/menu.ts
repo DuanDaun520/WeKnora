@@ -31,6 +31,7 @@ export const useMenuStore = defineStore('menuStore', () => {
     },
     { title: '', titleKey: 'menu.knowledgeBase', icon: 'zhishiku', path: 'knowledge-bases' },
     { title: '', titleKey: 'menu.agents', icon: 'agent', path: 'agents', requiredCapability: 'agents' },
+    { title: '', titleKey: 'menu.skillsMcp', icon: 'skillsMcp', path: 'skills-mcp' },
     { title: '', titleKey: 'menu.organizations', icon: 'organization', path: 'organizations', requiredCapability: 'organizations' },
     { title: '', titleKey: 'menu.systemConsole', icon: 'user', path: 'systemConsole' },
     { title: '', titleKey: 'menu.settings', icon: 'setting', path: 'settings' },

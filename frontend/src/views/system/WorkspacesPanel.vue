@@ -39,6 +39,15 @@
             </t-tag>
           </div>
         </template>
+        <template #status="{ row }">
+          <t-tag
+            size="small"
+            variant="light"
+            :theme="row.status === 'disabled' ? 'danger' : 'success'"
+          >
+            {{ row.status === 'disabled' ? $t('systemConsole.tenants.disabled') : $t('systemConsole.tenants.enabled') }}
+          </t-tag>
+        </template>
         <template #description="{ row }">
           <span class="cell-muted">{{ row.description || '—' }}</span>
         </template>
@@ -54,6 +63,15 @@
               <template #icon><t-icon name="components" /></template>
               {{ $t('systemConsole.assignments.open') }}
             </t-button>
+            <t-dropdown
+              :options="tenantActionOptions(row)"
+              trigger="click"
+              @click="(item: any) => onTenantAction(String(item.value), row)"
+            >
+              <t-button variant="text" size="small" shape="square">
+                <template #icon><t-icon name="more" /></template>
+              </t-button>
+            </t-dropdown>
           </div>
         </template>
       </t-table>
@@ -220,7 +238,7 @@
         <t-form-item :label="$t('systemConsole.tenants.name')">
           <t-input v-model="tenantCreateForm.name" :placeholder="$t('systemConsole.tenants.namePlaceholder')" />
         </t-form-item>
-        <t-form-item :label="$t('systemConsole.tenants.description')">
+        <t-form-item :label="$t('systemConsole.tenants.colDescription')">
           <t-textarea
             v-model="tenantCreateForm.description"
             :placeholder="$t('systemConsole.tenants.descriptionPlaceholder')"
@@ -230,6 +248,37 @@
         <t-form-item :label="$t('systemConsole.tenants.quota')">
           <t-input-number
             v-model="tenantCreateForm.storage_quota_gb"
+            :min="1"
+            :placeholder="$t('systemConsole.tenants.quotaPlaceholder')"
+            style="width: 100%"
+          />
+        </t-form-item>
+      </t-form>
+    </t-dialog>
+
+    <!-- 编辑空间：名称 / 描述 / 存储配额 -->
+    <t-dialog
+      v-model:visible="tenantEditVisible"
+      :header="$t('systemConsole.tenants.editTitle', { name: tenantEditForm.name })"
+      :confirm-btn="{ content: t('common.save'), theme: 'primary', loading: tenantEditLoading }"
+      :cancel-btn="$t('common.cancel')"
+      width="520px"
+      @confirm="submitTenantEdit"
+    >
+      <t-form :data="tenantEditForm" label-align="top" @submit.prevent>
+        <t-form-item :label="$t('systemConsole.tenants.name')">
+          <t-input v-model="tenantEditForm.name" :placeholder="$t('systemConsole.tenants.namePlaceholder')" />
+        </t-form-item>
+        <t-form-item :label="$t('systemConsole.tenants.colDescription')">
+          <t-textarea
+            v-model="tenantEditForm.description"
+            :placeholder="$t('systemConsole.tenants.descriptionPlaceholder')"
+            :autosize="{ minRows: 2, maxRows: 4 }"
+          />
+        </t-form-item>
+        <t-form-item :label="$t('systemConsole.tenants.quota')">
+          <t-input-number
+            v-model="tenantEditForm.storage_quota_gb"
             :min="1"
             :placeholder="$t('systemConsole.tenants.quotaPlaceholder')"
             style="width: 100%"
@@ -252,10 +301,12 @@ import type { PrimaryTableCol } from 'tdesign-vue-next'
 import { useAuthStore } from '@/stores/auth'
 import {
   createPlatformTenant,
+  deletePlatformTenant,
   listPlatformTenants,
   listTenantModelAssignments,
   listWorkspaceMembers,
   unbindUserFromTenant,
+  updatePlatformTenant,
   updateTenantModelAssignments,
   updateWorkspaceMemberRole,
   type EnterpriseWorkspaceMember,
@@ -272,11 +323,12 @@ const tenants = ref<PlatformTenant[]>([])
 const tenantsLoading = ref(false)
 
 const tenantColumns = computed<PrimaryTableCol<PlatformTenant>[]>(() => [
-  { colKey: 'name', title: t('systemConsole.tenants.colName'), width: 220 },
+  { colKey: 'name', title: t('systemConsole.tenants.colName'), width: 200 },
+  { colKey: 'status', title: t('systemConsole.tenants.colStatus'), width: 90, cell: 'status' } as PrimaryTableCol<PlatformTenant>,
   { colKey: 'description', title: t('systemConsole.tenants.colDescription'), cell: 'description' } as PrimaryTableCol<PlatformTenant>,
-  { colKey: 'quota', title: t('systemConsole.tenants.colQuota'), width: 150, cell: 'quota' } as PrimaryTableCol<PlatformTenant>,
-  { colKey: 'created_at', title: t('systemConsole.users.colCreatedAt'), width: 130, cell: 'created_at' } as PrimaryTableCol<PlatformTenant>,
-  { colKey: 'actions', title: t('systemConsole.users.colActions'), width: 230, align: 'right', cell: 'tenantActions' } as PrimaryTableCol<PlatformTenant>,
+  { colKey: 'quota', title: t('systemConsole.tenants.colQuota'), width: 130, cell: 'quota' } as PrimaryTableCol<PlatformTenant>,
+  { colKey: 'created_at', title: t('systemConsole.users.colCreatedAt'), width: 120, cell: 'created_at' } as PrimaryTableCol<PlatformTenant>,
+  { colKey: 'actions', title: t('systemConsole.users.colActions'), width: 280, align: 'right', cell: 'tenantActions' } as PrimaryTableCol<PlatformTenant>,
 ])
 
 async function loadTenants() {
@@ -540,6 +592,104 @@ async function submitTenantCreate() {
     MessagePlugin.error(e?.message || t('systemConsole.messages.opFailed'))
   } finally {
     tenantCreateLoading.value = false
+  }
+}
+
+// ---- 编辑 / 启停 / 删除空间 ----
+const GB = 1024 * 1024 * 1024
+const tenantEditVisible = ref(false)
+const tenantEditLoading = ref(false)
+const tenantEditId = ref<number | null>(null)
+const tenantEditForm = reactive({ name: '', description: '', storage_quota_gb: null as number | null })
+
+function openTenantEditDialog(row: PlatformTenant) {
+  tenantEditId.value = row.id
+  tenantEditForm.name = row.name
+  tenantEditForm.description = row.description || ''
+  tenantEditForm.storage_quota_gb = row.storage_quota > 0 ? Math.round(row.storage_quota / GB) : null
+  tenantEditVisible.value = true
+}
+
+async function submitTenantEdit() {
+  if (tenantEditId.value == null) return
+  tenantEditForm.name = tenantEditForm.name.trim()
+  if (!tenantEditForm.name) {
+    MessagePlugin.warning(t('systemConsole.tenants.nameRequired'))
+    return
+  }
+  tenantEditLoading.value = true
+  try {
+    const req: {
+      name: string
+      description: string
+      storage_quota_gb?: number
+    } = { name: tenantEditForm.name, description: tenantEditForm.description.trim() }
+    if (tenantEditForm.storage_quota_gb != null && tenantEditForm.storage_quota_gb >= 1) {
+      req.storage_quota_gb = tenantEditForm.storage_quota_gb
+    }
+    await updatePlatformTenant(tenantEditId.value, req)
+    MessagePlugin.success(t('systemConsole.messages.opSuccess'))
+    tenantEditVisible.value = false
+    void loadTenants()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('systemConsole.messages.opFailed'))
+  } finally {
+    tenantEditLoading.value = false
+  }
+}
+
+function tenantActionOptions(row: PlatformTenant) {
+  return [
+    { value: 'edit', content: t('systemConsole.tenants.edit') },
+    row.status === 'disabled'
+      ? { value: 'enable', content: t('systemConsole.tenants.enable') }
+      : { value: 'disable', content: t('systemConsole.tenants.disable'), theme: 'error' as const },
+    { value: 'delete', content: t('systemConsole.tenants.delete'), theme: 'error' as const },
+  ]
+}
+
+async function onTenantAction(action: string, row: PlatformTenant) {
+  switch (action) {
+    case 'edit':
+      openTenantEditDialog(row)
+      return
+    case 'enable':
+      await setTenantStatus(row, 'active')
+      return
+    case 'disable':
+      await setTenantStatus(row, 'disabled')
+      return
+    case 'delete':
+      await removeTenant(row)
+      return
+  }
+}
+
+async function setTenantStatus(row: PlatformTenant, status: 'active' | 'disabled') {
+  const disabling = status === 'disabled'
+  const message = disabling
+    ? t('systemConsole.tenants.disableConfirm', { name: row.name })
+    : t('systemConsole.tenants.enableConfirm', { name: row.name })
+  const ok = await dialogConfirm(message)
+  if (!ok) return
+  try {
+    await updatePlatformTenant(row.id, { status })
+    MessagePlugin.success(t('systemConsole.messages.opSuccess'))
+    void loadTenants()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('systemConsole.messages.opFailed'))
+  }
+}
+
+async function removeTenant(row: PlatformTenant) {
+  const ok = await dialogConfirm(t('systemConsole.tenants.deleteConfirm', { name: row.name }))
+  if (!ok) return
+  try {
+    await deletePlatformTenant(row.id)
+    MessagePlugin.success(t('systemConsole.tenants.deleteSuccess'))
+    void loadTenants()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('systemConsole.messages.opFailed'))
   }
 }
 

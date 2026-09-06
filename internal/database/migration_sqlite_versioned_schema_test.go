@@ -37,9 +37,10 @@ var versionedSQLiteColumns = map[string][]string{
 	"mcp_oauth_tokens":   {"principal_type", "principal_id"},                // 000064
 	"tenant_sandbox_configs": {"source_connection_id", "source_pushed_at"}, // 000097
 	"mcp_tool_approvals": {"enabled"},                                       // 000102
+	"mcp_services":       {"category", "created_by"},                       // 000022
 }
 
-const expectedSQLiteMigrationVersion = 21 // 000021 mcp tool enabled
+const expectedSQLiteMigrationVersion = 22 // 000022 mcp category creator
 
 func TestSQLiteMigrationsCreateVersionedSchema(t *testing.T) {
 	repoRoot := sqliteRepoRoot(t)

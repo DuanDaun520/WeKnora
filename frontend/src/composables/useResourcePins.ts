@@ -1,5 +1,5 @@
 // useResourcePins – per-(user, tenant) favorites + per-user recents for
-// KBs and custom agents.
+// KBs, custom agents, skills and MCP services.
 //
 // Favorites are DB-backed (see migration 000047) so they sync across
 // devices and survive a logout. They are scoped per (user, tenant) on
@@ -35,6 +35,12 @@ export interface PinEntry {
 
 const RECENTS_SUFFIX = 'resource_recents'
 const RECENTS_CAP = 30
+
+// Every pinnable resource type. The per-type state maps below are derived
+// from this list so adding a type is a one-line change instead of five
+// scattered literals (this file grew from kb+agent to four types and the
+// repetition was already the main bug surface).
+const ALL_RESOURCE_TYPES = ['kb', 'agent', 'skill', 'mcp'] as const
 
 // Recents are scoped by (user, tenant) — same rationale as favorites. The
 // hydration step in the list views joins recent entries against the
@@ -72,7 +78,7 @@ function readRecents(): PinEntry[] {
       (e: unknown): e is PinEntry =>
         !!e &&
         typeof (e as PinEntry).type === 'string' &&
-        ((e as PinEntry).type === 'kb' || (e as PinEntry).type === 'agent') &&
+        (ALL_RESOURCE_TYPES as readonly string[]).includes((e as PinEntry).type) &&
         typeof (e as PinEntry).id === 'string' &&
         typeof (e as PinEntry).ts === 'number'
     )
@@ -88,12 +94,15 @@ function writeRecents(list: PinEntry[]): void {
 // Module-level shared state: a single source of truth for the whole tab
 // so all list views stay in sync after a star toggle, and so two list
 // views don't double-fetch the same data.
-const favoritesByType: Record<ResourceType, Ref<PinEntry[]>> = {
-  kb: ref<PinEntry[]>([]),
-  agent: ref<PinEntry[]>([]),
-}
-const loaded: Record<ResourceType, boolean> = { kb: false, agent: false }
-const inFlight: Record<ResourceType, Promise<void> | null> = { kb: null, agent: null }
+const favoritesByType = Object.fromEntries(
+  ALL_RESOURCE_TYPES.map((t) => [t, ref<PinEntry[]>([])])
+) as Record<ResourceType, Ref<PinEntry[]>>
+const loaded = Object.fromEntries(
+  ALL_RESOURCE_TYPES.map((t) => [t, false])
+) as Record<ResourceType, boolean>
+const inFlight = Object.fromEntries(
+  ALL_RESOURCE_TYPES.map((t) => [t, null])
+) as Record<ResourceType, Promise<void> | null>
 
 // recents revision counter — same bump-to-invalidate pattern as before.
 const recentsRevision = ref(0)
@@ -146,14 +155,13 @@ function installTenantWatcher(): void {
   watch(
     () => authStore.effectiveTenantId,
     () => {
-      loaded.kb = false
-      loaded.agent = false
-      favoritesByType.kb.value = []
-      favoritesByType.agent.value = []
-      // Eagerly refetch both types so any already-mounted list view sees
+      for (const t of ALL_RESOURCE_TYPES) {
+        loaded[t] = false
+        favoritesByType[t].value = []
+      }
+      // Eagerly refetch every type so any already-mounted list view sees
       // fresh data without a manual refresh.
-      void fetchFavorites('kb')
-      void fetchFavorites('agent')
+      for (const t of ALL_RESOURCE_TYPES) void fetchFavorites(t)
       // Recents are keyed on the tenant id (see `recentsKey`); bump the
       // revision so any active computed re-reads against the new key.
       bumpRecents()
@@ -176,15 +184,16 @@ export function useResourcePins(): UseResourcePinsResult {
   installTenantWatcher()
 
   // Lazy first load. Calling the composable always kicks off (or reuses)
-  // the in-flight fetch for both types; the templates render with empty
+  // the in-flight fetch for every type; the templates render with empty
   // arrays until data lands, which is fine because the counts default to
   // 0 and no view depends on a synchronous read.
-  if (!loaded.kb) void fetchFavorites('kb')
-  if (!loaded.agent) void fetchFavorites('agent')
+  for (const t of ALL_RESOURCE_TYPES) {
+    if (!loaded[t]) void fetchFavorites(t)
+  }
 
   const favorites = computed<PinEntry[]>(() => {
-    // Merge both type lists and sort by ts desc.
-    return [...favoritesByType.kb.value, ...favoritesByType.agent.value].sort(
+    // Merge every type list and sort by ts desc.
+    return ALL_RESOURCE_TYPES.flatMap((t) => favoritesByType[t].value).sort(
       (a, b) => b.ts - a.ts
     )
   })
@@ -251,9 +260,8 @@ export function useResourcePins(): UseResourcePinsResult {
   }
 
   const refresh = async (): Promise<void> => {
-    loaded.kb = false
-    loaded.agent = false
-    await Promise.all([fetchFavorites('kb'), fetchFavorites('agent')])
+    for (const t of ALL_RESOURCE_TYPES) loaded[t] = false
+    await Promise.all(ALL_RESOURCE_TYPES.map((t) => fetchFavorites(t)))
   }
 
   return { favorites, recents, isFavorite, toggleFavorite, touchRecent, removeRecent, refresh }
