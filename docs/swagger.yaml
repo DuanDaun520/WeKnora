@@ -2618,6 +2618,34 @@ definitions:
       use_temp_bucket:
         type: boolean
     type: object
+  github_com_Tencent_WeKnora_internal_types.OpenSandboxSandboxConfig:
+    properties:
+      api_key:
+        description: 加密
+        type: string
+      api_url:
+        description: |-
+          APIURL is the lifecycle server's base URL and MUST carry the /v1
+          version prefix (e.g. "http://10.0.0.5:8080/v1"): the SDK concatenates
+          paths onto it verbatim.
+        type: string
+      http_timeout_sec:
+        description: |-
+          HTTPTimeoutSec bounds each HTTP call to the lifecycle API and execd,
+          excluding command streams. 0 means use the built-in default (30s).
+        type: integer
+      opensandbox_sandbox_ttl_seconds:
+        description: |-
+          OpenSandboxSandboxTTLSeconds is the absolute lifetime requested at
+          creation; the adapter renews it on every Connect, which turns it into
+          the session idle timeout. The server enforces a 60s floor and may cap
+          it (server.max_sandbox_timeout_seconds).
+        type: integer
+      template_id:
+        description: TemplateID is the image URI or snapshot ID new sandboxes spawn
+          from.
+        type: string
+    type: object
   github_com_Tencent_WeKnora_internal_types.OrgMemberRole:
     enum:
     - admin
@@ -3832,9 +3860,11 @@ definitions:
           become visible to all scripts running in the tenant's\nsandboxes — do not
           place secrets here that scripts must not access."
         type: object
+      opensandbox:
+        $ref: '#/definitions/github_com_Tencent_WeKnora_internal_types.OpenSandboxSandboxConfig'
       sandbox_type:
-        description: SandboxType is cube, e2b, or docker; disabled is the hidden policy
-          row.
+        description: SandboxType is cube, e2b, opensandbox, or docker; disabled is
+          the hidden policy row.
         type: string
       skill_image:
         allOf:

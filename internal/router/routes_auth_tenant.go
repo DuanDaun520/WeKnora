@@ -180,7 +180,7 @@ func RegisterMyEnvVarRoutes(r *gin.RouterGroup, h *handler.MeEnvVarHandler) {
 // mutation left (plus token refresh/validate/logout), so the public
 // rate limiter that used to guard the share-link endpoints retired
 // with them.
-func RegisterAuthRoutes(r *gin.RouterGroup, handler *handler.AuthHandler, g *rbacGuards) {
+func RegisterAuthRoutes(r *gin.RouterGroup, handler *handler.AuthHandler, avatars *handler.UserAvatarHandler, g *rbacGuards) {
 	r.POST("/auth/login", handler.Login)
 	r.POST("/auth/switch-tenant", handler.SwitchTenant)
 	r.POST("/auth/refresh", handler.RefreshToken)
@@ -192,6 +192,14 @@ func RegisterAuthRoutes(r *gin.RouterGroup, handler *handler.AuthHandler, g *rba
 	g.apiKeyRoute(r, http.MethodGet, "/auth/me", apiKeyAny(), handler.GetCurrentUser)
 	r.PUT("/auth/me/preferences", handler.UpdateMyPreferences)
 	r.POST("/auth/change-password", handler.ChangePassword)
+	// Avatar routes are identity-scoped like /auth/me and deliberately
+	// tenant-independent: the bytes live under the user's home workspace,
+	// but a session switched into a peer tenant must still see and replace
+	// its own avatar (the /files proxy would 403 the home-tenant ref).
+	// Plain JWT routes — not API-key gates — matching /auth/me/preferences.
+	r.POST("/auth/me/avatar", avatars.Upload)
+	r.GET("/auth/me/avatar", avatars.Download)
+	r.DELETE("/auth/me/avatar", avatars.Delete)
 }
 
 // RegisterSystemRoutes registers system information routes

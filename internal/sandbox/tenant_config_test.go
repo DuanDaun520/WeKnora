@@ -143,6 +143,73 @@ func TestResolveEffectiveConfigRejectsIncompleteE2B(t *testing.T) {
 	require.Contains(t, err.Error(), "api_key")
 }
 
+// completeOpenSandboxTenantConfig is the minimum a named OpenSandbox config
+// must carry — api_url, api_key and template_id are all required.
+func completeOpenSandboxTenantConfig() *types.TenantSandboxConfig {
+	return &types.TenantSandboxConfig{
+		SandboxType: "opensandbox",
+		OpenSandbox: &types.OpenSandboxSandboxConfig{
+			APIURL:     "https://203.0.113.30/v1",
+			APIKey:     "tenant-key",
+			TemplateID: "tenant-image:latest",
+		},
+	}
+}
+
+func TestResolveEffectiveConfigRejectsIncompleteOpenSandbox(t *testing.T) {
+	_, err := ResolveEffectiveConfig(&types.TenantSandboxConfig{
+		SandboxType: "opensandbox",
+		OpenSandbox: &types.OpenSandboxSandboxConfig{TemplateID: "img:latest"},
+	}, globalTestConfig())
+
+	require.ErrorIs(t, err, ErrSandboxConfigIncomplete)
+	require.Contains(t, err.Error(), "api_url")
+}
+
+// Like the other named backends, OpenSandbox tuning falls back to the built-in
+// constants rather than the deployment's process-level values.
+func TestResolveEffectiveConfigAppliesOpenSandboxTuning(t *testing.T) {
+	global := globalTestConfig()
+	global.OpenSandboxSandboxTTL = 10 * time.Minute
+	global.OpenSandboxHTTPTimeout = 90 * time.Second
+
+	got, err := ResolveEffectiveConfig(completeOpenSandboxTenantConfig(), global)
+	require.NoError(t, err)
+	require.Equal(t, DefaultOpenSandboxSandboxTTL, got.OpenSandboxSandboxTTL)
+	require.Equal(t, DefaultOpenSandboxHTTPTimeout, got.OpenSandboxHTTPTimeout)
+	require.Equal(t, "https://203.0.113.30/v1", got.OpenSandboxAPIURL)
+	require.Equal(t, "tenant-key", got.OpenSandboxAPIKey)
+	require.Equal(t, "tenant-image:latest", got.OpenSandboxTemplate)
+
+	tenantCfg := completeOpenSandboxTenantConfig()
+	tenantCfg.OpenSandbox.HTTPTimeoutSec = 15
+	tenantCfg.OpenSandbox.OpenSandboxSandboxTTLSeconds = 600
+	got, err = ResolveEffectiveConfig(tenantCfg, global)
+	require.NoError(t, err)
+	require.Equal(t, 15*time.Second, got.OpenSandboxHTTPTimeout)
+	require.Equal(t, 600*time.Second, got.OpenSandboxSandboxTTL)
+}
+
+func TestResolveEffectiveConfigRejectsUnsafeOpenSandboxURL(t *testing.T) {
+	tenantCfg := completeOpenSandboxTenantConfig()
+	tenantCfg.OpenSandbox.APIURL = "http://169.254.169.254/v1"
+
+	_, err := ResolveEffectiveConfig(tenantCfg, globalTestConfig())
+
+	require.Error(t, err, "cloud-metadata addresses must stay blocked")
+}
+
+func TestResolveEffectiveConfigAllowsPrivateOpenSandboxURLOnOptIn(t *testing.T) {
+	tenantCfg := completeOpenSandboxTenantConfig()
+	tenantCfg.OpenSandbox.APIURL = "http://10.0.0.5:8080/v1"
+	tenantCfg.AllowPrivateEndpoints = true
+
+	got, err := ResolveEffectiveConfig(tenantCfg, globalTestConfig())
+
+	require.NoError(t, err)
+	require.Equal(t, "http://10.0.0.5:8080/v1", got.OpenSandboxAPIURL)
+}
+
 func TestResolveEffectiveConfigAppliesTimeoutsAndTTL(t *testing.T) {
 	global := globalTestConfig()
 	tenantCfg := completeE2BTenantConfig()
@@ -303,6 +370,9 @@ func TestEffectiveTemplateIDPerProvider(t *testing.T) {
 	require.Equal(t, "cube-tpl", EffectiveTemplateID(&Config{
 		Type: SandboxTypeCube, E2BTemplate: "e2b-tpl", CubeTemplate: "cube-tpl",
 	}))
+	require.Equal(t, "osb-tpl", EffectiveTemplateID(&Config{
+		Type: SandboxTypeOpenSandbox, OpenSandboxTemplate: "osb-tpl", CubeTemplate: "cube-tpl",
+	}))
 	require.Empty(t, EffectiveTemplateID(&Config{Type: SandboxTypeDisabled}))
 	require.Empty(t, EffectiveTemplateID(nil))
 }
@@ -397,6 +467,46 @@ func TestResolveEffectiveConfigUsesSkillSnapshotAsE2BTemplate(t *testing.T) {
 
 		require.NoError(t, err)
 		require.Equal(t, "tpl-base", eff.E2BTemplate)
+	})
+}
+
+func TestResolveEffectiveConfigUsesSkillSnapshotAsOpenSandboxTemplate(t *testing.T) {
+	global := DefaultConfig()
+	base := completeOpenSandboxTenantConfig()
+	fp := SkillImageFingerprint("opensandbox", "tenant-key", "https://203.0.113.30/v1")
+	// A fingerprint computed for another provider must not leak in even with
+	// identical key and URL.
+	cubeFp := SkillImageFingerprint("cube", "tenant-key", "https://203.0.113.30/v1")
+
+	t.Run("usable snapshot overrides the base template", func(t *testing.T) {
+		cfg := *base
+		cfg.SkillImage = &types.SkillImageConfig{SnapshotID: "snap-osb-1", OwnerFingerprint: fp}
+
+		eff, err := ResolveEffectiveConfig(&cfg, global)
+
+		require.NoError(t, err)
+		require.Equal(t, "snap-osb-1", eff.OpenSandboxTemplate)
+	})
+
+	t.Run("fingerprint mismatch falls back to the base template", func(t *testing.T) {
+		cfg := *base
+		cfg.SkillImage = &types.SkillImageConfig{SnapshotID: "snap-osb-1", OwnerFingerprint: cubeFp}
+
+		eff, err := ResolveEffectiveConfig(&cfg, global)
+
+		require.NoError(t, err)
+		require.Equal(t, "tenant-image:latest", eff.OpenSandboxTemplate,
+			"a snapshot fingerprinted for cube must not override opensandbox; the session must still boot")
+	})
+
+	t.Run("empty snapshot keeps the base template", func(t *testing.T) {
+		cfg := *base
+		cfg.SkillImage = &types.SkillImageConfig{OwnerFingerprint: fp}
+
+		eff, err := ResolveEffectiveConfig(&cfg, global)
+
+		require.NoError(t, err)
+		require.Equal(t, "tenant-image:latest", eff.OpenSandboxTemplate)
 	})
 }
 
@@ -616,4 +726,8 @@ func TestSkillImageFingerprintIsStableAndDiscriminating(t *testing.T) {
 	require.Equal(t, a, SkillImageFingerprint("cube", "key-1", "https://a.example.com"))
 	require.NotEqual(t, a, SkillImageFingerprint("cube", "key-2", "https://a.example.com"))
 	require.NotEqual(t, a, SkillImageFingerprint("e2b", "key-1", "https://a.example.com"))
+	require.NotEqual(t, a, SkillImageFingerprint("opensandbox", "key-1", "https://a.example.com"))
+	osb := SkillImageFingerprint("opensandbox", "key-1", "https://a.example.com")
+	require.Equal(t, osb, SkillImageFingerprint("opensandbox", "key-1", "https://a.example.com"))
+	require.NotEqual(t, osb, SkillImageFingerprint("opensandbox", "key-2", "https://a.example.com"))
 }

@@ -80,6 +80,12 @@ func IdentityOf(tenantCfg *types.TenantSandboxConfig) SandboxIdentity {
 			identity.APIURL = docker.Host
 			identity.APIKey = docker.TLSCertPath
 		}
+	case SandboxTypeOpenSandbox:
+		// execd is proxied by the lifecycle server, so the API URL is both
+		// planes at once — same reasoning as Docker's single endpoint.
+		if osc := tenantCfg.OpenSandbox; osc != nil {
+			identity.APIURL, identity.APIKey = osc.APIURL, osc.APIKey
+		}
 	}
 	return identity
 }

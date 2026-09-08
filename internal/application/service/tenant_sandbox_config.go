@@ -106,6 +106,10 @@ func spawnTemplateID(cfg *types.TenantSandboxConfig) string {
 		if cfg.Docker != nil {
 			return strings.TrimSpace(cfg.Docker.Image)
 		}
+	case sandbox.SandboxTypeOpenSandbox:
+		if cfg.OpenSandbox != nil {
+			return strings.TrimSpace(cfg.OpenSandbox.TemplateID)
+		}
 	}
 	return ""
 }
@@ -616,9 +620,19 @@ func (s *TenantSandboxConfigService) runTemplateQueryCore(
 		if strings.TrimSpace(merged.Docker.Image) == "" {
 			merged.Docker.Image = sandbox.DefaultDockerImage
 		}
+	case string(sandbox.SandboxTypeOpenSandbox):
+		// Same stand-in as Docker: the catalog's single entry is the
+		// configured image, and any image URI is spawnable as-is — the
+		// default stands in until the admin picks one.
+		if merged.OpenSandbox == nil {
+			merged.OpenSandbox = &types.OpenSandboxSandboxConfig{}
+		}
+		if strings.TrimSpace(merged.OpenSandbox.TemplateID) == "" {
+			merged.OpenSandbox.TemplateID = sandbox.DefaultOpenSandboxTemplateImage
+		}
 	default:
 		return nil, apperrors.NewBadRequestError(
-			"sandbox template catalog only supports cube, e2b and docker backends")
+			"sandbox template catalog only supports cube, e2b, docker and opensandbox backends")
 	}
 
 	for _, endpoint := range sandboxConfigEndpoints(merged) {
@@ -852,6 +866,10 @@ func setSpawnTemplateID(cfg *types.TenantSandboxConfig, id string) {
 	case sandbox.SandboxTypeE2B:
 		if cfg.E2B != nil {
 			cfg.E2B.TemplateID = id
+		}
+	case sandbox.SandboxTypeOpenSandbox:
+		if cfg.OpenSandbox != nil {
+			cfg.OpenSandbox.TemplateID = id
 		}
 	}
 }
@@ -1418,7 +1436,7 @@ func (s *TenantSandboxConfigService) clientFor(
 		return nil, err
 	}
 	switch effective.Type {
-	case sandbox.SandboxTypeCube, sandbox.SandboxTypeE2B, sandbox.SandboxTypeDocker:
+	case sandbox.SandboxTypeCube, sandbox.SandboxTypeE2B, sandbox.SandboxTypeDocker, sandbox.SandboxTypeOpenSandbox:
 		return s.newClient(effective)
 	default:
 		return nil, nil
@@ -1519,6 +1537,9 @@ func sandboxConfigEndpoints(cfg *types.TenantSandboxConfig) []string {
 	if cfg.E2B != nil && cfg.E2B.APIURL != "" {
 		endpoints = append(endpoints, cfg.E2B.APIURL)
 	}
+	if cfg.OpenSandbox != nil && cfg.OpenSandbox.APIURL != "" {
+		endpoints = append(endpoints, cfg.OpenSandbox.APIURL)
+	}
 	return endpoints
 }
 
@@ -1532,6 +1553,9 @@ func sandboxConfigHasSecrets(cfg *types.TenantSandboxConfig) bool {
 		return true
 	}
 	if cfg.E2B != nil && cfg.E2B.APIKey != "" {
+		return true
+	}
+	if cfg.OpenSandbox != nil && cfg.OpenSandbox.APIKey != "" {
 		return true
 	}
 	for _, value := range cfg.EnvVars {

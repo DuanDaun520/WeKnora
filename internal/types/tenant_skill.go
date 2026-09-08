@@ -160,6 +160,10 @@ type TenantSkillCatalogEntity struct {
 	// Author is the skill's author metadata, parsed from SKILL.md frontmatter
 	// or carried over from the platform skill on materialize. Empty = unknown.
 	Author string `gorm:"type:varchar(255);not null;default:''"`
+	// HelpURL is the optional 介绍与帮助网址 carried over from the platform
+	// skill on materialize/push (000109). The Skills detail dialog renders it
+	// as an external link when set. No SKILL.md counterpart: meta-only.
+	HelpURL string `gorm:"type:varchar(1024);not null;default:''"`
 	// Visible is the space-level visibility switch (000108). false hides the
 	// skill from the Skills/MCP browser, the agent-editor picker and @mention /
 	// runtime of this workspace; management pages pass include_hidden to keep

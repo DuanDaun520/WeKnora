@@ -124,12 +124,16 @@ func (r *fakeMCPRepo) DeleteAssignmentsByServiceID(_ context.Context, serviceID 
 
 func seedService(t *testing.T, repo *fakeMCPRepo, apiKey, token string) string {
 	t.Helper()
+	// URL 必填：service 层更新校验拒绝落库 URL 为空的非 stdio 行（否则运行
+	// 时 MCP 客户端报 "URL is required for SSE transport"），种子行须可连。
+	url := "https://example.com/sse"
 	s := &types.MCPService{
 		ID:            "svc-test",
 		TenantID:      1,
 		Name:          "test",
 		Enabled:       true,
 		TransportType: types.MCPTransportSSE,
+		URL:           &url,
 		AuthConfig: &types.MCPAuthConfig{
 			APIKey: apiKey,
 			Token:  token,

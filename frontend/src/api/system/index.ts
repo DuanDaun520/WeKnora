@@ -1021,6 +1021,15 @@ export interface SandboxE2BConfig {
   e2b_sandbox_ttl_seconds?: number
 }
 
+/** OpenSandbox backend: self-hosted lifecycle server + in-sandbox execd. */
+export interface SandboxOpenSandboxConfig {
+  api_url?: string
+  api_key?: string
+  template_id?: string
+  http_timeout_sec?: number
+  opensandbox_sandbox_ttl_seconds?: number
+}
+
 export interface SandboxSkillImage {
   snapshot_id?: string
   generation?: number
@@ -1040,6 +1049,7 @@ export interface SandboxConfig {
   cube?: SandboxCubeConfig
   e2b?: SandboxE2BConfig
   docker?: SandboxDockerConfig
+  opensandbox?: SandboxOpenSandboxConfig
 }
 
 /** Docker backend: one daemon, one long-lived container per session. */
@@ -1135,7 +1145,7 @@ export interface SandboxInventory {
 }
 
 /** Sandbox backends managed as named workspace configurations. */
-export const NAMED_SANDBOX_BACKEND_TYPES = ['cube', 'e2b', 'docker'] as const
+export const NAMED_SANDBOX_BACKEND_TYPES = ['cube', 'e2b', 'docker', 'opensandbox'] as const
 
 export function isNamedSandboxBackend(type: string): boolean {
   return (NAMED_SANDBOX_BACKEND_TYPES as readonly string[]).includes(type)

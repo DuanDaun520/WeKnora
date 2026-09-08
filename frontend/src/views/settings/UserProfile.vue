@@ -22,6 +22,50 @@
 
     <!-- Content -->
     <div v-else class="settings-group">
+      <!-- 头像：灰色默认可上传裁剪替换；ref 在 authStore，字节经 useMyAvatar 拉成 blob -->
+      <div class="setting-row">
+        <div class="setting-info">
+          <label>{{ $t('userProfile.avatar.label') }}</label>
+          <p class="desc">{{ $t('userProfile.avatar.description') }}</p>
+        </div>
+        <div class="setting-control setting-control--avatar">
+          <UserAvatar :src="avatarUrl" :name="userInfo?.username" size="lg" />
+          <div class="avatar-actions">
+            <t-tooltip v-if="!canUseAvatar" :content="$t('userProfile.avatar.noWorkspace')">
+              <t-button size="small" variant="outline" disabled>
+                {{ hasAvatar ? $t('userProfile.avatar.change') : $t('userProfile.avatar.upload') }}
+              </t-button>
+            </t-tooltip>
+            <t-button
+              v-else
+              size="small"
+              variant="outline"
+              :loading="uploading"
+              @click="pickAvatarFile"
+            >
+              {{ hasAvatar ? $t('userProfile.avatar.change') : $t('userProfile.avatar.upload') }}
+            </t-button>
+            <t-button
+              v-if="hasAvatar"
+              size="small"
+              variant="text"
+              theme="danger"
+              :disabled="uploading"
+              @click="removeAvatar"
+            >
+              {{ $t('userProfile.avatar.remove') }}
+            </t-button>
+          </div>
+          <input
+            ref="avatarInputRef"
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            class="avatar-input"
+            @change="onAvatarFilePicked"
+          >
+        </div>
+      </div>
+
       <!-- 工号 -->
       <div class="setting-row">
         <div class="setting-info">
@@ -166,6 +210,13 @@
         </div>
       </div>
     </div>
+
+    <!-- 裁剪弹窗：确认后才真正上传 -->
+    <AvatarCropDialog
+      v-model:visible="cropDialogVisible"
+      :file="pendingAvatarFile"
+      @confirm="onAvatarCropped"
+    />
   </div>
 </template>
 
@@ -178,8 +229,13 @@ import {
   getCurrentUser,
   changePassword,
   logout as logoutApi,
+  uploadMyAvatar,
+  deleteMyAvatar,
   type UserInfo,
 } from '@/api/auth'
+import UserAvatar from '@/components/UserAvatar.vue'
+import AvatarCropDialog from '@/components/AvatarCropDialog.vue'
+import { useMyAvatar } from '@/composables/useMyAvatar'
 import { useAuthStore } from '@/stores/auth'
 import { useI18n } from 'vue-i18n'
 import { newPasswordRules } from '@/utils/passwordPolicy'
@@ -187,10 +243,93 @@ import { newPasswordRules } from '@/utils/passwordPolicy'
 const { t, locale } = useI18n()
 const router = useRouter()
 const authStore = useAuthStore()
+const { avatarUrl } = useMyAvatar()
 
 const userInfo = ref<UserInfo | null>(null)
 const loading = ref(true)
 const error = ref('')
+
+// --- 头像 ---
+const avatarInputRef = ref<HTMLInputElement | null>(null)
+const cropDialogVisible = ref(false)
+const pendingAvatarFile = ref<File | null>(null)
+const uploading = ref(false)
+
+const MAX_AVATAR_UPLOAD_BYTES = 2 * 1024 * 1024
+const AVATAR_MIME_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+
+const hasAvatar = computed(() => !!authStore.user?.avatar)
+// 无空间的 tenantless 用户无法存头像（资源目录要求归属租户），给禁用态
+// 与提示而不是让后端报错。
+const canUseAvatar = computed(
+  () => !!authStore.user?.tenant_id || authStore.memberships.length > 0,
+)
+
+function pickAvatarFile(): void {
+  avatarInputRef.value?.click()
+}
+
+function onAvatarFilePicked(e: Event): void {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = '' // 复位以允许再次选择同一文件
+  if (!file) return
+  if (!AVATAR_MIME_TYPES.includes(file.type)) {
+    MessagePlugin.error(t('userProfile.avatar.invalidType'))
+    return
+  }
+  if (file.size > MAX_AVATAR_UPLOAD_BYTES) {
+    MessagePlugin.error(t('userProfile.avatar.tooLarge'))
+    return
+  }
+  pendingAvatarFile.value = file
+  cropDialogVisible.value = true
+}
+
+// 后端的 ErrAvatarNoWorkspace 是固定英文串；映射成可读的本地提示。
+function avatarErrorMessage(message?: string): string {
+  if (message && message.includes('workspace')) {
+    return t('userProfile.avatar.noWorkspace')
+  }
+  return message || t('userProfile.avatar.uploadFailed')
+}
+
+async function onAvatarCropped(file: File): Promise<void> {
+  if (uploading.value) return
+  uploading.value = true
+  try {
+    const resp = await uploadMyAvatar(file)
+    if (!resp.success || !resp.data?.user) {
+      MessagePlugin.error(avatarErrorMessage(resp.message))
+      return
+    }
+    userInfo.value = resp.data.user
+    // user.avatar 变化 → useMyAvatar 自动重拉字节，侧边栏菜单同步更新。
+    await authStore.refreshFromAuthMe()
+    MessagePlugin.success(t('userProfile.avatar.updated'))
+  } catch (err: any) {
+    MessagePlugin.error(avatarErrorMessage(err?.message))
+  } finally {
+    uploading.value = false
+  }
+}
+
+async function removeAvatar(): Promise<void> {
+  if (uploading.value) return
+  uploading.value = true
+  try {
+    const resp = await deleteMyAvatar()
+    if (!resp.success) {
+      MessagePlugin.error(resp.message || t('userProfile.avatar.removeFailed'))
+      return
+    }
+    await authStore.refreshFromAuthMe()
+    if (userInfo.value) userInfo.value = { ...userInfo.value, avatar: '' }
+    MessagePlugin.success(t('userProfile.avatar.removed'))
+  } finally {
+    uploading.value = false
+  }
+}
 
 const passwordPopupVisible = ref(false)
 const passwordFormRef = ref<FormInstanceFunctions | null>(null)
@@ -419,6 +558,21 @@ onMounted(loadInfo)
   .edit-btn {
     flex-shrink: 0;
   }
+}
+
+.setting-control--avatar {
+  align-items: center;
+
+  .avatar-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+  }
+}
+
+.avatar-input {
+  display: none;
 }
 
 .password-mask {

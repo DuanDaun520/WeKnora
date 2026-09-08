@@ -77,6 +77,12 @@ func isTenantOptionalAPI(path, method string) bool {
 		return true
 	case path == "/api/v1/auth/change-password" && method == http.MethodPost:
 		return true
+	// 头像与 /auth/me 同为身份级：tenantless 引导管理员也要能读到/清掉
+	// 自己的头像（无头像时 GET 是 404 → 前端回落灰色默认）。上传在仍无
+	// 任何空间时会由服务层报 ErrAvatarNoWorkspace（资源目录要求归属租户）。
+	case path == "/api/v1/auth/me/avatar" && (method == http.MethodPost ||
+		method == http.MethodGet || method == http.MethodDelete):
+		return true
 	case path == "/api/v1/auth/validate" && method == http.MethodGet:
 		return true
 	case path == "/api/v1/auth/switch-tenant" && method == http.MethodPost:

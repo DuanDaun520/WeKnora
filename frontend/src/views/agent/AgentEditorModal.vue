@@ -1260,7 +1260,7 @@
                   </div>
                 </div>
 
-                <!-- 技能：脚本跑在所选沙箱里，可用列表也来自这份配置 -->
+                <!-- 技能：脚本跑在空间配置的沙箱里；编辑器只报沙箱状态，不再选沙箱 -->
                 <div v-show="currentSection === 'skills' && isAgentMode" class="section">
                   <div class="section-header">
                     <h2>{{ $t('agent.editor.skillsConfig') }}</h2>
@@ -1268,71 +1268,42 @@
                   </div>
 
                   <div class="settings-group">
+                    <!-- 000110：沙箱由系统管理员在控制台「沙箱连接」分配到空间，智能体
+                         编辑器不再让用户挑沙箱（空间有多份时自动取第一份）。这里只报
+                         「空间是否配置了沙箱」，不展示名称等细节；细节去空间设置看。 -->
                     <div class="setting-row">
                       <div class="setting-info">
                         <label>{{ $t('agent.editor.sandboxBackend') }}</label>
-                        <p class="desc">{{ $t('agent.editor.sandboxBackendHint') }}</p>
+                        <p class="desc">{{ $t('agent.editor.sandboxManagedHint') }}</p>
                       </div>
                       <div class="setting-control sandbox-select-control">
-                        <t-select
-                          v-model="formData.config.sandbox_config_id"
-                          :placeholder="$t('agent.editor.sandboxBackendDefault')"
-                          class="sandbox-config-select"
-                          filterable
-                          :popup-props="{ overlayClassName: 'sandbox-config-select-popup' }"
-                          @change="onSandboxSelected"
+                        <span v-if="workspaceHasSandbox" class="sandbox-status-chip sandbox-status-chip--ok">
+                          <t-icon name="check-circle-filled" size="14px" />
+                          {{ $t('agent.editor.sandboxConfigured') }}
+                        </span>
+                        <span v-else class="sandbox-status-chip sandbox-status-chip--none">
+                          <t-icon name="info-circle-filled" size="14px" />
+                          {{ $t('agent.editor.sandboxNotConfigured') }}
+                        </span>
+                        <!-- 「管理技能」指本空间「沙箱/Skills目录」（000107 起本空间
+                             admin/owner 可安装），本空间管理员以上可见。 -->
+                        <a
+                          v-if="workspaceHasSandbox && canInstallSkills"
+                          href="javascript:void(0)"
+                          class="go-settings-link"
+                          @click.prevent="openSkillSettings"
                         >
-                          <t-option value="" :label="$t('agent.editor.sandboxBackendDefault')" />
-                          <t-option
-                            v-for="cfg in sandboxConfigOptions"
-                            :key="cfg.id"
-                            :value="cfg.id"
-                            :label="cfg.name"
-                          >
-                            <div class="sandbox-option">
-                              <div class="sandbox-option__row">
-                                <span class="sandbox-option__name">{{ cfg.name }}</span>
-                                <span v-if="cfg.sandbox_type" class="sandbox-option__type">{{ backendLabel(cfg.sandbox_type) }}</span>
-                              </div>
-                            </div>
-                          </t-option>
-                        </t-select>
-                        <!-- 000100/000107：「管理沙箱」指平台控制台的沙箱连接，仍仅系统管
-                             理员可见；「管理技能」指本空间技能目录（000107 起本空间 admin/
-                             owner 可安装），本空间管理员以上可见。普通成员只看到统一配置提示。 -->
-                        <div
-                          v-if="canManageSandboxConsole || (hasSandboxSelected && canInstallSkills)"
-                          class="sandbox-select-links"
-                        >
-                          <a
-                            v-if="canManageSandboxConsole"
-                            href="javascript:void(0)"
-                            class="go-settings-link"
-                            @click.prevent="uiStore.openSettings('sandbox')"
-                          >
-                            {{ $t('agent.editor.goSandboxSettings') }}
-                          </a>
-                          <template v-if="hasSandboxSelected && canInstallSkills">
-                            <span v-if="canManageSandboxConsole" class="sandbox-select-links__sep" aria-hidden="true">·</span>
-                            <a
-                              href="javascript:void(0)"
-                              class="go-settings-link"
-                              @click.prevent="openSkillSettings"
-                            >
-                              {{ $t('agent.editor.goSkillSettings') }}
-                            </a>
-                          </template>
-                        </div>
-                        <p v-else class="desc">{{ $t('agent.editor.sandboxManagedHint') }}</p>
-                        <p v-if="sandboxConfigOptions.length === 0" class="desc empty-hint">
-                          {{ $t('agent.editor.sandboxNoConfigs') }}
-                        </p>
+                          {{ $t('agent.editor.goSkillSettings') }}
+                        </a>
                       </div>
                     </div>
 
                     <div class="setting-row">
                       <div class="setting-info">
-                        <label>{{ $t('agent.editor.skillsSelection') }}</label>
+                        <label>
+                          {{ $t('agent.editor.skillsSelection') }}
+                          <span class="skills-count-chip">{{ $t('agent.editor.skillsCount', { count: catalogSkillRows.length }) }}</span>
+                        </label>
                         <p class="desc">{{ skillsSelectionHint }}</p>
                       </div>
                       <div class="setting-control sandbox-select-control">
@@ -1341,8 +1312,8 @@
                           <t-radio-button value="selected" :disabled="!canEnableSkills">{{ $t('agent.editor.skillsSelected') }}</t-radio-button>
                           <t-radio-button value="none">{{ $t('agent.editor.skillsNone') }}</t-radio-button>
                         </t-radio-group>
-                        <p v-if="!hasSandboxSelected && sandboxConfigOptions.length > 1" class="desc empty-hint">
-                          {{ $t('agent.editor.skillsNeedSandbox') }}
+                        <p v-if="!workspaceHasSandbox" class="desc empty-hint">
+                          {{ $t('agent.editor.sandboxNoConfigs') }}
                         </p>
                         <p v-else-if="hasSandboxSelected && skillCatalog.length === 0" class="desc empty-hint">
                           <span>{{ $t('agent.editor.noSkillsAvailable') }}</span>
@@ -2055,16 +2026,19 @@ const mcpOptions = computed<McpSelectOption[]>(() => {
   for (const id of selectedIds) {
     const mcp = serviceById.get(id);
     if (mcp && !mcp.enabled) {
+      // 已被停用的服务仍要能从本智能体移除：不能给选项置 disabled —— TDesign
+      // 多选里 disabled 选项的已选 tag 会被锁死（× 不可点），引用就成了删
+      // 不掉的僵尸项。不置 disabled 后它仍出现在下拉里，但 label 已注明状态。
       options.push({
         label: `${mcp.name} (${t('mcpSettings.disabled')})`,
         value: mcp.id,
-        disabled: true,
       });
     } else if (!mcp) {
+      // 已删除的服务（管理后台删了目录行）：占位显示并可移除。附短 ID，
+      // 多个僵尸引用时能区分是哪条。
       options.push({
-        label: t('agentEditor.mcp.unavailableService'),
+        label: `${t('agentEditor.mcp.unavailableService')} · ${id.slice(0, 8)}`,
         value: id,
-        disabled: true,
       });
     }
   }
@@ -2081,16 +2055,15 @@ const catalogReady = ref(false);
 const installingCatalogId = ref('');
 const skillsSelectionMode = ref<'all' | 'selected' | 'none'>('none');
 const hasSandboxSelected = computed(() => !!formData.value.config.sandbox_config_id);
-const canEnableSkills = computed(() =>
-  hasSandboxSelected.value || namedSandboxConfigs().length === 1,
-);
+// 000110：编辑器只报「空间是否配置了沙箱」（不展示名称）。canEnableSkills 随
+// autoBindWorkspaceSandbox 收敛为 hasSandboxSelected —— 空间有 ≥1 份沙箱时总会
+// 自动绑定一份，"仅一份可用"的窗口期不再存在。
+const workspaceHasSandbox = computed(() => namedSandboxConfigs().length > 0);
+const canEnableSkills = computed(() => hasSandboxSelected.value);
 // 000107：技能安装后端放宽到 AdminOrSystemAdmin —— 本空间 admin/owner 或平
 // 台系统管理员可从编辑器直装（hasRole 对系统管理员按 admin 旁路；hasRole 只
 // 是 UI 对齐，后端守卫才是权威）。
 const canInstallSkills = computed(() => authStore.hasRole('admin'));
-// 「管理沙箱」入口指向平台控制台的沙箱连接（SystemAdmin 控制台），不是空间
-// 技能目录 —— 即使 000107 放开了技能安装，这个入口仍只对平台系统管理员可见。
-const canManageSandboxConsole = computed(() => authStore.isSystemAdmin);
 
 type CatalogSkillRow = SkillCatalogItem & {
   installed: boolean
@@ -2184,42 +2157,14 @@ function namedSandboxConfigs(): SandboxConfigRecord[] {
   return chatResources.sandboxConfigs.filter((cfg) => isNamedSandboxBackend(cfg.sandbox_type))
 }
 
-function autoBindSoleSandbox() {
-  if (skillsSelectionMode.value === 'none') return
+// 000110：编辑器不再提供沙箱下拉。空间还没绑定沙箱时自动取第一份具名沙箱
+// （仅一份或已保存过的不受影响）；已保存的 sandbox_config_id 永远沿用。
+function autoBindWorkspaceSandbox() {
   if (formData.value.config.sandbox_config_id) return
   const configs = namedSandboxConfigs()
-  if (configs.length === 1) {
+  if (configs.length > 0) {
     formData.value.config.sandbox_config_id = configs[0].id
   }
-}
-
-// 000100：用户选定运行沙箱后，技能选择默认进「指定」并勾选该沙箱全部
-// 可用技能，免去逐个点选。只由下拉的 @change 触发——编辑态加载已保存
-// 的 sandbox_config_id / autoBindSoleSandbox 的程序化赋值不会改写用户
-// 已保存的「不使用」意图；目录数据异步到位时经 pending 标记补跑。
-let pendingDefaultSkillCheck = false
-
-function applyDefaultSkillSelection() {
-  if (!pendingDefaultSkillCheck || !hasSandboxSelected.value) return
-  if (!catalogReady.value || skillCatalog.value.length === 0) return
-  pendingDefaultSkillCheck = false
-  if (skillsSelectionMode.value === 'none') {
-    skillsSelectionMode.value = 'selected'
-  }
-  if (skillsSelectionMode.value !== 'selected') return
-  const names = catalogSkillRows.value
-    .filter((skill) => skill.selectable)
-    .map((skill) => skill.name)
-  const current = formData.value.config.selected_skills || []
-  formData.value.config.selected_skills = Array.from(new Set([...current, ...names]))
-}
-
-function onSandboxSelected() {
-  if (!hasSandboxSelected.value) return
-  pendingDefaultSkillCheck = true
-  // 先刷新该沙箱的安装状态，再按最新目录勾选；期间目录变化由下方
-  // watch(catalogSkillRows) 兜底（注册在 formData 之后，避免 TDZ）。
-  void syncInstalledSkills(true).finally(() => applyDefaultSkillSelection())
 }
 
 function openSkillSettings() {
@@ -2289,7 +2234,7 @@ function pruneSelectedSkills() {
 }
 
 async function syncInstalledSkills(force = false) {
-  autoBindSoleSandbox()
+  autoBindWorkspaceSandbox()
   const configId = formData.value.config.sandbox_config_id || ''
   await editorResources.ensureSkills(configId, force)
   try {
@@ -2321,19 +2266,8 @@ async function installCatalogToCurrent(skill: CatalogSkillRow) {
     installingCatalogId.value = ''
   }
 }
-// 空间内的具名沙箱后端配置。始终包含当前已选中的那份，即使它已被删除——
-// 否则下拉会静默显示为“不启用沙箱”，看不出该智能体其实指着一份不存在的配置。
-const sandboxConfigOptions = computed(() => {
-  const configs = chatResources.sandboxConfigs.filter((cfg) => isNamedSandboxBackend(cfg.sandbox_type));
-  const selected = formData.value.config.sandbox_config_id;
-  if (!selected || configs.some((cfg) => cfg.id === selected)) return configs;
-  return [
-    ...configs,
-    { id: selected, name: t('agent.editor.sandboxBackendMissing'), sandbox_type: '' } as SandboxConfigRecord,
-  ];
-});
-const backendLabel = (type: string) =>
-  type ? t(`settings.sandbox.backends.${type}`) : t('common.error');
+// 000110：沙箱下拉已移除（编辑器只报「空间是否配置了沙箱」状态）。具名沙箱
+// 配置见 namedSandboxConfigs()，仅用于状态判定与 autoBindWorkspaceSandbox。
 
 // 存储引擎可用状态（用于图片存储 provider 选择）
 const storageEngineStatus = ref<StorageEngineStatusItem[]>([]);
@@ -3540,10 +3474,11 @@ watch(() => props.visible, async (val) => {
         }
       }
       formData.value = newFormData;
-      // 新建智能体：知识库默认 "全部"，MCP / Skills 仍默认 "不使用"。
+      // 新建智能体：知识库默认 "全部"，MCP 默认 "不使用"；Skills 默认 "指定"
+      // （000110：沙箱由空间配置隐式提供，技能列表开箱即可勾选）。
       kbSelectionMode.value = 'all';
       mcpSelectionMode.value = 'none';
-      skillsSelectionMode.value = 'none';
+      skillsSelectionMode.value = 'selected';
 
       // 000100：默认「快速问答」+ 名称/描述留空，不再按 agent_type 预填
       // （用户手动切到智能推理后调整类型时，onAgentTypeChange 仍会刷新
@@ -3595,15 +3530,14 @@ const initMcpSelectionMode = () => {
 // 初始化 Skills 选择模式
 const initSkillsSelectionMode = () => {
   if (formData.value.config.skills_selection_mode) {
-    // 如果有保存的模式，直接使用
+    // 如果有保存的模式，直接使用（含显式保存过的「禁用」）
     skillsSelectionMode.value = formData.value.config.skills_selection_mode;
-  } else if (formData.value.config.selected_skills?.length > 0) {
-    // 有指定 Skills
-    skillsSelectionMode.value = 'selected';
   } else {
-    skillsSelectionMode.value = 'none';
+    // 000110：未保存过模式时默认「指定」（此前默认「禁用」）；已勾选过技能的
+    // 旧智能体本来就落在 selected 分支。
+    skillsSelectionMode.value = 'selected';
   }
-  autoBindSoleSandbox();
+  autoBindWorkspaceSandbox();
 };
 
 // 内置智能体：填入系统默认值
@@ -3684,8 +3618,7 @@ function stopCatalogPoll() {
 watch(
   [() => props.visible, catalogSkillRows],
   () => {
-    // 000100：目录异步到位时补跑「选沙箱→勾全部」的默认勾选。
-    applyDefaultSkillSelection()
+    // 安装/卸载进行中时轮询刷新目录状态，让就绪态自动浮出。
     const busy = catalogSkillRows.value.some((skill) =>
       skill.installStatus === 'installing' || skill.installStatus === 'removing',
     )
@@ -3710,9 +3643,9 @@ watch(skillsSelectionMode, (mode) => {
   } else if (mode === 'all') {
     // 全部 Skills，清空指定列表
     formData.value.config.selected_skills = [];
-    autoBindSoleSandbox()
+    autoBindWorkspaceSandbox()
   } else {
-    autoBindSoleSandbox()
+    autoBindWorkspaceSandbox()
   }
   // selected 模式保持 selected_skills 不变
 });
@@ -5523,56 +5456,45 @@ const handleSave = async () => {
   }
 }
 
-.sandbox-select-links {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-.sandbox-select-links__sep {
-  color: var(--td-text-color-placeholder);
-  font-size: 12px;
-}
-
 .sandbox-select-control {
   flex-direction: column;
   align-items: flex-end;
 }
 
-.sandbox-config-select {
-  width: 280px;
-}
-
-.sandbox-option {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  min-width: 0;
-}
-
-.sandbox-option__row {
-  display: flex;
+// 000110 沙箱状态 chip：编辑器只报「空间是否配置了沙箱」，不展示名称。
+.sandbox-status-chip {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-}
-
-.sandbox-option__name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sandbox-option__type {
-  flex-shrink: 0;
-  color: var(--td-text-color-placeholder);
+  gap: 5px;
+  padding: 2px 10px;
+  border-radius: 12px;
   font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+
+  &--ok {
+    color: var(--td-success-color, var(--td-brand-color));
+    background: color-mix(in srgb, var(--td-success-color, var(--td-brand-color)) 10%, transparent);
+  }
+
+  &--none {
+    color: var(--td-text-color-secondary);
+    background: var(--td-bg-color-secondarycontainer);
+  }
+}
+
+// 技能列表标题旁的「已配置 N 个技能」计数 pill
+.skills-count-chip {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 8px;
+  border-radius: 9px;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 18px;
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondarycontainer);
+  vertical-align: 1px;
 }
 
 // 名称输入框带头像预览
@@ -6765,13 +6687,6 @@ const handleSave = async () => {
     line-height: 1.4;
     padding: 8px 12px;
     white-space: normal;
-  }
-}
-
-.sandbox-config-select-popup {
-  .t-select-option {
-    height: auto;
-    padding: 6px 10px;
   }
 }
 

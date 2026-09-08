@@ -117,6 +117,16 @@ func ResolveEffectiveConfig(
 		overrideSeconds(&effective.DockerHTTPTimeout, docker.HTTPTimeoutSec)
 	}
 
+	if osc := tenantCfg.OpenSandbox; osc != nil {
+		if err := overrideURL(&effective.OpenSandboxAPIURL, osc.APIURL, effective.AllowPrivateEndpoints); err != nil {
+			return nil, err
+		}
+		overrideString(&effective.OpenSandboxAPIKey, osc.APIKey)
+		overrideString(&effective.OpenSandboxTemplate, osc.TemplateID)
+		overrideSeconds(&effective.OpenSandboxHTTPTimeout, osc.HTTPTimeoutSec)
+		overrideSeconds(&effective.OpenSandboxSandboxTTL, osc.OpenSandboxSandboxTTLSeconds)
+	}
+
 	switch effective.Type {
 	case SandboxTypeCube:
 		applyCubeRuntimeDefaults(&effective)
@@ -124,6 +134,8 @@ func ResolveEffectiveConfig(
 		applyE2BRuntimeDefaults(&effective)
 	case SandboxTypeDocker:
 		applyDockerRuntimeDefaults(&effective)
+	case SandboxTypeOpenSandbox:
+		applyOpenSandboxRuntimeDefaults(&effective)
 	}
 	// A skill snapshot is a template ID (Cube/E2B) or an image tag (Docker),
 	// so overriding that field here is the entire session-side change.
@@ -149,6 +161,12 @@ func ResolveEffectiveConfig(
 		// reach the fingerprint (see dockerLocalDaemonIdentity).
 		if snapshot := DockerSkillImageOverride(tenantCfg); snapshot != "" {
 			effective.DockerImage = snapshot
+		}
+	case SandboxTypeOpenSandbox:
+		if snapshot := skillImageTemplateOverride(
+			tenantCfg.SkillImage, "opensandbox", effective.OpenSandboxAPIKey, effective.OpenSandboxAPIURL,
+		); snapshot != "" {
+			effective.OpenSandboxTemplate = snapshot
 		}
 	}
 	// Deliberately after the runtime defaults: TTLs and HTTP timeouts have
@@ -212,6 +230,12 @@ func clearProviderFields(cfg *Config) {
 	cfg.E2BTemplate = ""
 	cfg.E2BSandboxTTL = 0
 	cfg.E2BHTTPTimeout = 0
+
+	cfg.OpenSandboxAPIURL = ""
+	cfg.OpenSandboxAPIKey = ""
+	cfg.OpenSandboxTemplate = ""
+	cfg.OpenSandboxSandboxTTL = 0
+	cfg.OpenSandboxHTTPTimeout = 0
 }
 
 // ErrUnsupportedSandboxType marks a sandbox type string we cannot honour. It is
@@ -230,6 +254,8 @@ func ParseSandboxType(raw string) (SandboxType, error) {
 		return SandboxTypeE2B, nil
 	case SandboxTypeDocker:
 		return SandboxTypeDocker, nil
+	case SandboxTypeOpenSandbox:
+		return SandboxTypeOpenSandbox, nil
 	case SandboxTypeDisabled:
 		return SandboxTypeDisabled, nil
 	default:
@@ -251,6 +277,9 @@ func EffectiveTemplateID(cfg *Config) string {
 		// The image is what a template ID is for the MicroVM backends: the
 		// pre-baked filesystem a sandbox starts from.
 		return cfg.DockerImage
+	case SandboxTypeOpenSandbox:
+		// An image URI or a snapshot ID; both spawn as-is.
+		return cfg.OpenSandboxTemplate
 	default:
 		return ""
 	}

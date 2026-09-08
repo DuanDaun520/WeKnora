@@ -489,6 +489,7 @@ func (r *tenantSkillRepository) UpdateCatalog(ctx context.Context, e *types.Tena
 			"instructions":  e.Instructions,
 			"category":      e.Category,
 			"author":        e.Author,
+			"help_url":      e.HelpURL,
 			"visible":       e.Visible,
 			"bundle_ref":    e.BundleRef,
 			"bundle_sha256": e.BundleSHA256,

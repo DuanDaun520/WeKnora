@@ -53,3 +53,19 @@ func applyE2BRuntimeDefaults(cfg *Config) {
 		cfg.E2BHTTPTimeout = DefaultE2BHTTPTimeout
 	}
 }
+
+// The image is deliberately not defaulted here for the same reason as Docker:
+// OpenSandboxTemplate is a template reference (image URI or snapshot ID), and
+// a config that fails to name one must surface as incomplete rather than
+// silently spawn from the release's default image.
+func applyOpenSandboxRuntimeDefaults(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	if cfg.OpenSandboxSandboxTTL <= 0 {
+		cfg.OpenSandboxSandboxTTL = DefaultOpenSandboxSandboxTTL
+	}
+	if cfg.OpenSandboxHTTPTimeout <= 0 {
+		cfg.OpenSandboxHTTPTimeout = DefaultOpenSandboxHTTPTimeout
+	}
+}

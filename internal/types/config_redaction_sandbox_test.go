@@ -11,6 +11,7 @@ func TestSandboxConfigForResponseMasksSecrets(t *testing.T) {
 		SandboxType: "e2b",
 		E2B:         &E2BSandboxConfig{APIKey: "e2b-secret", APIURL: "https://api.e2b.dev"},
 		Cube:        &CubeSandboxConfig{APIKey: "cube-secret", APIURL: "http://cube"},
+		OpenSandbox: &OpenSandboxSandboxConfig{APIKey: "osb-secret", APIURL: "http://10.0.0.5:8080/v1"},
 		EnvVars:     map[string]string{"HF_TOKEN": "hf-secret"},
 	}
 
@@ -18,12 +19,14 @@ func TestSandboxConfigForResponseMasksSecrets(t *testing.T) {
 
 	require.Equal(t, RedactedSecretPlaceholder, out.E2B.APIKey)
 	require.Equal(t, RedactedSecretPlaceholder, out.Cube.APIKey)
+	require.Equal(t, RedactedSecretPlaceholder, out.OpenSandbox.APIKey)
 	require.Equal(t, RedactedSecretPlaceholder, out.EnvVars["HF_TOKEN"])
 	// Non-secret fields stay visible.
 	require.Equal(t, "https://api.e2b.dev", out.E2B.APIURL)
 	require.Equal(t, "e2b", out.SandboxType)
 	// Original must be untouched.
 	require.Equal(t, "e2b-secret", cfg.E2B.APIKey)
+	require.Equal(t, "osb-secret", cfg.OpenSandbox.APIKey)
 	require.Equal(t, "hf-secret", cfg.EnvVars["HF_TOKEN"])
 }
 
@@ -49,20 +52,23 @@ func TestSandboxConfigForResponseNil(t *testing.T) {
 
 func TestMergeSandboxConfigForUpdatePreservesRedactedSecrets(t *testing.T) {
 	existing := &TenantSandboxConfig{
-		E2B:     &E2BSandboxConfig{APIKey: "old-e2b"},
-		Cube:    &CubeSandboxConfig{APIKey: "old-cube"},
-		EnvVars: map[string]string{"HF_TOKEN": "old-hf", "GONE": "old-gone"},
+		E2B:         &E2BSandboxConfig{APIKey: "old-e2b"},
+		Cube:        &CubeSandboxConfig{APIKey: "old-cube"},
+		OpenSandbox: &OpenSandboxSandboxConfig{APIKey: "old-osb"},
+		EnvVars:     map[string]string{"HF_TOKEN": "old-hf", "GONE": "old-gone"},
 	}
 	incoming := &TenantSandboxConfig{
-		E2B:     &E2BSandboxConfig{APIKey: RedactedSecretPlaceholder}, // untouched by user
-		Cube:    &CubeSandboxConfig{APIKey: "new-cube"},               // user typed a new key
-		EnvVars: map[string]string{"HF_TOKEN": RedactedSecretPlaceholder},
+		E2B:         &E2BSandboxConfig{APIKey: RedactedSecretPlaceholder}, // untouched by user
+		Cube:        &CubeSandboxConfig{APIKey: "new-cube"},               // user typed a new key
+		OpenSandbox: &OpenSandboxSandboxConfig{APIKey: RedactedSecretPlaceholder},
+		EnvVars:     map[string]string{"HF_TOKEN": RedactedSecretPlaceholder},
 	}
 
 	out := MergeSandboxConfigForUpdate(incoming, existing)
 
 	require.Equal(t, "old-e2b", out.E2B.APIKey, "placeholder must resolve to the stored secret")
 	require.Equal(t, "new-cube", out.Cube.APIKey, "an explicitly typed secret must win")
+	require.Equal(t, "old-osb", out.OpenSandbox.APIKey, "placeholder must resolve to the stored secret")
 	require.Equal(t, "old-hf", out.EnvVars["HF_TOKEN"])
 	require.NotContains(t, out.EnvVars, "GONE", "env vars removed by the user must not resurrect")
 }

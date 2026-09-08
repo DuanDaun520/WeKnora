@@ -83,6 +83,40 @@ test('skill detail dialog shows the author row when present (000104)', () => {
   assert.match(source, /\$t\('skillsMcp\.author'\)/)
 })
 
+test('skill cards show the author, not the creator (000110)', () => {
+  // 推送场景下创建者恒为"系统"，没有信息量；技能卡片 footer 只显示作者，
+  // 空值不占位。MCP 卡片保留创建者。
+  const skillTab = source.match(/<template v-if="activeTab === 'skills'">([\s\S]*?)<template v-else>/)?.[1]
+  assert.ok(skillTab, 'expected the skills tab block')
+  assert.match(skillTab, /v-if="item\.author" class="creator"\>\{\{ item\.author \}\}/)
+  assert.doesNotMatch(skillTab, /creator_name/)
+})
+
+test('detail dialog: install status rides the title, meta rows move to the tail (000110)', () => {
+  // 安装状态徽标紧跟技能英文名，旁边是复制名称按钮；已安装沙箱/分类/
+  // 创建者/创建时间后置到「更多信息」区（基本信息只剩版本/作者/帮助网址）。
+  assert.match(source, /<template #header>/)
+  assert.match(source, /class="detail-title-name"/)
+  assert.match(source, /:class="isSkillInstalled\(detailSkill\) \? 'ok' : 'off'"/)
+  assert.match(source, /@click="copyDetailName"/)
+  assert.match(source, /navigator\.clipboard\.writeText\(name\)/)
+  assert.match(source, /\$t\('skillsMcp\.otherInfo'\)/)
+  // 尾部元信息区包含已安装沙箱/分类/创建者/创建时间
+  const tail = source.match(/\$t\('skillsMcp\.otherInfo'\)[\s\S]*?<\/div>\s*<\/div>\s*<\/div>\s*<\/t-dialog>/)?.[0]
+  assert.ok(tail, 'expected the trailing meta section')
+  for (const key of ['installedOn', 'category', 'creator', 'createdAt']) {
+    assert.match(tail, new RegExp(`skillsMcp\\.${key}`), `tail section missing ${key}`)
+  }
+})
+
+test('detail dialog renders the help URL as an external link (000109)', () => {
+  assert.match(source, /v-if="detailSkill\.help_url"/)
+  assert.match(source, /:href="detailSkill\.help_url"/)
+  assert.match(source, /target="_blank"/)
+  assert.match(source, /rel="noopener noreferrer"/)
+  assert.match(source, /helpUrlHost/)
+})
+
 test('i18n carries the full skillsMcp block used by the page', () => {
   assert.match(i18n, /skillsMcp: \{/)
   for (const key of [

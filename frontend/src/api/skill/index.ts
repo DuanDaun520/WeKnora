@@ -31,6 +31,9 @@ export interface SkillCatalogItem {
   category?: string;
   /** Author metadata — SKILL.md frontmatter or platform push (empty = unknown). */
   author?: string;
+  /** Optional 介绍与帮助网址 (000109) — platform push only; the detail dialog
+   * renders it as an external link (new tab) when set. */
+  help_url?: string;
   /** Space-level visibility (000108). false = hidden from the Skills/MCP browser,
    * the agent picker and @mention/runtime in this workspace. */
   visible?: boolean;

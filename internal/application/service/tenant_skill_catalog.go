@@ -42,6 +42,9 @@ type SkillCatalogView struct {
 	// CreatorName is enriched by the handler (not persisted on the entity).
 	Category string `json:"category,omitempty"`
 	Author   string `json:"author,omitempty"`
+	// HelpURL is the optional 介绍与帮助网址 (000109): rendered by the Skills
+	// detail dialog as an external link when set.
+	HelpURL string `json:"help_url,omitempty"`
 	// Visible is the space-level switch (000108). false = hidden from the
 	// Skills/MCP browser, the agent picker and @mention/runtime; management
 	// surfaces request include_hidden and read this to badge the row.
@@ -57,8 +60,10 @@ type SkillCatalogView struct {
 // upserts. Variadic so existing callers (platform skill library) stay
 // unchanged; an empty meta registers like before.
 type CatalogMeta struct {
-	Category  string
-	Author    string
+	Category string
+	Author   string
+	// HelpURL (000109) has no SKILL.md counterpart: only meta ever sets it.
+	HelpURL   string
 	CreatedBy string
 }
 
@@ -174,6 +179,7 @@ func catalogView(
 		SourcePlatformSkillID: cat.SourcePlatformSkillID,
 		Category:              cat.Category,
 		Author:                cat.Author,
+		HelpURL:               cat.HelpURL,
 		Visible:               cat.Visible,
 		CreatedBy:             cat.CreatedBy,
 		CreatedAt:             cat.CreatedAt,
@@ -345,13 +351,16 @@ func (s *TenantSkillService) upsertCatalogFromBundle(
 		// Re-registration may re-categorize: explicit meta wins, then the
 		// bundle's own frontmatter; an empty result keeps the current value.
 		// The original creator is never rewritten.
-		category, author := "", ""
+		category, author, helpURL := "", "", ""
 		for _, m := range meta {
 			if m.Category != "" {
 				category = m.Category
 			}
 			if m.Author != "" {
 				author = m.Author
+			}
+			if m.HelpURL != "" {
+				helpURL = m.HelpURL
 			}
 		}
 		if category == "" {
@@ -365,6 +374,13 @@ func (s *TenantSkillService) upsertCatalogFromBundle(
 		}
 		if author != "" {
 			existing.Author = author
+		}
+		// help_url is meta-only (no frontmatter): an empty meta keeps the
+		// current value — clearing it on the platform side requires the
+		// workspace row to be re-created (push with an empty value is a
+		// no-op here, same leniency as category).
+		if helpURL != "" {
+			existing.HelpURL = helpURL
 		}
 		if err := s.skills.UpdateCatalog(ctx, existing); err != nil {
 			// The stored definition still names the old archive, so leave that
@@ -387,7 +403,8 @@ func (s *TenantSkillService) upsertCatalogFromBundle(
 		CreatedAt:    now, UpdatedAt: now,
 	}
 	// SKILL.md frontmatter seeds category/author; explicit meta (register
-	// form or platform-skill materialize) overrides either.
+	// form or platform-skill materialize) overrides either. help_url is
+	// meta-only (000109): no frontmatter value to fall back to.
 	row.Category = bundle.Category
 	row.Author = bundle.Author
 	for _, m := range meta {
@@ -396,6 +413,9 @@ func (s *TenantSkillService) upsertCatalogFromBundle(
 		}
 		if m.Author != "" {
 			row.Author = m.Author
+		}
+		if m.HelpURL != "" {
+			row.HelpURL = m.HelpURL
 		}
 		row.CreatedBy = m.CreatedBy
 	}

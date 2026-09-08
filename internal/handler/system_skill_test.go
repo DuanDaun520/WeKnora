@@ -93,13 +93,14 @@ func (r *systemSkillRows) Update(_ context.Context, e *types.PlatformSkillEntity
 }
 
 func (r *systemSkillRows) UpdateMeta(
-	_ context.Context, id, category, author, zhName, zhDescription string,
+	_ context.Context, id, category, author, zhName, zhDescription, helpURL string,
 ) error {
 	for i, row := range r.rows {
 		if row.ID == id {
 			cp := *row
 			cp.Category, cp.Author = category, author
 			cp.ZhName, cp.ZhDescription = zhName, zhDescription
+			cp.HelpURL = helpURL
 			cp.UpdatedAt = time.Now()
 			r.rows[i] = &cp
 			return nil

@@ -24,16 +24,23 @@ const (
 	SandboxTypeCube SandboxType = "cube"
 	// SandboxTypeE2B uses E2B's hosted MicroVM sandbox service.
 	SandboxTypeE2B SandboxType = "e2b"
+	// SandboxTypeOpenSandbox uses a self-hosted OpenSandbox cluster (Docker or
+	// Kubernetes runtime) for isolation. Like the other named backends it keeps
+	// session-persistent sandboxes: the lifecycle API provisions a container
+	// from an image or snapshot, and the in-sandbox execd daemon carries exec
+	// and filesystem traffic through the lifecycle server's endpoint proxy, so
+	// both planes share one origin.
+	SandboxTypeOpenSandbox SandboxType = "opensandbox"
 	// SandboxTypeDisabled means script execution is disabled
 	SandboxTypeDisabled SandboxType = "disabled"
 )
 
 // IsNamedSandboxBackendType reports whether raw can be stored as a user-facing
-// named sandbox backend. Cube, E2B and Docker are all session-persistent and
-// share the same workspace configuration surface.
+// named sandbox backend. Cube, E2B, OpenSandbox and Docker are all
+// session-persistent and share the same workspace configuration surface.
 func IsNamedSandboxBackendType(raw string) bool {
 	switch SandboxType(raw) {
-	case SandboxTypeCube, SandboxTypeE2B, SandboxTypeDocker:
+	case SandboxTypeCube, SandboxTypeE2B, SandboxTypeOpenSandbox, SandboxTypeDocker:
 		return true
 	default:
 		return false
@@ -93,6 +100,31 @@ const (
 	DefaultE2BSandboxTTL = 5 * time.Minute
 	// DefaultE2BHTTPTimeout bounds a single HTTP call to the E2B API.
 	DefaultE2BHTTPTimeout = 30 * time.Second
+
+	// DefaultOpenSandboxTemplateImage is the image a sandbox is created from
+	// when the config does not name one. Unlike Cube's template the image does
+	// not need a daemon baked in: the OpenSandbox server injects its own execd
+	// into every sandbox (server config runtime.execd_image), so the stock
+	// WeKnora sandbox image — uid 1000 plus /workspace and its input/output
+	// directories — is already a valid target.
+	DefaultOpenSandboxTemplateImage = DefaultDockerImage
+
+	// OpenSandboxExecdPort is the port execd listens on inside an OpenSandbox
+	// sandbox. Every exec and filesystem call goes through it, addressed via
+	// the lifecycle server's endpoint proxy (use_server_proxy) so control and
+	// data planes share one origin.
+	OpenSandboxExecdPort = 44772
+
+	// DefaultOpenSandboxSandboxTTL is the absolute sandbox lifetime requested
+	// at creation. OpenSandbox reaps a sandbox at expiresAt regardless of
+	// activity, so the adapter renews on every Connect to turn it into an
+	// idle timeout. The server enforces a 60s floor and may cap the value
+	// (server config max_sandbox_timeout_seconds).
+	DefaultOpenSandboxSandboxTTL = 30 * time.Minute
+	// DefaultOpenSandboxHTTPTimeout bounds a single HTTP call to the
+	// OpenSandbox lifecycle API and execd (excluding command streams, which
+	// run under their own execution timeout).
+	DefaultOpenSandboxHTTPTimeout = 30 * time.Second
 )
 
 // Common errors
@@ -343,6 +375,28 @@ type Config struct {
 	// E2BHTTPTimeout bounds ordinary E2B HTTP calls, including response bodies.
 	// Command streams use their execution timeout instead.
 	E2BHTTPTimeout time.Duration
+
+	// OpenSandboxAPIURL is the base URL of the OpenSandbox lifecycle server,
+	// including the /v1 version prefix (e.g. "http://127.0.0.1:8080/v1").
+	// Only used when Type == SandboxTypeOpenSandbox.
+	OpenSandboxAPIURL string
+
+	// OpenSandboxAPIKey is sent via the OPEN-SANDBOX-API-KEY header. It also
+	// authenticates execd traffic proxied by the lifecycle server.
+	OpenSandboxAPIKey string
+
+	// OpenSandboxTemplate is the image URI (or snapshot ID) new sandboxes are
+	// created from. It plays the same role as the Cube/E2B template ID; a
+	// snapshot ID produced by the skill-image flow is spawnable as-is.
+	OpenSandboxTemplate string
+
+	// OpenSandboxSandboxTTL is the absolute lifetime requested at creation.
+	// The adapter renews it on Connect; see DefaultOpenSandboxSandboxTTL.
+	OpenSandboxSandboxTTL time.Duration
+
+	// OpenSandboxHTTPTimeout bounds each HTTP call to the lifecycle API and
+	// execd, excluding command streams. Zero uses the default.
+	OpenSandboxHTTPTimeout time.Duration
 }
 
 // DefaultConfig returns a default sandbox configuration.
@@ -352,13 +406,15 @@ type Config struct {
 // incomplete workspace config could silently dial localhost.
 func DefaultConfig() *Config {
 	return &Config{
-		Type:            SandboxTypeDisabled,
-		DefaultTimeout:  DefaultTimeout,
-		DockerImage:     DefaultDockerImage,
-		MaxMemory:       DefaultMemoryLimit,
-		MaxCPU:          DefaultCPULimit,
-		CubeSandboxTTL:  DefaultCubeSandboxTTL,
-		CubeHTTPTimeout: DefaultCubeHTTPTimeout,
+		Type:                   SandboxTypeDisabled,
+		DefaultTimeout:         DefaultTimeout,
+		DockerImage:            DefaultDockerImage,
+		MaxMemory:              DefaultMemoryLimit,
+		MaxCPU:                 DefaultCPULimit,
+		CubeSandboxTTL:         DefaultCubeSandboxTTL,
+		CubeHTTPTimeout:        DefaultCubeHTTPTimeout,
+		OpenSandboxSandboxTTL:  DefaultOpenSandboxSandboxTTL,
+		OpenSandboxHTTPTimeout: DefaultOpenSandboxHTTPTimeout,
 	}
 }
 
@@ -369,7 +425,7 @@ func ValidateConfig(config *Config) error {
 	}
 
 	switch config.Type {
-	case SandboxTypeDocker, SandboxTypeCube, SandboxTypeE2B, SandboxTypeDisabled:
+	case SandboxTypeDocker, SandboxTypeCube, SandboxTypeE2B, SandboxTypeOpenSandbox, SandboxTypeDisabled:
 		// Valid types
 	default:
 		return errors.New("invalid sandbox type")

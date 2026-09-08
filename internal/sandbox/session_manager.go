@@ -153,6 +153,8 @@ func NewSessionBoundManager(deps SessionBoundManagerConfig) (*SessionBoundManage
 		applyE2BRuntimeDefaults(cfg)
 	case SandboxTypeDocker:
 		applyDockerRuntimeDefaults(cfg)
+	case SandboxTypeOpenSandbox:
+		applyOpenSandboxRuntimeDefaults(cfg)
 	}
 
 	// Build the provider-specific neutral create request using the
@@ -1133,6 +1135,26 @@ func buildSessionCreateRequest(provider RemoteProvider, cfg *Config) (RemoteCrea
 			},
 		}, nil
 
+	case SandboxTypeOpenSandbox:
+		ttl := cfg.OpenSandboxSandboxTTL
+		if ttl <= 0 {
+			ttl = DefaultOpenSandboxSandboxTTL
+		}
+		return RemoteCreateRequest{
+			TemplateID: cfg.OpenSandboxTemplate,
+			EnvVars:    envVars,
+			Timeout: RemoteTimeoutPolicy{
+				Mode:  RemoteTimeoutExplicit,
+				Value: ttl,
+				// OpenSandbox has no pause-on-expiry: the server terminates the
+				// sandbox at expiresAt outright. The TTL is absolute, so the
+				// adapter renews it on every Connect — an idle session is
+				// reaped, an active one keeps sliding its expiry forward.
+				Action:     RemoteOnTimeoutKill,
+				AutoResume: false,
+			},
+		}, nil
+
 	default:
 		return RemoteCreateRequest{}, fmt.Errorf(
 			"sandbox: unsupported remote provider %q for session create request",
@@ -1162,6 +1184,11 @@ func effectiveHTTPTimeout(provider RemoteProvider, cfg *Config) time.Duration {
 			return cfg.DockerHTTPTimeout
 		}
 		return DefaultDockerHTTPTimeout
+	case SandboxTypeOpenSandbox:
+		if cfg.OpenSandboxHTTPTimeout > 0 {
+			return cfg.OpenSandboxHTTPTimeout
+		}
+		return DefaultOpenSandboxHTTPTimeout
 	default:
 		return DefaultCubeHTTPTimeout
 	}

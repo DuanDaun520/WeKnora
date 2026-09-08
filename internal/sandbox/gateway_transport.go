@@ -89,6 +89,11 @@ func gatewayEndpointFor(cfg *Config) (gatewayURL, sandboxDomain string) {
 	switch cfg.Type {
 	case SandboxTypeE2B:
 		return cfg.E2BProxyURL, cfg.E2BSandboxDomain
+	case SandboxTypeOpenSandbox:
+		// OpenSandbox proxies execd through the lifecycle server itself
+		// (use_server_proxy endpoints), so control and data planes share one
+		// origin and neither gateway field applies.
+		return "", ""
 	default:
 		return cfg.CubeProxyURL, cfg.CubeSandboxDomain
 	}

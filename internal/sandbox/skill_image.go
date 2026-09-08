@@ -64,6 +64,14 @@ func SkillImageActive(tenantCfg *types.TenantSandboxConfig) bool {
 		) != ""
 	case SandboxTypeDocker:
 		return DockerSkillImageOverride(tenantCfg) != ""
+	case SandboxTypeOpenSandbox:
+		if tenantCfg.OpenSandbox == nil {
+			return false
+		}
+		return skillImageTemplateOverride(
+			tenantCfg.SkillImage, "opensandbox",
+			tenantCfg.OpenSandbox.APIKey, tenantCfg.OpenSandbox.APIURL,
+		) != ""
 	}
 	return false
 }
@@ -86,6 +94,12 @@ func SkillOwnerFingerprint(tenantCfg *types.TenantSandboxConfig) string {
 		}
 	case SandboxTypeDocker:
 		return dockerSkillOwnerFingerprint(tenantCfg.Docker)
+	case SandboxTypeOpenSandbox:
+		if tenantCfg.OpenSandbox != nil {
+			return SkillImageFingerprint(
+				"opensandbox", tenantCfg.OpenSandbox.APIKey, tenantCfg.OpenSandbox.APIURL,
+			)
+		}
 	}
 	return ""
 }

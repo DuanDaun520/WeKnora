@@ -33,6 +33,44 @@ func TestCreateMCPServiceForcesPlatformOwnership(t *testing.T) {
 		"default advanced config is stamped on create")
 }
 
+// 无 URL / 无名称的行连接不到任何地方：运行时 MCP 客户端会以
+// "URL is required for SSE transport" 失败，agent 静默零工具注册。创建
+// 与更新都必须拒绝落库这种行（管理台抽屉的自定义表单曾放行过全空 POST）。
+func TestCreateMCPServiceRejectsMissingNameOrURL(t *testing.T) {
+	svc, repo := newTestService()
+	url := "https://example.com/sse"
+
+	err := svc.CreateMCPService(context.Background(), &types.MCPService{
+		Name:          "no-url",
+		TransportType: types.MCPTransportSSE,
+	})
+	require.ErrorContains(t, err, "URL is required")
+	require.NotContains(t, repo.store, "svc-new", "rejected row must not be persisted")
+
+	err = svc.CreateMCPService(context.Background(), &types.MCPService{
+		Name:          "",
+		TransportType: types.MCPTransportSSE,
+		URL:           &url,
+	})
+	require.ErrorContains(t, err, "name is required")
+}
+
+func TestUpdateMCPServiceRejectsURLlessFinalState(t *testing.T) {
+	svc, repo := newTestService()
+	id := seedService(t, repo, "", "")
+
+	// 显式清空 URL 的部分更新：合并后非 stdio 行无 URL，必须拒绝且不落库。
+	emptyURL := ""
+	err := svc.UpdateMCPService(context.Background(), &types.MCPService{
+		ID:  id,
+		URL: &emptyURL,
+	}, map[string]bool{})
+	require.ErrorContains(t, err, "URL is required")
+	stored := repo.store[id]
+	require.NotNil(t, stored.URL)
+	require.Equal(t, "https://example.com/sse", *stored.URL)
+}
+
 func TestSetServiceAssignmentsDedupesAndForcesServiceID(t *testing.T) {
 	svc, repo := newTestService()
 	id := seedService(t, repo, "", "")

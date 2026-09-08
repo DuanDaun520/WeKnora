@@ -13,6 +13,35 @@
       <p v-if="!canManage" class="installer-model-hint">{{ $t('settings.skills.readonlyHint') }}</p>
     </div>
 
+    <!-- 000110：页面升级为「沙箱/Skills目录」。顶部先报空间当前沙箱——控制台
+         「沙箱连接」分配后物化到空间，这里只读展示（名称/后端/目标），无沙箱
+         时引导去控制台配置。 -->
+    <section class="sandbox-info">
+      <div class="sandbox-info__head">
+        <h3>{{ $t('settings.skills.sandboxInfoTitle') }}</h3>
+        <!-- 控制台路由有 requiresSystemAdmin 守卫：空间管理员点了会被静默弹回
+             （设置弹窗还开着，看起来像坏链）。所以入口只对系统管理员渲染，空间
+             管理员给"由系统管理员统一配置"的引导文案。 -->
+        <a
+          v-if="canGoSandboxConsole"
+          href="javascript:void(0)"
+          class="sandbox-info__link"
+          @click.prevent="goSandboxSection"
+        >
+          {{ $t('settings.skills.goSandboxSettings') }}
+        </a>
+        <span v-else class="sandbox-info__managed">{{ $t('settings.skills.sandboxManagedHint') }}</span>
+      </div>
+      <div v-if="skillConfigs.length > 0" class="sandbox-info__list">
+        <div v-for="cfg in skillConfigs" :key="cfg.id" class="sandbox-info__row">
+          <SandboxBackendBadge :type="cfg.sandbox_type" size="sm" />
+          <span class="sandbox-info__name" :title="cfg.name">{{ cfg.name }}</span>
+          <span class="sandbox-info__meta">{{ sandboxMetaLine(cfg) }}</span>
+        </div>
+      </div>
+      <p v-else class="sandbox-info__empty">{{ $t('settings.skills.sandboxInfoEmpty') }}</p>
+    </section>
+
     <div v-if="loading" class="loading-container">
       <t-loading :text="$t('common.loading')" />
     </div>
@@ -23,7 +52,7 @@
         <p v-if="canManage && skillConfigs.length === 0" class="empty-hint">
           {{ $t('settings.skills.emptyNoSandboxHint') }}
         </p>
-        <div v-if="canManage && skillConfigs.length === 0" class="empty-actions">
+        <div v-if="canGoSandboxConsole && skillConfigs.length === 0" class="empty-actions">
           <t-button theme="default" variant="outline" @click="goSandboxSection">
             {{ $t('settings.skills.goSandboxSettings') }}
           </t-button>
@@ -281,8 +310,12 @@ const confirmDelete = useConfirmDelete()
 // 权威；登记入口仍移除（平台单向分配），这里只消费平台物化出的目录行。
 const canManage = computed(() => authStore.hasRole('admin'))
 
-// 空态「前往沙箱配置」：沙箱配置已并入控制台「沙箱连接」，从空间 Settings
-// 跨路由跳过去；保留 ?tenant=（无害：连接面板不读它）。
+// 「去配置沙箱」仅系统管理员可用（canGoSandboxConsole）：控制台路由有
+// requiresSystemAdmin 守卫，空间管理员跳转会被静默弹回。
+const canGoSandboxConsole = computed(() => authStore.isSystemAdmin)
+
+// 跳控制台「沙箱连接」：从空间 Settings 跨路由过去；保留 ?tenant=（无害：
+// 连接面板不读它）。
 function goSandboxSection() {
   void router.push({
     path: '/system/console',
@@ -391,7 +424,7 @@ function sandboxTargetLine(record: SandboxConfigRecord): string {
   if (record.sandbox_type === 'docker') {
     return record.config?.docker?.image?.trim() || ''
   }
-  const remote = record.config?.e2b || record.config?.cube
+  const remote = record.config?.e2b || record.config?.opensandbox || record.config?.cube
   const raw = remote?.api_url?.trim() || ''
   if (!raw) return ''
   try {
@@ -724,8 +757,10 @@ function openInstall(item: SkillCatalogItem) {
   if (!canManage.value) return
   installCatalog.value = item
   installSessionIds.value = []
+  // 000110：控制台分配过沙箱就默认全选——安装到空间全部沙箱是常态路径，
+  // 只剩一份时行为与旧版一致；需要排除的自行取消勾选。
   const remaining = targetsFor(item)
-  installTargetIds.value = remaining.length === 1 ? [remaining[0].id] : []
+  installTargetIds.value = remaining.map((row) => row.id)
   void loadInstallerModel()
   showInstall.value = true
 }
@@ -994,6 +1029,87 @@ onUnmounted(() => {
 :global(.skill-settings__help-tooltip .t-popup__content) {
   max-width: 340px;
   line-height: 1.55;
+}
+
+// 000110「当前沙箱」信息区：只读展示控制台分配到空间的沙箱（名称/后端/目标）。
+.sandbox-info {
+  margin-bottom: 24px;
+  padding: 14px 16px;
+  border: 1px solid var(--td-component-stroke);
+  border-radius: 10px;
+  background: var(--td-bg-color-container);
+}
+
+.sandbox-info__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+
+  h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+}
+
+.sandbox-info__managed {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--td-text-color-placeholder);
+}
+
+.sandbox-info__link {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--td-brand-color);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.sandbox-info__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.sandbox-info__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.sandbox-info__name {
+  flex-shrink: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--td-text-color-primary);
+}
+
+.sandbox-info__meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--td-text-color-secondary);
+}
+
+.sandbox-info__empty {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--td-text-color-placeholder);
 }
 
 :global(.skill-install-panel-overlay) {

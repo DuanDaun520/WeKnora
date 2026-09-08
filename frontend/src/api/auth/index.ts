@@ -1,4 +1,4 @@
-import { post, get, put } from '@/utils/request'
+import { post, get, put, del, getDown, postUpload } from '@/utils/request'
 import i18n from '@/i18n'
 
 const t = (key: string) => i18n.global.t(key)
@@ -444,6 +444,37 @@ export async function changePassword(
       message: resolveChangePasswordError(error),
     }
   }
+}
+
+/**
+ * 头像三件套（/auth/me/avatar）。存储 ref 走 users.avatar（登录与
+ * /auth/me 都会带回），字节由专用端点按身份流式返回——与当前空间无关，
+ * 切换空间后仍能看到自己的头像。
+ */
+export async function uploadMyAvatar(
+  file: File,
+): Promise<{ success: boolean; data?: { user: UserInfo }; message?: string }> {
+  const fd = new FormData()
+  fd.append('file', file)
+  const response = await postUpload('/api/v1/auth/me/avatar', fd)
+  return response as unknown as { success: boolean; data?: { user: UserInfo } }
+}
+
+export async function deleteMyAvatar(): Promise<{ success: boolean; message?: string }> {
+  try {
+    const response = await del('/api/v1/auth/me/avatar')
+    return response as unknown as { success: boolean; message?: string }
+  } catch (error: any) {
+    return { success: false, message: error?.message }
+  }
+}
+
+/**
+ * version 必须传当前的 avatar ref：URL 随 ref 变化才能击穿浏览器的
+ * max-age 缓存，否则换完头像 24 小时内看到的仍是旧图。
+ */
+export function fetchMyAvatarBlob(version: string): Promise<Blob> {
+  return getDown(`/api/v1/auth/me/avatar?v=${encodeURIComponent(version)}`)
 }
 
 /**

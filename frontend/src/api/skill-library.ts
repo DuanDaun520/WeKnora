@@ -26,6 +26,9 @@ export interface PlatformSkill {
   zh_name?: string
   /** Admin-managed Chinese description (000106); empty falls back to `description`. */
   zh_description?: string
+  /** Admin-managed 介绍与帮助网址 (000109); must be http(s) when set. The
+   * user-side skill detail dialog renders it as an external link. */
+  help_url?: string
   /** Always present (possibly empty) — the assigned workspace list. */
   assignments: PlatformSkillAssignment[]
   created_at?: string
@@ -125,6 +128,7 @@ export async function createPlatformSkillFromFile(
   author?: string,
   zhName?: string,
   zhDescription?: string,
+  helpUrl?: string,
 ): Promise<PlatformSkill> {
   const form = new FormData()
   form.append('file', file)
@@ -132,6 +136,7 @@ export async function createPlatformSkillFromFile(
   form.append('author', author || '')
   form.append('zh_name', zhName || '')
   form.append('zh_description', zhDescription || '')
+  form.append('help_url', helpUrl || '')
   const response: any = await postUpload(BASE, form, (e: any) => {
     if (e.total) onProgress?.(Math.round((e.loaded * 100) / e.total))
   }, { timeout: 5 * 60 * 1000 })
@@ -175,6 +180,7 @@ export interface PlatformSkillMetaInput {
   author: string
   zh_name: string
   zh_description: string
+  help_url: string
 }
 
 /**

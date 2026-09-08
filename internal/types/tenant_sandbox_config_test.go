@@ -21,6 +21,7 @@ func TestTenantSandboxConfigEncryptsSecretsAtRest(t *testing.T) {
 		SandboxType: "e2b",
 		E2B:         &E2BSandboxConfig{APIKey: "e2b-secret", APIURL: "https://api.e2b.dev"},
 		Cube:        &CubeSandboxConfig{APIKey: "cube-secret"},
+		OpenSandbox: &OpenSandboxSandboxConfig{APIKey: "osb-secret", APIURL: "http://10.0.0.5:8080/v1"},
 		EnvVars:     map[string]string{"HF_TOKEN": "hf-secret", "PLAIN": "not-a-secret"},
 	}
 
@@ -30,6 +31,7 @@ func TestTenantSandboxConfigEncryptsSecretsAtRest(t *testing.T) {
 	serialized := string(raw.([]byte))
 	require.NotContains(t, serialized, "e2b-secret", "E2B API key must not be stored in plaintext")
 	require.NotContains(t, serialized, "cube-secret", "Cube API key must not be stored in plaintext")
+	require.NotContains(t, serialized, "osb-secret", "OpenSandbox API key must not be stored in plaintext")
 	require.NotContains(t, serialized, "hf-secret", "EnvVars values must not be stored in plaintext")
 	require.NotContains(t, serialized, "not-a-secret",
 		"EnvVars values must be encrypted regardless of content")
@@ -41,9 +43,12 @@ func TestTenantSandboxConfigEncryptsSecretsAtRest(t *testing.T) {
 
 	require.Equal(t, "e2b-secret", restored.E2B.APIKey)
 	require.Equal(t, "cube-secret", restored.Cube.APIKey)
+	require.Equal(t, "osb-secret", restored.OpenSandbox.APIKey)
 	require.Equal(t, "hf-secret", restored.EnvVars["HF_TOKEN"])
 	require.Equal(t, "not-a-secret", restored.EnvVars["PLAIN"])
 	require.Equal(t, "https://api.e2b.dev", restored.E2B.APIURL,
+		"non-secret fields stay untouched")
+	require.Equal(t, "http://10.0.0.5:8080/v1", restored.OpenSandbox.APIURL,
 		"non-secret fields stay untouched")
 }
 
@@ -51,9 +56,10 @@ func TestTenantSandboxConfigValueDoesNotMutateReceiver(t *testing.T) {
 	setAESKey(t)
 
 	cfg := &TenantSandboxConfig{
-		E2B:     &E2BSandboxConfig{APIKey: "e2b-secret"},
-		Cube:    &CubeSandboxConfig{APIKey: "cube-secret"},
-		EnvVars: map[string]string{"HF_TOKEN": "hf-secret"},
+		E2B:         &E2BSandboxConfig{APIKey: "e2b-secret"},
+		Cube:        &CubeSandboxConfig{APIKey: "cube-secret"},
+		OpenSandbox: &OpenSandboxSandboxConfig{APIKey: "osb-secret"},
+		EnvVars:     map[string]string{"HF_TOKEN": "hf-secret"},
 	}
 
 	_, err := cfg.Value()
@@ -61,6 +67,7 @@ func TestTenantSandboxConfigValueDoesNotMutateReceiver(t *testing.T) {
 
 	require.Equal(t, "e2b-secret", cfg.E2B.APIKey, "Value must not mutate the original struct")
 	require.Equal(t, "cube-secret", cfg.Cube.APIKey, "Value must not mutate the original struct")
+	require.Equal(t, "osb-secret", cfg.OpenSandbox.APIKey, "Value must not mutate the original struct")
 	require.Equal(t, "hf-secret", cfg.EnvVars["HF_TOKEN"], "Value must not mutate the original map")
 }
 

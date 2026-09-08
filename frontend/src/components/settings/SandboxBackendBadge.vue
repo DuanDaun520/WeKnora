@@ -76,6 +76,11 @@ const badgeStyle = computed((): Record<string, string> => (
   color: #1d63ed;
 }
 
+.sandbox-badge--opensandbox {
+  background: rgba(0, 145, 138, 0.12);
+  color: #00918a;
+}
+
 .sandbox-badge--mono::before {
   content: '';
   background-color: currentColor;

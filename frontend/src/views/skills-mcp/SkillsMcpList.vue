@@ -68,7 +68,9 @@
               <p class="card-desc" :title="item.description">{{ item.description || '—' }}</p>
               <div class="card-footer">
                 <span v-if="item.category" class="category-tag">{{ item.category }}</span>
-                <span class="creator">{{ item.creator_name || $t('skillsMcp.systemCreator') }}</span>
+                <!-- 000109：技能卡片显示作者（SKILL.md/平台元数据），不再显示
+                     创建者（推送场景下创建者恒为"系统"，没有信息量）。 -->
+                <span v-if="item.author" class="creator">{{ item.author }}</span>
               </div>
             </div>
           </template>
@@ -104,9 +106,31 @@
       </div>
     </div>
 
-    <!-- 详情弹窗：基本信息 + 使用说明 + 引用智能体（+ 管理员改分类） -->
-    <t-dialog v-model:visible="detailVisible" :header="detailName" footer-placement="right" :footer="false"
+    <!-- 详情弹窗：基本信息 + 使用说明 + 引用智能体（+ 管理员改分类 + 尾部元信息） -->
+    <t-dialog v-model:visible="detailVisible" footer-placement="right" :footer="false"
       width="560px" class="skills-mcp-detail-dialog">
+      <!-- 000110：标题行 = 技能英文名 + 安装状态徽标（紧跟名后）+ 复制名称按钮 -->
+      <template #header>
+        <div class="detail-title-row">
+          <span class="detail-title-name" :title="detailName">{{ detailName }}</span>
+          <span
+            v-if="detailType === 'skill' && detailSkill"
+            class="status-badge"
+            :class="isSkillInstalled(detailSkill) ? 'ok' : 'off'"
+          >
+            {{ isSkillInstalled(detailSkill) ? $t('skillsMcp.installed') : $t('skillsMcp.notInstalled') }}
+          </span>
+          <button
+            type="button"
+            class="detail-title-copy"
+            :title="$t('skillsMcp.copyName')"
+            :aria-label="$t('skillsMcp.copyName')"
+            @click="copyDetailName"
+          >
+            <t-icon name="file-copy" size="14px" />
+          </button>
+        </div>
+      </template>
       <div v-if="detailVisible" class="detail-body">
         <!-- 基本信息 -->
         <div class="detail-section">
@@ -117,18 +141,21 @@
                 <span class="info-label">{{ $t('skillsMcp.version') }}</span>
                 <span class="info-value">v{{ detailSkill.version }}</span>
               </div>
-              <!-- 作者：SKILL.md frontmatter 或平台推送带来的元数据（000104） -->
+              <!-- 作者：SKILL.md frontmatter 或平台推送带来的元数据（000104）。
+                   安装状态已上移到标题行（000110）。 -->
               <div v-if="detailSkill.author" class="info-item">
                 <span class="info-label">{{ $t('skillsMcp.author') }}</span>
                 <span class="info-value">{{ detailSkill.author }}</span>
               </div>
-              <div class="info-item">
-                <span class="info-label">{{ $t('skillsMcp.installStatus') }}</span>
-                <span class="info-value">{{ isSkillInstalled(detailSkill) ? $t('skillsMcp.installed') : $t('skillsMcp.notInstalled') }}</span>
-              </div>
-              <div v-if="installedSandboxes(detailSkill).length" class="info-item wide">
-                <span class="info-label">{{ $t('skillsMcp.installedOn') }}</span>
-                <span class="info-value">{{ installedSandboxes(detailSkill).join('、') }}</span>
+              <!-- 000109：介绍与帮助网址，新窗口打开；未配置不占行。 -->
+              <div v-if="detailSkill.help_url" class="info-item wide">
+                <span class="info-label">{{ $t('skillsMcp.helpUrl') }}</span>
+                <a
+                  class="info-value info-link"
+                  :href="detailSkill.help_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >{{ helpUrlHost }}<t-icon name="link" size="12px" /></a>
               </div>
             </template>
             <template v-else-if="detailMcp">
@@ -145,18 +172,6 @@
                 <span class="info-value">{{ mcpToolsText }}</span>
               </div>
             </template>
-            <div class="info-item">
-              <span class="info-label">{{ $t('skillsMcp.category') }}</span>
-              <span class="info-value">{{ detailCategory || $t('skillsMcp.uncategorized') }}</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">{{ $t('skillsMcp.creator') }}</span>
-              <span class="info-value">{{ detailCreatorName }}</span>
-            </div>
-            <div class="info-item wide">
-              <span class="info-label">{{ $t('skillsMcp.createdAt') }}</span>
-              <span class="info-value">{{ detailCreatedAt }}</span>
-            </div>
           </div>
         </div>
 
@@ -189,6 +204,31 @@
             <t-input v-model="editingCategory" class="category-edit-input" maxlength="255"
               :placeholder="$t('skillsMcp.categoryPlaceholder')" />
             <t-button size="small" :loading="categorySaving" @click="saveCategory">{{ $t('common.save') }}</t-button>
+          </div>
+        </div>
+
+        <!-- 000110：元信息后置——已安装沙箱/分类/创建者/创建时间从基本信息挪到
+             弹窗末尾，保持顶部聚焦在"这个技能是什么、怎么用"。 -->
+        <div class="detail-section">
+          <div class="section-title">{{ $t('skillsMcp.otherInfo') }}</div>
+          <div class="info-grid">
+            <div v-if="detailType === 'skill' && detailSkill && installedSandboxes(detailSkill).length"
+              class="info-item wide">
+              <span class="info-label">{{ $t('skillsMcp.installedOn') }}</span>
+              <span class="info-value">{{ installedSandboxes(detailSkill).join('、') }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">{{ $t('skillsMcp.category') }}</span>
+              <span class="info-value">{{ detailCategory || $t('skillsMcp.uncategorized') }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">{{ $t('skillsMcp.creator') }}</span>
+              <span class="info-value">{{ detailCreatorName }}</span>
+            </div>
+            <div class="info-item wide">
+              <span class="info-label">{{ $t('skillsMcp.createdAt') }}</span>
+              <span class="info-value">{{ detailCreatedAt }}</span>
+            </div>
           </div>
         </div>
       </div>
@@ -431,6 +471,28 @@ const detailCreatedAt = computed(() => {
   const raw = detailType.value === 'skill' ? detailSkill.value?.created_at : detailMcp.value?.created_at
   return raw ? formatStringDate(raw) : '—'
 })
+// 帮助网址（000109）：链接文字显示主机名（完整 URL 在 hover/复制时可见）
+const helpUrlHost = computed(() => {
+  const raw = detailSkill.value?.help_url || ''
+  if (!raw) return ''
+  try {
+    return new URL(raw).host || raw
+  } catch {
+    return raw
+  }
+})
+
+async function copyDetailName() {
+  const name = detailName.value
+  if (!name) return
+  try {
+    await navigator.clipboard.writeText(name)
+    MessagePlugin.success(t('skillsMcp.nameCopied'))
+  } catch {
+    MessagePlugin.warning(t('skillsMcp.copyFailed'))
+  }
+}
+
 const detailDescription = computed(() =>
   detailType.value === 'skill' ? detailSkill.value?.description : detailMcp.value?.description
 )
@@ -855,6 +917,63 @@ async function saveCategory() {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    // 帮助网址（000109）：主机名 + 外链小图标，新窗口打开
+    .info-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      color: var(--td-brand-color);
+      text-decoration: none;
+
+      &:hover {
+        text-decoration: underline;
+      }
+    }
+  }
+}
+
+// 000110：详情弹窗标题行——技能名 + 安装状态徽标 + 复制按钮
+.detail-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-right: 24px; // 给右上角关闭按钮让位
+
+  .detail-title-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+
+  .status-badge {
+    flex-shrink: 0;
+  }
+
+  .detail-title-copy {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--td-text-color-placeholder);
+    cursor: pointer;
+
+    &:hover {
+      color: var(--td-brand-color);
+      background: var(--td-bg-color-container-hover);
     }
   }
 }

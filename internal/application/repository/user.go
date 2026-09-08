@@ -204,6 +204,17 @@ func (r *userRepository) UpdateLastLoginAt(ctx context.Context, userID string, a
 		UpdateColumn("last_login_at", at).Error
 }
 
+// UpdateUserAvatar replaces users.avatar ("" clears it). Single-column
+// UPDATE on purpose, mirroring UpdateLastLoginAt: the upload path must not
+// whole-row Save and race concurrent preference writes. Soft-deleted rows
+// are excluded by gorm's default scope; a miss is not an error.
+func (r *userRepository) UpdateUserAvatar(ctx context.Context, userID, avatar string) error {
+	return r.db.WithContext(ctx).
+		Model(&types.User{}).
+		Where("id = ?", userID).
+		UpdateColumn("avatar", avatar).Error
+}
+
 // DeleteUser deletes a user
 func (r *userRepository) DeleteUser(ctx context.Context, id string) error {
 	return r.db.WithContext(ctx).Where("id = ?", id).Delete(&types.User{}).Error

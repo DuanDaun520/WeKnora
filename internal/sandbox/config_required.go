@@ -53,6 +53,15 @@ func MissingRequiredFields(cfg *Config) []string {
 		require("template_id", cfg.E2BTemplate)
 	case SandboxTypeDocker:
 		require("image", cfg.DockerImage)
+	case SandboxTypeOpenSandbox:
+		// The key is required even though the server can run without one:
+		// the common self-hosted deployments authenticate, and an unguarded
+		// server behind this field is a deployment misconfiguration better
+		// caught at save time than silently accepted (see
+		// docs/sandbox-opensandbox-backend.md).
+		require("api_url", cfg.OpenSandboxAPIURL)
+		require("api_key", cfg.OpenSandboxAPIKey)
+		require("template_id", cfg.OpenSandboxTemplate)
 	}
 	return missing
 }

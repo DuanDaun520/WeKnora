@@ -156,6 +156,11 @@ func (h *SystemMCPServiceHandler) CreateService(c *gin.Context) {
 	svc.Name = secutils.SanitizeForLog(svc.Name)
 	svc.Description = secutils.SanitizeForLog(svc.Description)
 
+	if err := validateMCPServiceShape(&svc); err != nil {
+		c.Error(err)
+		return
+	}
+
 	if svc.URL != nil && *svc.URL != "" {
 		if err := secutils.ValidateURLForSSRF(*svc.URL); err != nil {
 			logger.Warnf(ctx, "SSRF validation failed for MCP service URL: %v", err)

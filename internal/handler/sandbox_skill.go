@@ -355,6 +355,9 @@ type skillSourceRequest struct {
 	// console falls back to the SKILL.md values.
 	ZhName        string `json:"zh_name"`
 	ZhDescription string `json:"zh_description"`
+	// HelpURL is the optional 介绍与帮助网址 (platform library register only,
+	// 000109); the tenant-side install flow ignores it.
+	HelpURL string `json:"help_url"`
 }
 
 func (h *SandboxSkillHandler) installFromSource(c *gin.Context) {

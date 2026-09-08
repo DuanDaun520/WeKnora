@@ -122,9 +122,8 @@ test('skills and sandbox share one editor section', () => {
   assert.match(source, /v-show="currentSection === 'skills' && isAgentMode"/)
   assert.doesNotMatch(source, /currentSection === 'sandbox' && isAgentMode/)
   assert.match(source, /sandbox: 'skills'/)
-  assert.match(source, /formData\.config\.sandbox_config_id/)
+  assert.match(source, /formData\.value\.config\.sandbox_config_id/)
   assert.match(source, /:disabled="!canEnableSkills"/)
-  assert.match(source, /sandbox-option/)
   assert.doesNotMatch(source, /skill-info-box/)
 })
 
@@ -197,14 +196,45 @@ test('referenced entities fall back to names instead of raw ids', () => {
   assert.match(source, /webSearchProvidersLoaded/)
 })
 
-test('sandbox management links split console mgmt from skill installs (000107)', () => {
-  // 「管理沙箱」指向平台控制台的沙箱连接，仍仅系统管理员（canManageSandboxConsole）；
-  // 「管理技能」指向本空间技能目录，本空间 admin/owner 以上（canInstallSkills）可见；
-  // 两者都不满足才显示由管理员统一配置的提示。
-  assert.match(source, /const canManageSandboxConsole = computed\(\(\) => authStore\.isSystemAdmin\)/)
-  assert.match(source, /v-if="canManageSandboxConsole"[\s\S]*?uiStore\.openSettings\('sandbox'\)/)
-  assert.match(source, /v-else class="desc">\{\{ \$t\('agent\.editor\.sandboxManagedHint'\) \}\}/)
+test('sandbox is reported as a workspace status, not selected in the editor (000110)', () => {
+  // 000110：沙箱由控制台「沙箱连接」分配到空间，编辑器不再提供沙箱下拉。
+  // 运行沙箱一行只报「空间已配置/未配置沙箱」（不展示名称等细节）；
+  // 绑定改为隐式 autoBindWorkspaceSandbox（有已保存的沿用，否则取第一份）。
+  // 「管理技能」仍指向本空间「沙箱/Skills目录」（admin/owner 以上可见）。
+  assert.match(source, /const workspaceHasSandbox = computed\(\(\) => namedSandboxConfigs\(\)\.length > 0\)/)
+  assert.match(source, /sandbox-status-chip--ok/)
+  assert.match(source, /sandbox-status-chip--none/)
+  assert.match(source, /agent\.editor\.sandboxConfigured/)
+  assert.match(source, /agent\.editor\.sandboxNotConfigured/)
+  // 沙箱下拉与「管理沙箱」控制台入口应消失
+  assert.doesNotMatch(source, /sandbox-config-select/)
+  assert.doesNotMatch(source, /sandbox-option/)
+  assert.doesNotMatch(source, /canManageSandboxConsole/)
+  assert.doesNotMatch(source, /uiStore\.openSettings\('sandbox'\)/)
+  assert.match(source, /function autoBindWorkspaceSandbox\(\)/)
   assert.match(source, /@click\.prevent="openSkillSettings"/)
+})
+
+test('stale MCP references are removable, not locked placeholders', () => {
+  // 管理后台删掉服务后，智能体里引用它的占位选项绝不能置 disabled：
+  // TDesign 多选里 disabled 选项的已选 tag 会被锁死（× 不可点），僵尸引用
+  // 永远删不掉。占位项保持可移除，并附短 ID 区分多条僵尸引用。
+  const mcpOptions = source.match(/const mcpOptions = computed<McpSelectOption\[\]>\(\(\) => \{([\s\S]*?)\n\}\);/)?.[1]
+  assert.ok(mcpOptions, 'expected the mcpOptions computed')
+  assert.match(mcpOptions, /unavailableService/)
+  assert.doesNotMatch(mcpOptions, /disabled: true/)
+  assert.match(mcpOptions, /id\.slice\(0, 8\)/)
+})
+
+test('skill selection defaults to selected mode and shows the configured count (000110)', () => {
+  // 新建与未保存模式的智能体默认「指定」（原「禁用」）；技能列表标题旁
+  // 报「已配置 N 个技能」。显式保存过的模式（含「禁用」）仍被尊重。
+  const initFn = source.match(/const initSkillsSelectionMode = \(\) => \{([\s\S]*?)\n\};/)
+  assert.ok(initFn, 'expected initSkillsSelectionMode')
+  assert.doesNotMatch(initFn[1], /skillsSelectionMode\.value = 'none'/)
+  assert.match(source, /skillsSelectionMode\.value = 'selected';\n\n\s*\/\/ 000100：默认「快速问答」/)
+  assert.match(source, /agent\.editor\.skillsCount/)
+  assert.match(source, /skills-count-chip/)
 })
 
 test('creating an agent defaults to quick-answer with an empty name', () => {
@@ -215,28 +245,18 @@ test('creating an agent defaults to quick-answer with an empty name', () => {
   assert.doesNotMatch(source, /if \(!formData\.value\.description\) \{\s*formData\.value\.description = getPresetDefaultDescription\(preset\);/)
 })
 
-test('picking a sandbox defaults skills to selected with every ready skill checked', () => {
-  // 000100：下拉 @change 触发默认勾选：模式进「指定」并把该沙箱全部
-  // selectable 技能并入 selected_skills；仅用户显式选择触发，编辑态
-  // 加载已保存配置不改写「禁用」意图。
-  assert.match(source, /@change="onSandboxSelected"/)
-  assert.match(source, /let pendingDefaultSkillCheck = false/)
-  assert.match(source, /function applyDefaultSkillSelection\(\)/)
-  assert.match(source, /skillsSelectionMode\.value = 'selected'/)
-  assert.match(source, /Array\.from\(new Set\(\[\.\.\.current, \.\.\.names\]\)\)/)
-  // 目录兜底挂在既有的 [visible, catalogSkillRows] watch 里——注册点必须在
-  // formData（L2835）之后：单独的 watch(catalogSkillRows) 若写在 setup 前段，
-  // 注册时立即求值 computed 会触发 formData 的 TDZ ReferenceError，导致整个
-  // AgentList 页面加载即坏、所有弹窗打不开（000100 回归）。
-  assert.match(
-    source,
-    /\[\(\) => props\.visible, catalogSkillRows\],\s*\(\) => \{\s*(?:\/\/[^\n]*\n\s*)?applyDefaultSkillSelection\(\)/,
-  )
-  assert.doesNotMatch(source, /watch\(catalogSkillRows, \(\) => \{/)
+test('the old pick-sandbox-then-check-all default flow is gone (000110)', () => {
+  // 000100 的「用户选沙箱→默认进指定并勾全部」随沙箱下拉一起移除：
+  // 沙箱隐式绑定，模式默认「指定」，勾选完全交给用户。
+  assert.doesNotMatch(source, /onSandboxSelected/)
+  assert.doesNotMatch(source, /pendingDefaultSkillCheck/)
+  assert.doesNotMatch(source, /applyDefaultSkillSelection/)
+  // 轮询 watch 保留（安装状态自动刷新），但不再夹带默认勾选。
+  assert.match(source, /\[\(\) => props\.visible, catalogSkillRows\],/)
 })
 
 test('agent skill picker uses the catalog and only enables ready installs', () => {
-  assert.match(source, /function autoBindSoleSandbox\(/)
+  assert.match(source, /function autoBindWorkspaceSandbox\(/)
   assert.match(source, /canEnableSkills/)
   assert.match(source, /catalogSkillRows/)
   assert.match(source, /showCatalogSkillList/)

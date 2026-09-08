@@ -24,11 +24,20 @@ test('create rides the register POST with the metadata, zip upload only', () => 
   // 空 category/author = 后端回落 SKILL.md frontmatter；zh 字段空串 = 无中文展示
   assert.match(
     source,
-    /createPlatformSkillFromFile\(file, onProgress, category, author, zhName, zhDescription\)/,
+    /createPlatformSkillFromFile\(file, onProgress, category, author, zhName, zhDescription, helpUrl\)/,
   )
   // 「从源安装」已下线：界面与 API 封装都不再有 source 注册路径
   assert.doesNotMatch(source, /FromSource|sourceInput/)
   assert.match(source, /hasBundleInput = computed\(\(\) => !!pendingFile\.value\)/)
+})
+
+test('the optional help URL rides create + the diffed meta PUT (000109)', () => {
+  // 介绍与帮助网址：可不填；编辑时与其它 meta 一样只在实际变化时发 PUT
+  // （同值 PUT 会误 bump updated_at 点亮假 drift）。空 = 用户侧不显示。
+  assert.match(source, /helpUrlInput/)
+  assert.match(source, /t\('skillLibrary\.helpUrlLabel'\)/)
+  assert.match(source, /help_url: helpUrl,/)
+  assert.match(source, /helpUrl === metaBaseline\.value\.helpUrl/)
 })
 
 test('edit persists metadata only when a value changed', () => {

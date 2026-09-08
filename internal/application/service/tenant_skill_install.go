@@ -2232,6 +2232,10 @@ func currentBaseTemplate(cfg *types.TenantSandboxConfig) string {
 		if cfg.Docker != nil {
 			return cfg.Docker.Image
 		}
+	case sandbox.SandboxTypeOpenSandbox:
+		if cfg.OpenSandbox != nil {
+			return cfg.OpenSandbox.TemplateID
+		}
 	}
 	return ""
 }

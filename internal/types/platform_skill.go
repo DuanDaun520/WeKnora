@@ -42,6 +42,10 @@ type PlatformSkillEntity struct {
 	// SKILL.md has no counterpart to seed them, so empty stays empty.
 	ZhName        string `gorm:"type:varchar(255);not null;default:''"`
 	ZhDescription string `gorm:"type:text;not null;default:''"`
+	// HelpURL is the optional "介绍与帮助网址" (000109), also admin-managed:
+	// the user-side skill detail dialog renders it as an external link (new
+	// tab) when set. Must be an http(s) URL; empty = none.
+	HelpURL string `gorm:"type:varchar(1024);not null;default:''"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

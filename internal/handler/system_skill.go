@@ -26,6 +26,10 @@ import (
 // edit form may store.
 const maxZhDescriptionLen = 2000
 
+// maxHelpURLLen caps the admin-managed 介绍与帮助网址 (000109); the column is
+// VARCHAR(1024) and the value must additionally be a valid http(s) URL.
+const maxHelpURLLen = 1024
+
 // metaRuneLen counts characters (runes) rather than bytes: the UI maxlength and
 // the VARCHAR(255) columns both count characters, so an ASCII byte-length check
 // would wrongly reject Chinese metadata well under the cap.
@@ -104,6 +108,7 @@ type systemPlatformSkillResponse struct {
 	Author        string                            `json:"author,omitempty"`
 	ZhName        string                            `json:"zh_name,omitempty"`
 	ZhDescription string                            `json:"zh_description,omitempty"`
+	HelpURL       string                            `json:"help_url,omitempty"`
 	Assignments   []service.PlatformSkillAssignment `json:"assignments"`
 	CreatedAt     time.Time                         `json:"created_at"`
 	UpdatedAt     time.Time                         `json:"updated_at"`
@@ -132,6 +137,7 @@ func (h *SystemSkillHandler) toResponse(
 		Author:        e.Author,
 		ZhName:        e.ZhName,
 		ZhDescription: e.ZhDescription,
+		HelpURL:       e.HelpURL,
 		Assignments:   assignments,
 		CreatedAt:     e.CreatedAt,
 		UpdatedAt:     e.UpdatedAt,
@@ -338,6 +344,7 @@ func (h *SystemSkillHandler) registerBody(
 		source = strings.TrimSpace(req.Source)
 		meta.Category, meta.Author = req.Category, req.Author
 		meta.ZhName, meta.ZhDescription = req.ZhName, req.ZhDescription
+		meta.HelpURL = req.HelpURL
 	} else {
 		body, ok := readSkillUploadBody(c)
 		if !ok {
@@ -350,16 +357,26 @@ func (h *SystemSkillHandler) registerBody(
 		}
 		meta.Category, meta.Author = c.PostForm("category"), c.PostForm("author")
 		meta.ZhName, meta.ZhDescription = c.PostForm("zh_name"), c.PostForm("zh_description")
+		meta.HelpURL = c.PostForm("help_url")
 	}
 	// Empty category/author mean "fall back to the SKILL.md frontmatter";
 	// empty zh fields mean "no Chinese copy yet" (SKILL.md has no zh values).
 	// Oversized ones never reach the service.
 	meta.Category, meta.Author = strings.TrimSpace(meta.Category), strings.TrimSpace(meta.Author)
 	meta.ZhName, meta.ZhDescription = strings.TrimSpace(meta.ZhName), strings.TrimSpace(meta.ZhDescription)
+	meta.HelpURL = strings.TrimSpace(meta.HelpURL)
 	if metaRuneLen(meta.Category) > 255 || metaRuneLen(meta.Author) > 255 ||
 		metaRuneLen(meta.ZhName) > 255 || metaRuneLen(meta.ZhDescription) > maxZhDescriptionLen {
 		_ = c.Error(apperrors.NewBadRequestError("skill metadata is too long"))
 		return nil, false
+	}
+	// 000109: the help URL is opened by end users' browsers — non-http(s)
+	// values never reach the service.
+	if meta.HelpURL != "" {
+		if err := service.ValidateSkillHelpURL(meta.HelpURL); err != nil {
+			_ = c.Error(err)
+			return nil, false
+		}
 	}
 
 	if updateID == "" {
@@ -390,6 +407,7 @@ type systemSkillMetaRequest struct {
 	Author        *string `json:"author"`
 	ZhName        *string `json:"zh_name"`
 	ZhDescription *string `json:"zh_description"`
+	HelpURL       *string `json:"help_url"`
 }
 
 // UpdateSkillMeta PUT /system/admin/skills/:id/meta
@@ -409,14 +427,20 @@ func (h *SystemSkillHandler) UpdateSkillMeta(c *gin.Context) {
 		value *string
 		max   int
 	}{{req.Category, 255}, {req.Author, 255}, {req.ZhName, 255},
-		{req.ZhDescription, maxZhDescriptionLen}} {
+		{req.ZhDescription, maxZhDescriptionLen}, {req.HelpURL, maxHelpURLLen}} {
 		if capped.value != nil && metaRuneLen(strings.TrimSpace(*capped.value)) > capped.max {
 			_ = c.Error(apperrors.NewBadRequestError("skill metadata is too long"))
 			return
 		}
 	}
+	if req.HelpURL != nil && strings.TrimSpace(*req.HelpURL) != "" {
+		if err := service.ValidateSkillHelpURL(strings.TrimSpace(*req.HelpURL)); err != nil {
+			_ = c.Error(err)
+			return
+		}
+	}
 	updated, err := h.svc.UpdateMeta(
-		ctx, id, req.Category, req.Author, req.ZhName, req.ZhDescription)
+		ctx, id, req.Category, req.Author, req.ZhName, req.ZhDescription, req.HelpURL)
 	if err != nil {
 		respondPlatformSkillServiceError(c, err)
 		return

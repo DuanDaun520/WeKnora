@@ -63,6 +63,10 @@
         <!-- AI用量统计（Token统计与计费设计.md §5.3）：平台总览/按空间/按用户 + 台账明细，
              并入「模型」菜单分组；模型单价配置在面板内以弹窗打开。 -->
         <UsageDashboardPanel v-else-if="currentSection === 'usage'" />
+        <!-- 系统设置（平台级开关：SSRF 白名单 / Docker 沙箱等）。该面板原挂在
+             /platform 外壳的「系统管理」组，而 bootstrap 系统管理员无空间绑定
+             打不开外壳；迁进控制台让无空间管理员也能直达。 -->
+        <SystemSettings v-else-if="currentSection === 'system-settings'" />
 
         <!-- 按空间代管面板：未选目标空间时给引导，选中后渲染管理页 -->
         <template v-else-if="isManagedSection(currentSection)">
@@ -103,6 +107,7 @@ import McpSettings from './McpSettings.vue'
 import SandboxConnectionsPanel from './SandboxConnectionsPanel.vue'
 import SkillLibraryPanel from './SkillLibraryPanel.vue'
 import UsageDashboardPanel from './UsageDashboardPanel.vue'
+import SystemSettings from './SystemSettings.vue'
 import ManagedWorkspaceBar from './ManagedWorkspaceBar.vue'
 
 const { t } = useI18n()
@@ -125,6 +130,7 @@ type ConsoleSection =
   | 'skill-library'
   | 'mcp'
   | 'usage'
+  | 'system-settings'
 
 // 按空间代管的三个面板：数据仍归属各空间，系统管理员选目标空间后管理。
 // 网络搜索（000095）与 MCP 服务（000096）平台化后是平台目录 + 分配制，
@@ -149,6 +155,7 @@ const VALID_SECTIONS: ConsoleSection[] = [
   'skill-library',
   'mcp',
   'usage',
+  'system-settings',
 ]
 
 function isManagedSection(key: ConsoleSection): boolean {
@@ -179,6 +186,7 @@ const menuGroups = computed<MenuGroup[]>(() => {
     { key: 'vectorstore', icon: 'data-base', label: t('settings.vectorStoreEngine') },
     { key: 'parser', icon: 'file-search', label: t('settings.parserEngine') },
     { key: 'storage', icon: 'cloud', label: t('settings.storageEngine') },
+    { key: 'system-settings', icon: 'server', label: t('settings.system') },
   ]
   const visible = all.filter((item) => isSectionSupported(item.key))
   const pick = (keys: ConsoleSection[]) =>
@@ -200,6 +208,13 @@ const menuGroups = computed<MenuGroup[]>(() => {
       key: 'data_extensions',
       label: t('systemConsole.menuGroups.dataExtensions'),
       items: pick(['skill-library', 'mcp', 'websearch', 'sandbox-connections', 'vectorstore', 'parser', 'storage']),
+    },
+    {
+      // 平台级系统设置（SSRF 白名单 / Docker 沙箱 / 注册模式等）：无空间
+      // 管理员进不了 /platform 外壳，这里提供控制台直达。
+      key: 'system_admin',
+      label: t('systemConsole.menuGroups.systemAdmin'),
+      items: pick(['system-settings']),
     },
   ].filter((group) => group.items.length > 0)
 })

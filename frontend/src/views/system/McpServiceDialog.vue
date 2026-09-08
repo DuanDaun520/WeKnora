@@ -58,7 +58,7 @@
       </t-button>
     </template>
 
-    <t-form ref="formRef" :data="formData" :rules="rules" label-align="top">
+    <t-form ref="formRef" :data="formData" label-align="top">
       <!--
         从代码导入：粘贴标准 mcpServers JSON，纯前端解析后填回表单。
         不自动提交；用户检查后再点保存。
@@ -412,7 +412,7 @@
 <script setup lang="ts">
 import { ref, watch, computed, nextTick } from 'vue'
 import { MessagePlugin } from 'tdesign-vue-next'
-import type { FormInstanceFunctions, FormRule } from 'tdesign-vue-next'
+import type { FormInstanceFunctions } from 'tdesign-vue-next'
 import { useI18n } from 'vue-i18n'
 import {
   createMCPService,
@@ -789,8 +789,7 @@ async function startAuthorize(serviceId: string) {
 // "MCP service is not configured to use OAuth". The drawer stays open the whole
 // time — the parent re-binds the (now saved) service via the `created` event.
 async function handleAuthorize() {
-  const valid = await formRef.value?.validate()
-  if (!valid) return
+  if (!validateRequiredFields()) return
 
   submitting.value = true
   let serviceId = ''
@@ -881,24 +880,27 @@ const credentialMeta = computed(() => props.service?.credentials ?? {
   token: { configured: false },
 })
 
-const rules: Record<string, FormRule[]> = {
-  name: [{ required: true, message: t('mcpServiceDialog.rules.nameRequired') as string, type: 'error' }],
-  transport_type: [{ required: true, message: t('mcpServiceDialog.rules.transportRequired') as string, type: 'error' }],
-  url: [
-    {
-      validator: (val: string) => {
-        if (!val || val.trim() === '') {
-          return { result: false, message: t('mcpServiceDialog.rules.urlRequired') as string, type: 'error' }
-        }
-        try {
-          new URL(val)
-          return { result: true, message: '', type: 'success' }
-        } catch {
-          return { result: false, message: t('mcpServiceDialog.rules.urlInvalid') as string, type: 'error' }
-        }
-      },
-    },
-  ],
+// 必填校验：TDesign 的 rules 只对带 name 的 <t-form-item> 生效，而本抽屉
+// 全部走自定义 .form-item div（没有任何注册目标），formRef.validate() 恒
+// 通过 —— 曾放行过 name/url 全空的 POST，落库后运行时报
+// "URL is required for SSE transport"。这里手动兜底，保存前拦住。
+function validateRequiredFields(): boolean {
+  if (!formData.value.name.trim()) {
+    MessagePlugin.error(t('mcpServiceDialog.rules.nameRequired') as string)
+    return false
+  }
+  const url = formData.value.url.trim()
+  if (!url) {
+    MessagePlugin.error(t('mcpServiceDialog.rules.urlRequired') as string)
+    return false
+  }
+  try {
+    new URL(url)
+  } catch {
+    MessagePlugin.error(t('mcpServiceDialog.rules.urlInvalid') as string)
+    return false
+  }
+  return true
 }
 
 const dialogVisible = computed({
@@ -1152,8 +1154,7 @@ function buildPayload(asCreate: boolean): Partial<MCPService> {
 }
 
 const handleSubmit = async () => {
-  const valid = await formRef.value?.validate()
-  if (!valid) return
+  if (!validateRequiredFields()) return
 
   submitting.value = true
   try {

@@ -14,6 +14,7 @@
 | --- | --- | --- | --- | --- |
 | `e2b` | E2B 协议 | 持久（一个会话一个沙箱） | 支持 | 生产主路径，可指向任意 E2B 兼容控制面 |
 | `cube` | E2B 兼容（走 Cube 官方 Go SDK） | 持久 | 支持 | CubeSandbox 专用适配器，见“为什么还留着 cube 适配器” |
+| `opensandbox` | OpenSandbox 自有协议（控制面 REST + 数据面 execd） | 持久 | 支持 | 自建 K8s / 容器集群，见 [OpenSandbox 沙箱后端](./sandbox-opensandbox-backend.md) |
 | `docker` | 无（Docker Engine API） | 持久（一个会话一个容器） | 支持 | 单机 / 私有化部署，见 [Docker 沙箱后端](./sandbox-docker-backend.md) |
 | `local` | 无（本机进程） | 无 | 不支持 | 本机开发调试，隔离性最弱 |
 
@@ -33,6 +34,7 @@
 - 只有容器可用（没有 KVM、也不想上 PVM 内核）时，走 Agent-Sandbox 这类 K8s 原生实现，而不是给 WeKnora 加一个 Docker 控制面。
 - 单机、有 KVM 或可装 PVM 内核，走 CubeSandbox。
 - 上述实现都通过同一个 `e2b` 配置接入，WeKnora 侧零改动。
+- 已经部署了 [OpenSandbox](https://github.com/alibaba/OpenSandbox) 集群（或明确要它的 K8s 原生形态）时，它**不是** E2B 兼容实现：生命周期与执行是另一套协议，走独立的 `opensandbox` 适配器，见 [OpenSandbox 沙箱后端](./sandbox-opensandbox-backend.md)。
 
 不建议采用的方向：`e2bgateway`、`circlesac/sandbox`、`Cage` 这类项目虽然也宣称 E2B 兼容并支持 Docker 后端，但当前 star 数与维护强度都在个位数量级，作为生产依赖风险过高。
 

@@ -106,13 +106,14 @@ func (f *fakePlatformSkillsRepo) Update(
 // UpdateMeta stamps updated_at like Update does — the meta edit is a drift
 // driver too. It only rewrites the metadata columns, never the bundle facts.
 func (f *fakePlatformSkillsRepo) UpdateMeta(
-	_ context.Context, id, category, author, zhName, zhDescription string,
+	_ context.Context, id, category, author, zhName, zhDescription, helpURL string,
 ) error {
 	for i, r := range f.rows {
 		if r.ID == id {
 			cp := *r
 			cp.Category, cp.Author = category, author
 			cp.ZhName, cp.ZhDescription = zhName, zhDescription
+			cp.HelpURL = helpURL
 			cp.UpdatedAt = f.now()
 			f.rows[i] = &cp
 			return nil
@@ -962,7 +963,7 @@ func TestPlatformSkillMetaEditDrivesDriftAndPushPropagates(t *testing.T) {
 
 	fx.clock.advance(2 * time.Millisecond)
 	category, author := "docs", "Alice"
-	updated, err := fx.svc.UpdateMeta(ctx, skill.ID, &category, &author, nil, nil)
+	updated, err := fx.svc.UpdateMeta(ctx, skill.ID, &category, &author, nil, nil, nil)
 	require.NoError(t, err)
 	require.True(t, updated.UpdatedAt.After(skill.UpdatedAt),
 		"the repo-side bump is what the drift markers are computed from")
@@ -992,7 +993,7 @@ func TestPlatformSkillMetaNoopKeepsUpdatedAt(t *testing.T) {
 
 	fx.clock.advance(2 * time.Millisecond)
 	sameCategory, sameAuthor := stored.Category, stored.Author
-	updated, err := fx.svc.UpdateMeta(ctx, skill.ID, &sameCategory, &sameAuthor, nil, nil)
+	updated, err := fx.svc.UpdateMeta(ctx, skill.ID, &sameCategory, &sameAuthor, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, stored.UpdatedAt, updated.UpdatedAt,
 		"a no-op meta edit must not stamp updated_at")
@@ -1101,16 +1102,16 @@ func TestPlatformSkillMetaRejectsUnregisteredCategory(t *testing.T) {
 	skill := fx.registerSkill(t, "pdf-tools", "body v1")
 
 	category := "ghost"
-	_, err := fx.svc.UpdateMeta(ctx, skill.ID, &category, nil, nil, nil)
+	_, err := fx.svc.UpdateMeta(ctx, skill.ID, &category, nil, nil, nil, nil)
 	require.ErrorIs(t, err, ErrPlatformSkillCategoryNotFound)
 
 	category = "docs"
-	updated, err := fx.svc.UpdateMeta(ctx, skill.ID, &category, nil, nil, nil)
+	updated, err := fx.svc.UpdateMeta(ctx, skill.ID, &category, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "docs", updated.Category)
 
 	empty := ""
-	updated, err = fx.svc.UpdateMeta(ctx, skill.ID, &empty, nil, nil, nil)
+	updated, err = fx.svc.UpdateMeta(ctx, skill.ID, &empty, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Empty(t, updated.Category)
 }
@@ -1130,24 +1131,64 @@ func TestPlatformSkillZhMetaRoundtrip(t *testing.T) {
 	require.Equal(t, "处理 PDF 的技能", created.ZhDescription)
 
 	zhName, zhDesc := "中文名已改", "更长的中文描述"
-	updated, err := fx.svc.UpdateMeta(ctx, created.ID, nil, nil, &zhName, &zhDesc)
+	updated, err := fx.svc.UpdateMeta(ctx, created.ID, nil, nil, &zhName, &zhDesc, nil)
 	require.NoError(t, err)
 	require.Equal(t, zhName, updated.ZhName)
 	require.Equal(t, zhDesc, updated.ZhDescription)
 
 	empty := ""
-	cleared, err := fx.svc.UpdateMeta(ctx, created.ID, nil, nil, &empty, &empty)
+	cleared, err := fx.svc.UpdateMeta(ctx, created.ID, nil, nil, &empty, &empty, nil)
 	require.NoError(t, err)
 	require.Empty(t, cleared.ZhName)
 	require.Empty(t, cleared.ZhDescription)
 
 	// A bundle re-register never clobbers the Chinese copy.
 	zhName = "保留"
-	noop, err := fx.svc.UpdateMeta(ctx, created.ID, nil, nil, &zhName, nil)
+	noop, err := fx.svc.UpdateMeta(ctx, created.ID, nil, nil, &zhName, nil, nil)
 	require.NoError(t, err)
 	rebundled, err := fx.svc.UpdateFromArchive(ctx, created.ID,
 		platformSkillZip(t, "pdf-tools", "v2"), "upload")
 	require.NoError(t, err)
 	require.Equal(t, "保留", rebundled.ZhName)
 	require.NotEqual(t, noop.BundleSHA256, rebundled.BundleSHA256)
+}
+
+// 000109：介绍与帮助网址 —— create 可带，meta PUT 可改/可清/校验 http(s)，
+// 且与 zh 元数据一样不会被 bundle 重注册覆盖。
+func TestPlatformSkillHelpURLMeta(t *testing.T) {
+	fx := newPlatformSkillFixture(t)
+	ctx := context.Background()
+	created, err := fx.svc.CreateFromArchive(ctx,
+		platformSkillZip(t, "helped-skill", "v1"), "upload",
+		PlatformSkillMeta{HelpURL: "https://docs.example.com/skills"})
+	require.NoError(t, err)
+	require.Equal(t, "https://docs.example.com/skills", created.HelpURL)
+
+	next := "https://wiki.example.org/helped"
+	updated, err := fx.svc.UpdateMeta(ctx, created.ID, nil, nil, nil, nil, &next)
+	require.NoError(t, err)
+	require.Equal(t, next, updated.HelpURL)
+
+	// 非 http(s)（含 javascript:/data:）一律拒绝。
+	bad := "javascript:alert(1)"
+	_, err = fx.svc.UpdateMeta(ctx, created.ID, nil, nil, nil, nil, &bad)
+	require.Error(t, err)
+	noHost := "notaurl"
+	_, err = fx.svc.UpdateMeta(ctx, created.ID, nil, nil, nil, nil, &noHost)
+	require.Error(t, err)
+
+	// 显式空串清除。
+	empty := ""
+	cleared, err := fx.svc.UpdateMeta(ctx, created.ID, nil, nil, nil, nil, &empty)
+	require.NoError(t, err)
+	require.Empty(t, cleared.HelpURL)
+
+	// bundle 重注册不触碰 help_url。
+	set := "https://docs.example.com/keep"
+	_, err = fx.svc.UpdateMeta(ctx, created.ID, nil, nil, nil, nil, &set)
+	require.NoError(t, err)
+	rebundled, err := fx.svc.UpdateFromArchive(ctx, created.ID,
+		platformSkillZip(t, "helped-skill", "v2"), "upload")
+	require.NoError(t, err)
+	require.Equal(t, set, rebundled.HelpURL)
 }

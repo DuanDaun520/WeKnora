@@ -132,6 +132,17 @@
           :autosize="{ minRows: 2, maxRows: 5 }"
         />
       </div>
+      <!-- 000109：介绍与帮助网址（可选）。填写后用户侧技能详情显示外链，
+           新窗口打开；留空不显示。仅 http(s)。 -->
+      <div class="meta-field meta-field--span2">
+        <span class="meta-field__label">{{ t('skillLibrary.helpUrlLabel') }}</span>
+        <t-input
+          v-model="helpUrlInput"
+          :placeholder="t('skillLibrary.helpUrlPlaceholder')"
+          :maxlength="1024"
+          :disabled="busy"
+        />
+      </div>
       <p v-if="isEdit && skill?.version" class="meta-version">
         {{ t('skillLibrary.currentVersion', { version: skill.version }) }}
       </p>
@@ -245,10 +256,11 @@ const categoryInput = ref('')
 const authorInput = ref('')
 const zhNameInput = ref('')
 const zhDescriptionInput = ref('')
+const helpUrlInput = ref('')
 const categoryOptions = ref<string[]>([])
 const categoriesLoading = ref(false)
 const savingMeta = ref(false)
-const metaBaseline = ref({ category: '', author: '', zhName: '', zhDescription: '' })
+const metaBaseline = ref({ category: '', author: '', zhName: '', zhDescription: '', helpUrl: '' })
 
 async function loadSkillCategoriesOnce() {
   if (categoryOptions.value.length) return
@@ -350,11 +362,13 @@ watch(
       author: props.skill?.author || '',
       zhName: props.skill?.zh_name || '',
       zhDescription: props.skill?.zh_description || '',
+      helpUrl: props.skill?.help_url || '',
     }
     categoryInput.value = metaBaseline.value.category
     authorInput.value = metaBaseline.value.author
     zhNameInput.value = metaBaseline.value.zhName
     zhDescriptionInput.value = metaBaseline.value.zhDescription
+    helpUrlInput.value = metaBaseline.value.helpUrl
     void loadSkillCategoriesOnce()
     if (props.skill) {
       await loadPlatformTenantsOnce()
@@ -441,7 +455,8 @@ async function persistBundle(): Promise<boolean> {
     } else {
       const zhName = zhNameInput.value.trim()
       const zhDescription = zhDescriptionInput.value.trim()
-      await createPlatformSkillFromFile(file, onProgress, category, author, zhName, zhDescription)
+      const helpUrl = helpUrlInput.value.trim()
+      await createPlatformSkillFromFile(file, onProgress, category, author, zhName, zhDescription, helpUrl)
     }
     return true
   } catch (e: any) {
@@ -489,11 +504,13 @@ async function persistMeta(): Promise<boolean> {
   const author = authorInput.value.trim()
   const zhName = zhNameInput.value.trim()
   const zhDescription = zhDescriptionInput.value.trim()
+  const helpUrl = helpUrlInput.value.trim()
   const same =
     category === metaBaseline.value.category &&
     author === metaBaseline.value.author &&
     zhName === metaBaseline.value.zhName &&
-    zhDescription === metaBaseline.value.zhDescription
+    zhDescription === metaBaseline.value.zhDescription &&
+    helpUrl === metaBaseline.value.helpUrl
   if (same) return true
   savingMeta.value = true
   try {
@@ -502,8 +519,9 @@ async function persistMeta(): Promise<boolean> {
       author,
       zh_name: zhName,
       zh_description: zhDescription,
+      help_url: helpUrl,
     })
-    metaBaseline.value = { category, author, zhName, zhDescription }
+    metaBaseline.value = { category, author, zhName, zhDescription, helpUrl }
     return true
   } catch (e: any) {
     MessagePlugin.error(e?.message || t('skillLibrary.toasts.metaFailed'))

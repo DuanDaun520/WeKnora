@@ -95,6 +95,10 @@ type userService struct {
 	memberService    interfaces.TenantMemberService
 	config           *config.Config
 	systemSettingSvc interfaces.SystemSettingService
+	// fileService/resourceCatalog back the avatar surface (user_avatar.go);
+	// nil-safe for partial DI graphs in tests.
+	fileService      interfaces.FileService
+	resourceCatalog  interfaces.ResourceCatalog
 }
 
 // NewUserService creates a new user service instance
@@ -105,6 +109,8 @@ func NewUserService(
 	tenantService interfaces.TenantService,
 	memberService interfaces.TenantMemberService,
 	systemSettingSvc interfaces.SystemSettingService,
+	fileService interfaces.FileService,
+	resourceCatalog interfaces.ResourceCatalog,
 ) interfaces.UserService {
 	return &userService{
 		userRepo:         userRepo,
@@ -113,6 +119,8 @@ func NewUserService(
 		memberService:    memberService,
 		config:           configInfo,
 		systemSettingSvc: systemSettingSvc,
+		fileService:      fileService,
+		resourceCatalog:  resourceCatalog,
 	}
 }
 

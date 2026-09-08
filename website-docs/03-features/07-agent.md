@@ -35,7 +35,7 @@ WeKnora 提供两种模式，在对话框顶部切换：
 | Token 估算与压缩 | `internal/agent/token/` | `Estimator`（BPE 估算）与 `CompressContext`（滑动裁剪） |
 | 记忆整合 | `internal/agent/memory/consolidator.go` | LLM 驱动的历史摘要（Memory Consolidation） |
 | 技能系统 | `internal/agent/skills/` | SKILL.md 的发现、加载与脚本执行（Progressive Disclosure） |
-| 执行沙箱 | `internal/sandbox/` | 技能脚本的 Docker / Cube / E2B 隔离执行与安全校验 |
+| 执行沙箱 | `internal/sandbox/` | 技能脚本的 Docker / Cube / E2B / OpenSandbox 隔离执行与安全校验 |
 | 工具审批 | `internal/agent/approval/gate.go` | MCP 危险工具的人工审批（HITL）与会话内 OAuth 授权 |
 | Agent 服务层 | `internal/application/service/agent_service.go` | 组装引擎：注册工具、解析 KB 元信息、初始化技能/沙箱/VLM |
 | 会话问答入口 | `internal/application/service/session_agent_qa.go` | 从 `CustomAgent` 构建运行时 `AgentConfig` 并执行 |
@@ -101,7 +101,7 @@ flowchart TB
         MCP["MCP 工具 mcp_{service}_{tool}"]
     end
     GATE["approval.Gate<br/>（HITL 审批 / OAuth）"]
-    SBX["sandbox.Manager<br/>（Docker / Cube / E2B）"]
+    SBX["sandbox.Manager<br/>（Docker / Cube / E2B / OpenSandbox）"]
     EB["event.EventBus"]
 
     H1 --> SQA --> AS --> ENG
@@ -416,7 +416,7 @@ Agent 侧的启停在 `configureSkillsFromAgent`（`internal/application/service
 
 ### 5.3 与沙箱（internal/sandbox）的关系
 
-`shell_exec(skill_name=...)` 在已安装技能的运行时里执行命令。Docker、CubeSandbox、E2B 均通过「设置 → 沙箱后端」的同一套空间配置与检查接口维护；远端模板从目标集群实时拉取，缺少 WeKnora 标准模板时自动创建。三者都是会话级持久沙箱，提供 shell_exec、附件暂存与产物收集。本机开发用 Docker 后端连本机 daemon；生产环境使用 E2B 协议后端：E2B Cloud、CubeSandbox，或任意 E2B 兼容控制面，接入方式见 `docs/sandbox-protocol.md`。
+`shell_exec(skill_name=...)` 在已安装技能的运行时里执行命令。Docker、CubeSandbox、E2B、OpenSandbox 均通过「设置 → 沙箱后端」的同一套空间配置与检查接口维护；远端模板从目标集群实时拉取，缺少 WeKnora 标准模板时自动创建。四者都是会话级持久沙箱，提供 shell_exec、附件暂存与产物收集。本机开发用 Docker 后端连本机 daemon；生产环境使用 E2B 协议后端：E2B Cloud、CubeSandbox，或任意 E2B 兼容控制面；已有 OpenSandbox 集群则用 `opensandbox` 后端（独立协议，非 E2B 兼容），接入方式见 `docs/sandbox-protocol.md` 与 `docs/sandbox-opensandbox-backend.md`。
 
 **Manager 与校验器**（`internal/sandbox/manager.go`、`validator.go`）：每次执行前，除非 `SkipValidation`，`ScriptValidator` 会做四类静态校验，任一命中即拒绝执行并返回 `ErrSecurityViolation`：
 

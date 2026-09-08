@@ -330,11 +330,28 @@ export default {
   },
   userProfile: {
     title: '用户信息',
-    description: '查看您的账户基础信息（工号、姓名、注册时间），并可修改登录密码',
+    description: '查看您的账户基础信息（头像、工号、姓名、注册时间），并可修改登录密码',
     employeeIdLabel: '工号',
     employeeIdDescription: '登录标识，创建后不可修改',
     nameLabel: '姓名',
     nameDescription: '账户显示姓名',
+    avatar: {
+      label: '头像',
+      description: '上传图片并裁剪为个人头像；不设置时使用默认头像',
+      upload: '上传头像',
+      change: '更换头像',
+      remove: '移除头像',
+      updated: '头像已更新',
+      removed: '已恢复默认头像',
+      removeFailed: '移除头像失败',
+      uploadFailed: '上传头像失败',
+      invalidType: '仅支持 PNG、JPG、WebP 格式的图片',
+      tooLarge: '图片不能超过 2MB',
+      cropTitle: '裁剪头像',
+      cropHint: '拖动调整位置，滚轮或滑杆缩放',
+      save: '保存',
+      noWorkspace: '请先加入工作空间后再设置头像',
+    },
     changePassword: {
       label: '修改密码',
       description: '使用当前密码验证后设置新密码。修改成功后所有设备上的登录状态将失效，需要重新登录。',
@@ -2067,6 +2084,9 @@ export default {
     zhNamePlaceholder: '填写列表展示的中文名称；留空则显示 SKILL.md 名称',
     zhDescriptionLabel: '描述',
     zhDescriptionPlaceholder: '填写中文描述，技能库列表显示其前 40 字；留空则显示 SKILL.md 描述',
+    // 000109：介绍与帮助网址（可选）。填写后用户侧技能详情显示外链（新窗口打开）。
+    helpUrlLabel: '介绍与帮助网址',
+    helpUrlPlaceholder: 'https://…（可不填；填写后技能详情会显示该链接）',
     // ---- 分类管理弹窗（000105：先创建后使用）----
     categoryManager: '分类管理',
     categoryManagerTitle: '技能分类管理',
@@ -4748,6 +4768,9 @@ export default {
       // 已暂时从菜单隐藏）。
       runtime: '模型',
       dataExtensions: '数据与扩展',
+      // 平台级系统设置：SSRF 白名单 / Docker 沙箱等（无空间管理员进不了
+      // /platform 外壳，控制台提供直达）。
+      systemAdmin: '系统管理',
       // billing: '统计与计费', // 用量看板并入「模型」后该分组不再有菜单项
     },
     // 「按空间代管」目标空间选择条：七个基础设施面板共用的顶部工具栏。
@@ -5470,6 +5493,7 @@ export default {
       backendDescriptions: {
         cube: '适合私有化或内网部署的自建 MicroVM 集群',
         e2b: 'E2B 托管服务或兼容 E2B 的集群',
+        opensandbox: '自建 OpenSandbox 集群（K8s 或 Docker runtime），生命周期与执行同源反代，无需泛域名',
         docker: '在本机 Docker 上为每个会话保留一个长驻容器，脚本和文件都落在同一容器里',
       },
       dockerDisabledAlert: '当前部署未启用 Docker 沙箱',
@@ -5608,12 +5632,17 @@ export default {
       e2bApiUrlOptional: '可留空 —— 留空时使用 SDK 默认值',
       e2bDomainOptional: '可留空 —— 留空时使用 SDK 默认值',
       e2bProxyUrlOptional: '自建 E2B 兼容集群的数据面网关地址；留空表示按 sandbox domain 直连（E2B Cloud 用法）',
+      opensandboxApiUrlHelp: 'OpenSandbox 生命周期服务端地址，必须以 /v1 结尾（例如 http://10.0.0.5:8080/v1），数据面经服务端反代同源访问。',
+      opensandboxApiKeyHelp: '服务端配置的 api_key；服务端未开启鉴权时也须填写任意非空值占位。',
+      opensandboxDeployGuide: 'OpenSandbox 部署与镜像要求',
+      opensandboxTtlHelp: '服务端按绝对到期时间回收沙箱（非空闲累计）。WeKnora 在每次会话继续时自动续期一个 TTL，因此该值近似「会话最长静默时间」；须不小于服务端 max_sandbox_timeout_seconds。留空按 1800 秒。',
       backends: {
         disabled: '禁用',
         local: '本地进程',
         docker: 'Docker',
         cube: 'CubeSandbox',
         e2b: 'E2B',
+        opensandbox: 'OpenSandbox',
       },
       apiUrl: 'API 端点',
       proxyUrl: 'Proxy 端点',
@@ -5790,8 +5819,14 @@ export default {
       },
     },
     skills: {
-      title: '技能目录',
-      description: '技能由控制台「技能库」分配到空间，装到一份或多份沙箱后供智能体启用。空间不再单独登记技能。',
+      // 000110：页面升级为「沙箱/Skills目录」——顶部报空间当前沙箱（控制台分配），
+      // 下面是技能目录；菜单与页头共用这个标题。
+      title: '沙箱/Skills目录',
+      description: '沙箱由系统管理员在控制台「沙箱连接」分配到空间；技能由「技能库」分配，装到沙箱镜像后供智能体启用。',
+      sandboxInfoTitle: '当前沙箱',
+      sandboxInfoEmpty: '空间还没有配置沙箱，带脚本的技能分配后无法运行。',
+      // 空间管理员看到的引导（无控制台权限）：控制台路由有系统管理员守卫。
+      sandboxManagedHint: '沙箱由系统管理员在管理后台统一配置',
       helpTooltip: '目录里的技能可以不装任何沙箱。脚本要跑起来，必须装进智能体所用的那份沙箱镜像。Docker、Cube、E2B 互不通用，装到几份就要装几次。',
       // 000099 空间侧只读：目录由系统管理员维护，空间管理员只看不动
       readonlyHint: '技能目录由系统管理员统一维护，此处仅查看。每个沙箱下方的状态表示该技能是否已写入其镜像。',
@@ -5809,7 +5844,7 @@ export default {
       addClearFile: '清除',
       emptyDescManaged: '本空间还没有技能。系统管理员在控制台「技能库」把技能分配到本空间后，这里会出现。',
       emptyDescReadonly: '本空间还没有技能。技能由系统管理员在控制台「技能库」分配到空间。',
-      emptyNoSandboxHint: '当前没有沙箱。带脚本的技能分配后无法运行，可先去配置沙箱。',
+      emptyNoSandboxHint: '当前没有沙箱。带脚本的技能分配后无法运行，沙箱由系统管理员在管理后台配置。',
       installSkill: '添加技能',
       installDrawerDesc: '安装到「{name}」的镜像。',
       installToSandbox: '安装到沙箱',
@@ -6228,10 +6263,11 @@ export default {
       fallbackPrompt: '兜底提示词',
       fallbackPromptPlaceholder: '留空使用系统默认提示词',
       skillsConfig: 'Skills技能',
-      // 000100：安装动作收归系统管理员，面向普通成员的文案不再引导「点安装」。
-      skillsConfigDesc: '先选择运行沙箱，再从下面列表选用技能。',
+      // 000110：编辑器不再让用户挑沙箱，只报「空间是否配置了沙箱」状态。
+      skillsConfigDesc: '技能脚本运行在空间配置的沙箱中，从列表选用即可。',
       skillsSelection: '技能列表',
       skillsSelectionDesc: '这里列出空间目录中的技能。',
+      skillsCount: '已配置 {count} 个技能',
       skillsAll: '全部',
       skillsSelected: '指定',
       skillsNone: '禁用',
@@ -6241,10 +6277,8 @@ export default {
       skillsGroupAvailable: '可用',
       skillsGroupUnavailable: '不可用',
       noSkillsAvailable: '空间目录里还没有技能。',
-      skillsNeedSandbox: '请先选择运行沙箱。',
-      goSandboxSettings: '管理沙箱',
       goSkillSettings: '管理技能',
-      sandboxManagedHint: '沙箱与技能由系统管理员统一配置，如有需要请联系系统管理员。',
+      sandboxManagedHint: '沙箱由系统管理员在控制台统一分配到空间；智能体运行技能时自动使用，无需在此选择。',
       installToThisSandbox: '安装到此沙箱',
       installShort: '安装',
       viewInstallProgress: '查看进度',
@@ -6254,9 +6288,8 @@ export default {
       skillNotReady: '尚未就绪',
       skillDisabledOnSandbox: '已在沙箱中停用',
       sandboxBackend: '运行沙箱',
-      sandboxBackendDefault: '不启用',
-      sandboxBackendHint: '未选择时不会执行技能脚本。',
-      sandboxBackendMissing: '配置已删除',
+      sandboxConfigured: '空间已配置沙箱',
+      sandboxNotConfigured: '空间未配置沙箱',
       sandboxNoConfigs: '当前空间还没有沙箱，技能脚本不会执行。',
       skillsInfoTitle: '技能与沙箱如何联动？',
       skillsInfoContent: '技能是预装的专业知识模块，脚本在所选沙箱中隔离执行。可用列表来自该沙箱已安装的技能；同一会话的沙箱一旦创建，后续附件、产物与销毁都会锁定在创建时那份配置上，改沙箱只影响之后新建的会话。'
@@ -6871,6 +6904,12 @@ export default {
     systemCreator: '系统',
     createdAt: '创建时间',
     basicInfo: '基本信息',
+    // 000109/000110：帮助网址外链、复制技能名、尾部元信息区
+    helpUrl: '帮助网址',
+    copyName: '复制名称',
+    nameCopied: '已复制',
+    copyFailed: '复制失败',
+    otherInfo: '更多信息',
     usage: '使用说明',
     usageHint: '在「智能体」编辑器的工具配置中选择后即可使用。',
     referencingAgents: '引用智能体',

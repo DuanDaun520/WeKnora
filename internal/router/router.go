@@ -62,6 +62,7 @@ type RouterParams struct {
 	MeEnvVarHandler                *handler.MeEnvVarHandler
 	EvaluationHandler              *handler.EvaluationHandler
 	AuthHandler                    *handler.AuthHandler
+	UserAvatarHandler              *handler.UserAvatarHandler
 	InitializationHandler          *handler.InitializationHandler
 	SystemHandler                  *handler.SystemHandler
 	MCPServiceHandler              *handler.MCPServiceHandler
@@ -233,7 +234,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		// so that sub-groups inherit it.
 		v1.Use(rbacGuards.apiKeyAuthorizer.Middleware())
 
-		RegisterAuthRoutes(v1, params.AuthHandler, rbacGuards)
+		RegisterAuthRoutes(v1, params.AuthHandler, params.UserAvatarHandler, rbacGuards)
 		RegisterTenantRoutes(v1, params.TenantHandler, params.TenantMemberHandler, params.AuditLogHandler, params.UsageReportHandler, rbacGuards)
 		RegisterKnowledgeBaseRoutes(v1, params.KBHandler, rbacGuards)
 		RegisterKnowledgeBaseActivityRoutes(v1, params.AuditLogHandler, rbacGuards)

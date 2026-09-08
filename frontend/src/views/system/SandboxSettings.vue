@@ -300,7 +300,8 @@ const cardMenu = (record: SandboxConfigRecord): CardMenuOption[] => {
   const options: CardMenuOption[] = [
     { content: t('common.edit'), value: 'edit' },
   ]
-  if (record.sandbox_type === 'cube' || record.sandbox_type === 'e2b') {
+  if (record.sandbox_type === 'cube' || record.sandbox_type === 'e2b'
+    || record.sandbox_type === 'opensandbox') {
     options.push({ content: t('settings.sandbox.viewSandboxes'), value: 'inventory' })
   }
   options.push({ content: t('common.delete'), value: 'delete', theme: 'error' })
@@ -350,7 +351,8 @@ function openSession(id: string) {
 // The endpoint host is what tells two configs of the same backend apart at a
 // glance, which is the whole point of allowing several of them.
 function endpointHost(record: SandboxConfigRecord): string {
-  const raw = record.config?.e2b?.api_url || record.config?.cube?.api_url || ''
+  const raw = record.config?.e2b?.api_url || record.config?.opensandbox?.api_url
+    || record.config?.cube?.api_url || ''
   if (!raw) return ''
   try {
     return new URL(raw).host
@@ -414,7 +416,7 @@ interface CardWarning {
   text: string
 }
 
-const REMOTE_BACKENDS = new Set(['cube', 'e2b'])
+const REMOTE_BACKENDS = new Set(['cube', 'e2b', 'opensandbox'])
 
 // Cards only surface blockers: healthy defaults (template present, timeout,
 // TTL, env count) belong in the editor, not on every tile. Nothing here
@@ -430,7 +432,7 @@ const cardWarnings = computed<Record<string, CardWarning[]>>(() => {
 function buildCardWarnings(record: SandboxConfigRecord): CardWarning[] {
   const warnings: CardWarning[] = []
   const config = record.config || {}
-  const remote = config.cube || config.e2b
+  const remote = config.cube || config.e2b || config.opensandbox
 
   if (REMOTE_BACKENDS.has(record.sandbox_type)) {
     if (!remote?.template_id?.trim()) {
@@ -439,8 +441,9 @@ function buildCardWarnings(record: SandboxConfigRecord): CardWarning[] {
         text: t('settings.sandbox.templateNotConfigured'),
       })
     }
-    // Cube API keys are optional; only E2B fails at runtime without one.
-    if (record.sandbox_type === 'e2b' && !remote?.api_key?.trim()) {
+    // Cube API keys are optional; E2B and OpenSandbox fail at runtime without one.
+    if ((record.sandbox_type === 'e2b' || record.sandbox_type === 'opensandbox')
+      && !remote?.api_key?.trim()) {
       warnings.push({
         key: 'credential',
         text: t('settings.sandbox.cardCredentialMissing'),

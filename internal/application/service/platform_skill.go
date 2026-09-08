@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -288,6 +289,9 @@ type PlatformSkillMeta struct {
 	Author        string
 	ZhName        string
 	ZhDescription string
+	// HelpURL is the optional 介绍与帮助网址 (000109): an http(s) URL the
+	// user-side detail dialog opens in a new tab. No frontmatter counterpart.
+	HelpURL string
 }
 
 // CreateFromArchive registers a new platform skill from an uploaded zip.
@@ -358,6 +362,13 @@ func (s *PlatformSkillService) create(
 		}
 		if m.ZhDescription != "" {
 			skill.ZhDescription = m.ZhDescription
+		}
+		// 000109: optional 介绍与帮助网址; SKILL.md has no counterpart.
+		if m.HelpURL != "" {
+			if err := ValidateSkillHelpURL(m.HelpURL); err != nil {
+				return nil, err
+			}
+			skill.HelpURL = m.HelpURL
 		}
 	}
 	if skill.Category == "" && bundle.Category != "" {
@@ -467,7 +478,7 @@ func (s *PlatformSkillService) update(
 // metadata into the materialized workspace rows — unlike update() above, which
 // never touches these columns.
 func (s *PlatformSkillService) UpdateMeta(
-	ctx context.Context, id string, category, author, zhName, zhDescription *string,
+	ctx context.Context, id string, category, author, zhName, zhDescription, helpURL *string,
 ) (*types.PlatformSkillEntity, error) {
 	skill, err := s.Get(ctx, id)
 	if err != nil {
@@ -475,6 +486,7 @@ func (s *PlatformSkillService) UpdateMeta(
 	}
 	nextCategory, nextAuthor := skill.Category, skill.Author
 	nextZhName, nextZhDescription := skill.ZhName, skill.ZhDescription
+	nextHelpURL := skill.HelpURL
 	if category != nil {
 		nextCategory = strings.TrimSpace(*category)
 	}
@@ -487,6 +499,12 @@ func (s *PlatformSkillService) UpdateMeta(
 	if zhDescription != nil {
 		nextZhDescription = strings.TrimSpace(*zhDescription)
 	}
+	if helpURL != nil {
+		nextHelpURL = strings.TrimSpace(*helpURL)
+		if err := ValidateSkillHelpURL(nextHelpURL); err != nil {
+			return nil, err
+		}
+	}
 	// A non-empty target category must be registered (000105); an explicit ""
 	// clears back to uncategorized and always stays allowed.
 	if nextCategory != "" {
@@ -495,15 +513,31 @@ func (s *PlatformSkillService) UpdateMeta(
 		}
 	}
 	if nextCategory == skill.Category && nextAuthor == skill.Author &&
-		nextZhName == skill.ZhName && nextZhDescription == skill.ZhDescription {
+		nextZhName == skill.ZhName && nextZhDescription == skill.ZhDescription &&
+		nextHelpURL == skill.HelpURL {
 		return skill, nil
 	}
 	if err := s.skills.UpdateMeta(
-		ctx, id, nextCategory, nextAuthor, nextZhName, nextZhDescription); err != nil {
+		ctx, id, nextCategory, nextAuthor, nextZhName, nextZhDescription, nextHelpURL); err != nil {
 		return nil, err
 	}
 	logger.Infof(ctx, "[platform-skill] updated meta of %s (%q)", id, skill.Name)
 	return s.skills.GetByID(ctx, id)
+}
+
+// ValidateSkillHelpURL guards the optional 介绍与帮助网址 (000109): the value
+// is opened by end users' browsers, so anything that is not a plain http(s)
+// URL is refused (javascript:/data: schemes must never ride this column).
+// Exported because the register and meta handlers pre-validate with it too.
+func ValidateSkillHelpURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return apperrors.NewBadRequestError("help URL must be a valid http(s) URL")
+	}
+	return nil
 }
 
 // ListCategories returns the category registry with per-name usage counts —
@@ -826,6 +860,7 @@ func (s *PlatformSkillService) materialize(
 		ctx, tenantID, archive, CatalogMeta{
 			Category: skill.Category,
 			Author:   skill.Author,
+			HelpURL:  skill.HelpURL,
 		})
 	if err != nil {
 		return nil, err
@@ -1024,6 +1059,7 @@ func (s *PlatformSkillService) pushRow(
 		ctx, row.TenantID, archive, CatalogMeta{
 			Category: skill.Category,
 			Author:   skill.Author,
+			HelpURL:  skill.HelpURL,
 		}); err != nil {
 		outcome.Status, outcome.Code = assignmentOutcomeError(err)
 		outcome.Message = err.Error()

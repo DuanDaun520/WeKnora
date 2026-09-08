@@ -51,6 +51,20 @@ func (s *mcpServiceService) CreateMCPService(ctx context.Context, service *types
 	if service.TransportType == types.MCPTransportStdio {
 		return fmt.Errorf("stdio transport is disabled for security reasons; please use SSE or HTTP Streamable transport instead")
 	}
+	// A URL-less row connects nowhere: the runtime MCP client fails with
+	// "URL is required for SSE transport" and the agent silently registers
+	// zero MCP tools. Handlers reject this with 400 first; this guard covers
+	// other internal callers.
+	if strings.TrimSpace(service.Name) == "" {
+		return fmt.Errorf("MCP service name is required")
+	}
+	if service.URL == nil || strings.TrimSpace(*service.URL) == "" {
+		transport := string(service.TransportType)
+		if transport == "" {
+			transport = string(types.MCPTransportSSE)
+		}
+		return fmt.Errorf("MCP service URL is required for %s transport", transport)
+	}
 	if err := mcp.ValidateServiceOutboundURLs(service); err != nil {
 		return err
 	}
@@ -285,6 +299,14 @@ func (s *mcpServiceService) UpdateMCPService(
 	// Update timestamp
 	if err := mcp.ValidateServiceOutboundURLs(existing); err != nil {
 		return err
+	}
+	// Post-merge the row must still be connectable: a URL-less non-stdio
+	// service fails at runtime client creation ("URL is required for SSE
+	// transport") and the agent silently registers zero MCP tools. Reject the
+	// write (e.g. a partial PUT that clears the URL) instead of persisting it.
+	if finalTransportType != types.MCPTransportStdio &&
+		(existing.URL == nil || strings.TrimSpace(*existing.URL) == "") {
+		return fmt.Errorf("MCP service URL is required for %s transport", finalTransportType)
 	}
 	existing.UpdatedAt = time.Now()
 

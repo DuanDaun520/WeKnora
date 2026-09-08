@@ -2,6 +2,7 @@ package interfaces
 
 import (
 	"context"
+	"io"
 	"time"
 
 	"github.com/Tencent/WeKnora/internal/types"
@@ -105,6 +106,19 @@ type UserService interface {
 	// preferences blob (PATCH semantics: only keys present in `patch`
 	// overwrite existing values). Returns the updated, persisted prefs.
 	UpdateUserPreferences(ctx context.Context, userID string, patch types.UserPreferences) (types.UserPreferences, error)
+	// SetUserAvatar stores avatar bytes via the default FileService under
+	// the user's home workspace (the request context's active workspace as
+	// fallback for tenantless users) and persists the returned storage ref
+	// in users.avatar, deleting the replaced ref best-effort. Returns a
+	// shallow copy of user with Avatar updated.
+	SetUserAvatar(ctx context.Context, user *types.User, data []byte, ext string) (*types.User, error)
+	// DeleteUserAvatar clears users.avatar and deletes the stored object
+	// best-effort. Idempotent when no avatar is set.
+	DeleteUserAvatar(ctx context.Context, user *types.User) (*types.User, error)
+	// OpenUserAvatar opens the user's stored avatar for reading and
+	// returns the reader plus the registered MIME type ("image/jpeg" as
+	// fallback when the catalog carries none).
+	OpenUserAvatar(ctx context.Context, user *types.User) (io.ReadCloser, string, error)
 }
 
 // UserRepository defines the user repository interface
@@ -135,6 +149,9 @@ type UserRepository interface {
 	// Single-column UPDATE so the login path never races whole-row
 	// preference writes; failures are the caller's to log, not act on.
 	UpdateLastLoginAt(ctx context.Context, userID string, at time.Time) error
+	// UpdateUserAvatar replaces users.avatar ("" clears it) with the same
+	// single-column, race-free write style as UpdateLastLoginAt.
+	UpdateUserAvatar(ctx context.Context, userID, avatar string) error
 	// DeleteUser deletes a user
 	DeleteUser(ctx context.Context, id string) error
 	// ListUsers lists users with pagination

@@ -206,6 +206,34 @@
               :disabled="retargetFrozen" @input="invalidateConnection" />
           </t-form-item>
         </template>
+
+        <template v-else-if="backend === 'opensandbox'">
+          <t-form-item :label="requiredLabel('apiUrl')" :status="fieldStatus('api_url')"
+            :tips="fieldTip('api_url')">
+            <t-input v-model="opensandbox.api_url" placeholder="http://10.0.0.5:8080/v1"
+              :disabled="retargetFrozen" @input="onConnectionInput('api_url')" />
+            <p class="section-help section-help--field">
+              {{ $t('settings.sandbox.opensandboxApiUrlHelp') }}
+            </p>
+          </t-form-item>
+          <t-form-item :label="requiredLabel('apiKey')" :status="fieldStatus('api_key')"
+            :tips="fieldTip('api_key')">
+            <t-input v-model="opensandbox.api_key" type="password"
+              :placeholder="secretInputPlaceholder('opensandbox')"
+              :disabled="retargetFrozen" @input="onConnectionInput('api_key')" />
+            <div class="field-hints">
+              <p class="section-help">
+                {{ storedSecrets.opensandbox
+                  ? $t('settings.sandbox.secretConfigured')
+                  : $t('settings.sandbox.opensandboxApiKeyHelp') }}
+              </p>
+              <a class="inline-guide-link" :href="opensandboxGuideUrl" target="_blank" rel="noopener noreferrer">
+                <t-icon name="link" />
+                {{ $t('settings.sandbox.opensandboxDeployGuide') }}
+              </a>
+            </div>
+          </t-form-item>
+        </template>
         <div class="private-endpoint-row">
           <div>
             <p class="private-endpoint-row__title">{{ $t('settings.sandbox.allowPrivateEndpoints') }}</p>
@@ -382,16 +410,24 @@
             <t-form-item :label="$t('settings.sandbox.httpTimeout')">
               <t-input-number v-if="backend === 'cube'" v-model="cube.http_timeout_sec" :min="0" theme="column"
                 placeholder="30" />
+              <t-input-number v-else-if="backend === 'opensandbox'" v-model="opensandbox.http_timeout_sec" :min="0"
+                theme="column" placeholder="30" />
               <t-input-number v-else v-model="e2b.http_timeout_sec" :min="0" theme="column" placeholder="30" />
             </t-form-item>
             <p class="section-help section-help--field">{{ $t('settings.sandbox.httpTimeoutHelp') }}</p>
             <t-form-item :label="$t('settings.sandbox.sandboxTtl')">
               <t-input-number v-if="backend === 'cube'" v-model="cube.cube_sandbox_ttl_seconds" :min="0"
                 theme="column" placeholder="1800" />
+              <t-input-number v-else-if="backend === 'opensandbox'"
+                v-model="opensandbox.opensandbox_sandbox_ttl_seconds" :min="0" theme="column"
+                placeholder="1800" />
               <t-input-number v-else v-model="e2b.e2b_sandbox_ttl_seconds" :min="0" theme="column"
                 placeholder="300" />
             </t-form-item>
-            <p class="section-help section-help--field">{{ $t('settings.sandbox.sandboxTtlHelp') }}</p>
+            <p v-if="backend === 'opensandbox'" class="section-help section-help--field">
+              {{ $t('settings.sandbox.opensandboxTtlHelp') }}
+            </p>
+            <p v-else class="section-help section-help--field">{{ $t('settings.sandbox.sandboxTtlHelp') }}</p>
           </template>
           <!--
             Docker has no provider-side timeout at all: an abandoned container
@@ -568,6 +604,7 @@ import {
   type SandboxConflict,
   type SandboxCubeConfig,
   type SandboxE2BConfig,
+  type SandboxOpenSandboxConfig,
   type SandboxDockerConfig,
   type SandboxTemplate,
   isNamedSandboxBackend,
@@ -625,6 +662,7 @@ const defaultDockerImage = 'wechatopenai/weknora-sandbox:main'
 
 const clusterGuideUrl = 'https://github.com/Tencent/WeKnora/blob/main/docs/sandbox-cluster.md'
 const e2bApiKeysUrl = 'https://e2b.dev/dashboard?tab=keys'
+const opensandboxGuideUrl = 'https://github.com/Tencent/WeKnora/blob/main/docs/sandbox-opensandbox-backend.md'
 
 const backendOptions = computed(() => {
   const types = [...NAMED_SANDBOX_BACKEND_TYPES]
@@ -651,10 +689,11 @@ const defaultTimeoutSec = ref<number | undefined>(undefined)
 const allowPrivateEndpoints = ref(false)
 const cube = reactive<SandboxCubeConfig>({})
 const e2b = reactive<SandboxE2BConfig>({})
+const opensandbox = reactive<SandboxOpenSandboxConfig>({})
 const docker = reactive<SandboxDockerConfig>({})
 // Tracks which secrets the tenant already has stored, so an empty input can
 // mean "keep the saved key" instead of "no key configured".
-const storedSecrets = reactive({ cube: false, e2b: false })
+const storedSecrets = reactive({ cube: false, e2b: false, opensandbox: false })
 const envRows = ref<{ key: string; value: string; stored?: boolean }[]>([])
 const skillRollout = ref<'next_turn' | 'new_session'>('next_turn')
 const inFlightFromSkills = ref(false)
@@ -666,11 +705,16 @@ const wizardStep = ref(0)
 let templatePollTimer: ReturnType<typeof setTimeout> | undefined
 
 // Remote backends additionally expose a template catalog and control-plane
-// settings. Cube, E2B and Docker still share the same save/check API.
-const isRemoteBackend = computed(() => backend.value === 'cube' || backend.value === 'e2b')
+// settings. Cube, E2B, OpenSandbox and Docker still share the same save/check
+// API.
+const isRemoteBackend = computed(() => backend.value === 'cube' || backend.value === 'e2b'
+  || backend.value === 'opensandbox')
 const hasImageCatalog = computed(() => isRemoteBackend.value || backend.value === 'docker')
 const currentTemplateId = computed(() => (
-  backend.value === 'cube' ? cube.template_id : backend.value === 'e2b' ? e2b.template_id : ''
+  backend.value === 'cube' ? cube.template_id
+    : backend.value === 'e2b' ? e2b.template_id
+      : backend.value === 'opensandbox' ? opensandbox.template_id
+        : ''
 )?.trim() || '')
 const selectedTemplate = computed(() => templates.value.find((item) => item.id === currentTemplateId.value))
 const clusterStandardTemplate = computed(() => templates.value.find((item) => item.standard && item.id))
@@ -841,6 +885,11 @@ const systemIdentityChanged = computed(() => {
     case 'docker':
       return norm(current.docker?.host) !== norm(saved.docker?.host)
         || norm(current.docker?.tls_cert_path) !== norm(saved.docker?.tls_cert_path)
+    case 'opensandbox':
+      // Same reasoning as Docker's single endpoint: execd rides the lifecycle
+      // server's own proxy, so the API URL is both planes at once.
+      return norm(current.opensandbox?.api_url) !== norm(saved.opensandbox?.api_url)
+        || norm(current.opensandbox?.api_key) !== norm(saved.opensandbox?.api_key)
     default:
       return false
   }
@@ -897,7 +946,7 @@ function checkDetail(item: SandboxCheckItem): string {
   if (!item.reason) return ''
   return t(`settings.sandbox.skipReasons.${item.reason}`, item.reason)
 }
-const secretInputPlaceholder = (target: 'cube' | 'e2b') => (
+const secretInputPlaceholder = (target: 'cube' | 'e2b' | 'opensandbox') => (
   storedSecrets[target] ? t('settings.sandbox.secretKeepHint') : t('settings.sandbox.apiKeyPlaceholder')
 )
 
@@ -907,6 +956,7 @@ const secretInputPlaceholder = (target: 'cube' | 'e2b') => (
 const REQUIRED_FIELDS: Record<string, string[]> = {
   cube: ['api_url', 'proxy_url', 'sandbox_domain', 'template_id'],
   e2b: ['api_key', 'template_id'],
+  opensandbox: ['api_url', 'api_key', 'template_id'],
   docker: ['image'],
 }
 
@@ -934,6 +984,7 @@ function onConnectionInput(field: string) {
 function submittedBackendValues(): Record<string, unknown> {
   if (backend.value === 'cube') return withStoredSecret({ ...cube }, storedSecrets.cube)
   if (backend.value === 'e2b') return withStoredSecret({ ...e2b }, storedSecrets.e2b)
+  if (backend.value === 'opensandbox') return withStoredSecret({ ...opensandbox }, storedSecrets.opensandbox)
   return { ...docker }
 }
 
@@ -993,9 +1044,11 @@ function reset() {
   // the previously edited config's fields into the next one opened.
   Object.keys(cube).forEach((key) => delete (cube as Record<string, unknown>)[key])
   Object.keys(e2b).forEach((key) => delete (e2b as Record<string, unknown>)[key])
+  Object.keys(opensandbox).forEach((key) => delete (opensandbox as Record<string, unknown>)[key])
   Object.keys(docker).forEach((key) => delete (docker as Record<string, unknown>)[key])
   Object.assign(cube, cfg.cube || {})
   Object.assign(e2b, cfg.e2b || {})
+  Object.assign(opensandbox, cfg.opensandbox || {})
   Object.assign(docker, cfg.docker || {})
   if (!Array.isArray(cube.dns_servers)) cube.dns_servers = []
   if (backend.value === 'docker' && !docker.image) {
@@ -1003,8 +1056,10 @@ function reset() {
   }
   storedSecrets.cube = isMaskedSecret(cube.api_key)
   storedSecrets.e2b = isMaskedSecret(e2b.api_key)
+  storedSecrets.opensandbox = isMaskedSecret(opensandbox.api_key)
   if (storedSecrets.cube) cube.api_key = ''
   if (storedSecrets.e2b) e2b.api_key = ''
+  if (storedSecrets.opensandbox) opensandbox.api_key = ''
   envRows.value = Object.entries(cfg.env_vars || {}).map(([key, value]) => (
     isMaskedSecret(value) ? { key, value: '', stored: true } : { key, value }
   ))
@@ -1072,9 +1127,13 @@ watch(() => props.visible, (open) => {
 
 function connectionReady(): boolean {
   if (!isRemoteBackend.value) return true
+  // OpenSandbox collects both planes' credentials on this step: its api_url is
+  // the lifecycle server (required up front), unlike E2B where it is optional.
   const required = backend.value === 'cube'
     ? ['api_url', 'proxy_url', 'sandbox_domain']
-    : ['api_key']
+    : backend.value === 'opensandbox'
+      ? ['api_url', 'api_key']
+      : ['api_key']
   const values = submittedBackendValues()
   const errors: Record<string, string> = {}
   for (const field of required) {
@@ -1088,6 +1147,7 @@ function connectionReady(): boolean {
 
 function selectTemplate(value: string | number) {
   if (backend.value === 'cube') cube.template_id = String(value)
+  else if (backend.value === 'opensandbox') opensandbox.template_id = String(value)
   else e2b.template_id = String(value)
   onFieldInput('template_id')
 }
@@ -1095,6 +1155,7 @@ function selectTemplate(value: string | number) {
 function clearTemplateSelection() {
   if (backend.value === 'cube') cube.template_id = ''
   if (backend.value === 'e2b') e2b.template_id = ''
+  if (backend.value === 'opensandbox') opensandbox.template_id = ''
   delete fieldErrors.value.template_id
 }
 
@@ -1321,6 +1382,9 @@ function collectPayload(): SandboxConfig {
   // validation (e.g. a stale private URL left in the other tab).
   if (backend.value === 'cube') payload.cube = withStoredSecret({ ...cube }, storedSecrets.cube)
   if (backend.value === 'e2b') payload.e2b = withStoredSecret({ ...e2b }, storedSecrets.e2b)
+  if (backend.value === 'opensandbox') {
+    payload.opensandbox = withStoredSecret({ ...opensandbox }, storedSecrets.opensandbox)
+  }
   if (backend.value === 'docker') payload.docker = { ...docker }
   return payload
 }

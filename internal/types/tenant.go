@@ -632,7 +632,7 @@ func (c *StorageEngineConfig) Scan(value interface{}) error {
 // It is self-contained: provider fields are not inherited from process
 // environment. Leaving a required provider field empty is rejected on save.
 type TenantSandboxConfig struct {
-	// SandboxType is cube, e2b, or docker; disabled is the hidden policy row.
+	// SandboxType is cube, e2b, opensandbox, or docker; disabled is the hidden policy row.
 	SandboxType string `json:"sandbox_type,omitempty"`
 
 	// ── 通用配置（跨后端生效）──────────────────────────────────
@@ -674,9 +674,10 @@ type TenantSandboxConfig struct {
 
 	// ── 后端专属配置（同一时刻只有一个生效，由 SandboxType 决定）───
 
-	Cube   *CubeSandboxConfig   `json:"cube,omitempty"`
-	E2B    *E2BSandboxConfig    `json:"e2b,omitempty"`
-	Docker *DockerSandboxConfig `json:"docker,omitempty"`
+	Cube        *CubeSandboxConfig        `json:"cube,omitempty"`
+	E2B         *E2BSandboxConfig         `json:"e2b,omitempty"`
+	Docker      *DockerSandboxConfig      `json:"docker,omitempty"`
+	OpenSandbox *OpenSandboxSandboxConfig `json:"opensandbox,omitempty"`
 }
 
 // CubeSandboxConfig addresses one CubeSandbox deployment. APIURL, ProxyURL,
@@ -725,6 +726,32 @@ type E2BSandboxConfig struct {
 	HTTPTimeoutSec int `json:"http_timeout_sec,omitempty"`
 
 	E2BSandboxTTLSeconds int `json:"e2b_sandbox_ttl_seconds,omitempty"`
+}
+
+// OpenSandboxSandboxConfig addresses one self-hosted OpenSandbox lifecycle
+// server (Docker or Kubernetes runtime). APIURL, APIKey and TemplateID are all
+// required: the API key authenticates both the lifecycle calls and the execd
+// traffic the server proxies, and unlike Cube the common deployments run with
+// a key. TemplateID is an image URI or a snapshot ID — a snapshot produced by
+// the skill-image chain is spawnable as-is.
+type OpenSandboxSandboxConfig struct {
+	// APIURL is the lifecycle server's base URL and MUST carry the /v1
+	// version prefix (e.g. "http://10.0.0.5:8080/v1"): the SDK concatenates
+	// paths onto it verbatim.
+	APIURL string `json:"api_url,omitempty"`
+	APIKey string `json:"api_key,omitempty"` // 加密
+	// TemplateID is the image URI or snapshot ID new sandboxes spawn from.
+	TemplateID string `json:"template_id,omitempty"`
+
+	// HTTPTimeoutSec bounds each HTTP call to the lifecycle API and execd,
+	// excluding command streams. 0 means use the built-in default (30s).
+	HTTPTimeoutSec int `json:"http_timeout_sec,omitempty"`
+
+	// OpenSandboxSandboxTTLSeconds is the absolute lifetime requested at
+	// creation; the adapter renews it on every Connect, which turns it into
+	// the session idle timeout. The server enforces a 60s floor and may cap
+	// it (server.max_sandbox_timeout_seconds).
+	OpenSandboxSandboxTTLSeconds int `json:"opensandbox_sandbox_ttl_seconds,omitempty"`
 }
 
 // DockerSandboxConfig addresses one Docker daemon. Image is required and plays
@@ -882,6 +909,11 @@ func (c *TenantSandboxConfig) Value() (driver.Value, error) {
 		e2b.APIKey = encrypt(e2b.APIKey)
 		cp.E2B = &e2b
 	}
+	if c.OpenSandbox != nil {
+		opensandbox := *c.OpenSandbox
+		opensandbox.APIKey = encrypt(opensandbox.APIKey)
+		cp.OpenSandbox = &opensandbox
+	}
 	// Keys stay readable so operators can still see which variables are set.
 	if len(c.EnvVars) > 0 {
 		envVars := make(map[string]string, len(c.EnvVars))
@@ -927,6 +959,9 @@ func (c *TenantSandboxConfig) Scan(value interface{}) error {
 	}
 	if c.E2B != nil {
 		c.E2B.APIKey = decrypt(c.E2B.APIKey, "e2b.api_key")
+	}
+	if c.OpenSandbox != nil {
+		c.OpenSandbox.APIKey = decrypt(c.OpenSandbox.APIKey, "opensandbox.api_key")
 	}
 	for name, stored := range c.EnvVars {
 		c.EnvVars[name] = decrypt(stored, "env_vars."+name)

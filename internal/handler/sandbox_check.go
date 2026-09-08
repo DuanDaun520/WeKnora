@@ -226,6 +226,15 @@ func sandboxConnectionCheckConfig(cfg *types.TenantSandboxConfig) *types.TenantS
 			e2b.TemplateID = "__connection_check__"
 		}
 		copy.E2B = &e2b
+	case sandbox.SandboxTypeOpenSandbox:
+		osc := types.OpenSandboxSandboxConfig{}
+		if copy.OpenSandbox != nil {
+			osc = *copy.OpenSandbox
+		}
+		if strings.TrimSpace(osc.TemplateID) == "" {
+			osc.TemplateID = "__connection_check__"
+		}
+		copy.OpenSandbox = &osc
 	}
 	return &copy
 }

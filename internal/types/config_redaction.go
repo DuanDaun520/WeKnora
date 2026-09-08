@@ -290,6 +290,13 @@ func SandboxConfigForResponse(cfg *TenantSandboxConfig, maskSecrets bool) *Tenan
 		}
 		out.E2B = &e2b
 	}
+	if out.OpenSandbox != nil {
+		osc := *out.OpenSandbox
+		if osc.APIKey != "" {
+			osc.APIKey = RedactedSecretPlaceholder
+		}
+		out.OpenSandbox = &osc
+	}
 	// EnvVars values are encrypted at rest and may hold credentials, so they
 	// are masked as a class rather than by name.
 	if len(out.EnvVars) > 0 {
@@ -332,6 +339,15 @@ func MergeSandboxConfigForUpdate(incoming, existing *TenantSandboxConfig) *Tenan
 		}
 		e2b.APIKey = PreserveIfRedacted(e2b.APIKey, prev.APIKey)
 		out.E2B = &e2b
+	}
+	if out.OpenSandbox != nil {
+		osc := *out.OpenSandbox
+		var prev OpenSandboxSandboxConfig
+		if existing != nil && existing.OpenSandbox != nil {
+			prev = *existing.OpenSandbox
+		}
+		osc.APIKey = PreserveIfRedacted(osc.APIKey, prev.APIKey)
+		out.OpenSandbox = &osc
 	}
 	// Only keys present in incoming survive: deleting a row in the UI must
 	// actually remove the variable rather than silently restore it.

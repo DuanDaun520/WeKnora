@@ -33,7 +33,7 @@ type PlatformSkillRepository interface {
 	// UpdateMeta writes only the definition metadata (category/author plus the
 	// 000106 Chinese display fields) and bumps updated_at the same way, so meta
 	// edits also drive assignment drift and reach workspaces through push.
-	UpdateMeta(ctx context.Context, id, category, author, zhName, zhDescription string) error
+	UpdateMeta(ctx context.Context, id, category, author, zhName, zhDescription, helpURL string) error
 
 	// Category registry (000105): categories are created FIRST in the console's
 	// category-manager dialog and skills then only reference existing names, so
@@ -155,17 +155,18 @@ func (r *platformSkillRepository) Update(ctx context.Context, e *types.PlatformS
 // server-side (not from the entity) so meta edits drive drift exactly like
 // bundle re-registers do; the soft-delete scope mirrors Update.
 func (r *platformSkillRepository) UpdateMeta(
-	ctx context.Context, id, category, author, zhName, zhDescription string,
+	ctx context.Context, id, category, author, zhName, zhDescription, helpURL string,
 ) error {
 	return r.db.WithContext(ctx).
 		Model(&types.PlatformSkillEntity{}).
 		Where("id = ?", id).
-		Select("category", "author", "zh_name", "zh_description", "updated_at").
+		Select("category", "author", "zh_name", "zh_description", "help_url", "updated_at").
 		Updates(map[string]any{
 			"category":       category,
 			"author":         author,
 			"zh_name":        zhName,
 			"zh_description": zhDescription,
+			"help_url":       helpURL,
 			"updated_at":     time.Now(),
 		}).Error
 }

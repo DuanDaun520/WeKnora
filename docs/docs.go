@@ -20074,6 +20074,31 @@ const docTemplate = `{
                 }
             }
         },
+        "github_com_Tencent_WeKnora_internal_types.OpenSandboxSandboxConfig": {
+            "type": "object",
+            "properties": {
+                "api_key": {
+                    "description": "加密",
+                    "type": "string"
+                },
+                "api_url": {
+                    "description": "APIURL is the lifecycle server's base URL and MUST carry the /v1\nversion prefix (e.g. \"http://10.0.0.5:8080/v1\"): the SDK concatenates\npaths onto it verbatim.",
+                    "type": "string"
+                },
+                "http_timeout_sec": {
+                    "description": "HTTPTimeoutSec bounds each HTTP call to the lifecycle API and execd,\nexcluding command streams. 0 means use the built-in default (30s).",
+                    "type": "integer"
+                },
+                "opensandbox_sandbox_ttl_seconds": {
+                    "description": "OpenSandboxSandboxTTLSeconds is the absolute lifetime requested at\ncreation; the adapter renews it on every Connect, which turns it into\nthe session idle timeout. The server enforces a 60s floor and may cap\nit (server.max_sandbox_timeout_seconds).",
+                    "type": "integer"
+                },
+                "template_id": {
+                    "description": "TemplateID is the image URI or snapshot ID new sandboxes spawn from.",
+                    "type": "string"
+                }
+            }
+        },
         "github_com_Tencent_WeKnora_internal_types.OrgMemberRole": {
             "type": "string",
             "enum": [
@@ -21674,8 +21699,11 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "opensandbox": {
+                    "$ref": "#/definitions/github_com_Tencent_WeKnora_internal_types.OpenSandboxSandboxConfig"
+                },
                 "sandbox_type": {
-                    "description": "SandboxType is cube, e2b, or docker; disabled is the hidden policy row.",
+                    "description": "SandboxType is cube, e2b, opensandbox, or docker; disabled is the hidden policy row.",
                     "type": "string"
                 },
                 "skill_image": {

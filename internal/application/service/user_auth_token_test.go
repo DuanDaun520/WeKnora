@@ -77,6 +77,7 @@ func (s *stubUserRepoForAuth) UpdateUser(context.Context, *types.User) error {
 	return nil
 }
 func (s *stubUserRepoForAuth) UpdateLastLoginAt(context.Context, string, time.Time) error { return nil }
+func (s *stubUserRepoForAuth) UpdateUserAvatar(context.Context, string, string) error { return nil }
 func (s *stubUserRepoForAuth) DeleteUser(context.Context, string) error { return nil }
 func (s *stubUserRepoForAuth) ListUsers(context.Context, int, int) ([]*types.User, error) {
 	return nil, nil

@@ -72,3 +72,25 @@ test('the catalog API surfaces visibility and include_hidden (000108)', () => {
   assert.match(skillApi, /include_hidden: '1'/)
   assert.match(skillApi, /listSkillCatalog\(includeHidden = false\)/)
 })
+
+test('page reports the workspace sandboxes above the catalog (000110)', () => {
+  // 页面升级为「沙箱/Skills目录」：菜单/页头共用 settings.skills.title；
+  // 顶部只读「当前沙箱」区列出控制台分配的沙箱（后端徽标+名称+目标），
+  // 无沙箱给空态提示。「去配置沙箱」跳控制台（requiresSystemAdmin 守卫），
+  // 只对系统管理员渲染；空间管理员给引导文案，否则点击会被静默弹回成死链。
+  assert.match(i18n, /title: '沙箱\/Skills目录'/)
+  assert.match(i18n, /sandboxInfoTitle: '当前沙箱'/)
+  assert.match(i18n, /sandboxManagedHint: '沙箱由系统管理员在管理后台统一配置'/)
+  assert.match(source, /class="sandbox-info__list"/)
+  assert.match(source, /v-for="cfg in skillConfigs"[^>]*class="sandbox-info__row"/)
+  assert.match(source, /<SandboxBackendBadge :type="cfg\.sandbox_type" size="sm" \/>/)
+  assert.match(source, /sandboxMetaLine\(cfg\)/)
+  assert.match(source, /canGoSandboxConsole = computed\(\(\) => authStore\.isSystemAdmin\)/)
+  assert.match(source, /v-if="canGoSandboxConsole"[\s\S]*?@click\.prevent="goSandboxSection"/)
+  assert.match(source, /v-else class="sandbox-info__managed"/)
+})
+
+test('install drawer pre-selects every remaining sandbox (000110)', () => {
+  // 控制台分配过沙箱就默认全选（旧版只在仅剩一份时预选）。
+  assert.match(source, /installTargetIds\.value = remaining\.map\(\(row\) => row\.id\)/)
+})

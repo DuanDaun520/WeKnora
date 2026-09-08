@@ -3,8 +3,7 @@
     <!-- 用户按钮 -->
     <div class="user-button" data-guide="user-menu" @click="toggleMenu">
       <div class="user-avatar">
-        <img v-if="userAvatar" :src="userAvatar" :alt="$t('common.avatar')" />
-        <span v-else class="avatar-placeholder">{{ userInitial }}</span>
+        <UserAvatar :src="avatarUrl" :name="userName" size="sm" />
       </div>
       <template v-if="!uiStore.sidebarCollapsed">
         <div class="user-info">
@@ -25,8 +24,7 @@
           @click="handleQuickNav('userprofile')" @keydown.enter.prevent="handleQuickNav('userprofile')"
           @keydown.space.prevent="handleQuickNav('userprofile')">
           <div class="dropdown-user-avatar">
-            <img v-if="userAvatar" :src="userAvatar" :alt="$t('common.avatar')" />
-            <span v-else class="dropdown-user-avatar-placeholder">{{ userInitial }}</span>
+            <UserAvatar :src="avatarUrl" :name="userName" size="sm" />
           </div>
           <div class="dropdown-user-meta">
             <div class="dropdown-user-name-row">
@@ -156,6 +154,8 @@ import { MessagePlugin } from 'tdesign-vue-next'
 import { getCurrentUser, logout as logoutApi, userInfoFromApi } from '@/api/auth'
 import { useI18n } from 'vue-i18n'
 import CreateTenantDialog from '@/components/CreateTenantDialog.vue'
+import UserAvatar from '@/components/UserAvatar.vue'
+import { useMyAvatar } from '@/composables/useMyAvatar'
 import {
   navigateAfterTenantSwitch,
   persistLastActiveTenantPreference,
@@ -225,19 +225,14 @@ const tenantSubmenuOpen = ref(false)
 const tenantSubmenuStyle = ref<Record<string, string>>({})
 let tenantSubmenuHideTimer: ReturnType<typeof setTimeout> | null = null
 
-// 用户信息
+// 用户信息（头像不在这里：users.avatar 是存储 ref，字节经 useMyAvatar
+// 单例拉成 blob URL，上传/移除后随 authStore 变化响应式更新）
 const userInfo = ref({
-  username: t('common.defaultUser'),
-  avatar: ''
+  username: t('common.defaultUser')
 })
 
 const userName = computed(() => userInfo.value.username)
-const userAvatar = computed(() => userInfo.value.avatar)
-
-// 用户名首字母（用于无头像时显示）
-const userInitial = computed(() => {
-  return userName.value.charAt(0).toUpperCase()
-})
+const { avatarUrl } = useMyAvatar()
 
 // 切换菜单显示
 const toggleMenu = () => {
@@ -475,8 +470,7 @@ const loadUserInfo = async () => {
     if (response.success && response.data && response.data.user) {
       const user = response.data.user
       userInfo.value = {
-        username: user.username || t('common.info'),
-        avatar: user.avatar || ''
+        username: user.username || t('common.info')
       }
       // 同时更新 authStore 中的用户信息，确保包含 can_access_all_tenants /
       // is_system_admin 等所有字段。MUST 走 userInfoFromApi 工厂——历史
@@ -578,27 +572,8 @@ onUnmounted(() => {
 .user-avatar {
   width: 24px;
   height: 24px;
-  border-radius: 50%;
-  overflow: hidden;
   flex-shrink: 0;
-  background: linear-gradient(135deg, var(--td-brand-color) 0%, var(--td-brand-color-active) 100%);
-  display: flex;
-  align-items: center;
-  justify-content: center;
   transition: width 0.2s ease, height 0.2s ease;
-
-  img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  .avatar-placeholder {
-    color: var(--td-text-color-anti);
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1;
-  }
 }
 
 .user-info {
@@ -679,26 +654,7 @@ onUnmounted(() => {
     width: 24px;
     height: 24px;
     margin-left: -4px;
-    border-radius: 50%;
-    overflow: hidden;
     flex-shrink: 0;
-    background: linear-gradient(135deg, var(--td-brand-color) 0%, var(--td-brand-color-active) 100%);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-
-    img {
-      width: 100%;
-      height: 100%;
-      object-fit: cover;
-    }
-
-    .dropdown-user-avatar-placeholder {
-      color: var(--td-text-color-anti);
-      font-size: 12px;
-      font-weight: 600;
-      line-height: 1;
-    }
   }
 
   .dropdown-user-meta {

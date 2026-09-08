@@ -17,6 +17,11 @@ func TestTenantOptionalAPISurface(t *testing.T) {
 		{http.MethodGet, "/api/v1/auth/me", true},
 		{http.MethodPut, "/api/v1/auth/me", true},
 		{http.MethodPut, "/api/v1/auth/me/preferences", true},
+		// 头像三件套同为身份级：tenantless 引导管理员要能读/清自己的头像。
+		{http.MethodPost, "/api/v1/auth/me/avatar", true},
+		{http.MethodGet, "/api/v1/auth/me/avatar", true},
+		{http.MethodDelete, "/api/v1/auth/me/avatar", true},
+		{http.MethodPut, "/api/v1/auth/me/avatar", false},
 		{http.MethodPost, "/api/v1/tenants", true},
 		// Deployment-wide capability snapshot: the console's tenantless system
 		// admin must be able to fetch it before any workspace is bound, or the

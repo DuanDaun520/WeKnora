@@ -79,6 +79,28 @@ func enrichMCPCreatorNames(ctx context.Context, userSvc interfaces.UserService, 
 	}
 }
 
+// validateMCPServiceShape rejects rows that could never connect. Non-stdio
+// services need a URL — otherwise the runtime MCP client fails with
+// "URL is required for SSE transport" at register time and the agent silently
+// runs with zero MCP tools. The admin dialog's custom form layout once
+// bypassed frontend validation and saved a nameless/URL-less row (assigned to
+// workspaces, then dead at chat time); this is the backstop for both the
+// tenant route and the /system/admin mirror.
+func validateMCPServiceShape(service *types.MCPService) error {
+	if strings.TrimSpace(service.Name) == "" {
+		return errors.NewBadRequestError("MCP service name is required")
+	}
+	if service.TransportType != types.MCPTransportStdio &&
+		(service.URL == nil || strings.TrimSpace(*service.URL) == "") {
+		transport := string(service.TransportType)
+		if transport == "" {
+			transport = string(types.MCPTransportSSE)
+		}
+		return errors.NewBadRequestError("MCP service URL is required for " + transport + " transport")
+	}
+	return nil
+}
+
 // CreateMCPService godoc
 // @Summary      创建MCP服务
 // @Description  创建新的MCP服务配置
@@ -108,6 +130,11 @@ func (h *MCPServiceHandler) CreateMCPService(c *gin.Context) {
 		return
 	}
 	service.TenantID = tenantID
+
+	if err := validateMCPServiceShape(&service); err != nil {
+		c.Error(err)
+		return
+	}
 
 	// SSRF validation for MCP service URL
 	if service.URL != nil && *service.URL != "" {

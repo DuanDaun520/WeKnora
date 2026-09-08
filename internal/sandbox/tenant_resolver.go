@@ -182,7 +182,7 @@ func (r *tenantSandboxResolver) Resolve(
 	switch effective.Type {
 	case SandboxTypeDisabled:
 		return NewDisabledManager(), nil
-	case SandboxTypeCube, SandboxTypeE2B, SandboxTypeDocker:
+	case SandboxTypeCube, SandboxTypeE2B, SandboxTypeDocker, SandboxTypeOpenSandbox:
 		client, err := r.buildClient(effective)
 		if err != nil {
 			return nil, err
@@ -223,6 +223,14 @@ func (r *tenantSandboxResolver) buildClient(cfg *Config) (RemoteSandboxClient, e
 		// reached over a unix socket as often as over TCP. It installs the
 		// same guarded dialer for TCP endpoints (see newDockerEngineClient).
 		return NewDockerRemoteClient(cfg)
+	case SandboxTypeOpenSandbox:
+		// OpenSandbox is single-origin (execd rides the lifecycle server's
+		// proxy), so the gateway pool reduces to the shared control
+		// transport — same reasoning as a plain E2B Cloud config.
+		if cfg.AllowPrivateEndpoints {
+			return NewOpenSandboxRemoteClientWithPool(cfg, r.privateGatewayTransports)
+		}
+		return NewOpenSandboxRemoteClientWithPool(cfg, r.gatewayTransports)
 	default:
 		return nil, fmt.Errorf("sandbox: provider %q has no remote client", cfg.Type)
 	}
@@ -255,6 +263,9 @@ func NewRemoteClientForCheck(cfg *Config) (RemoteSandboxClient, error) {
 			return nil, err
 		}
 		return NewDockerRemoteClientForCheck(cfg)
+	case SandboxTypeOpenSandbox:
+		return NewOpenSandboxRemoteClientWithPool(cfg, NewSandboxGatewayTransportPoolWithPolicy(nil,
+			OutboundURLPolicy{AllowPrivate: cfg.AllowPrivateEndpoints}))
 	default:
 		return nil, fmt.Errorf("sandbox: provider %q cannot be probed", cfg.Type)
 	}

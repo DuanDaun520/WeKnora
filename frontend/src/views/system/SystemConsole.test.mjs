@@ -51,3 +51,22 @@ test('the skill panel moved back to workspace Settings', () => {
   assert.match(source, /section: 'skill-catalog'/)
   assert.match(source, /\/platform\/settings/)
 })
+
+test('system settings (SSRF whitelist / docker toggle) is reachable from the console', () => {
+  // 平台级系统设置原挂在 /platform 外壳的「系统管理」组，bootstrap 系统
+  // 管理员无空间绑定打不开外壳；作为独立 section 迁入控制台直达。
+  assert.match(source, /'system-settings'/)
+  const validBlock = source.match(/const VALID_SECTIONS: ConsoleSection\[\] = \[([\s\S]*?)\]/)
+  assert.ok(validBlock, 'VALID_SECTIONS literal should exist')
+  assert.match(validBlock[1], /'system-settings'/)
+  assert.match(source, /SystemSettings v-else-if="currentSection === 'system-settings'"/)
+  assert.match(source, /key: 'system-settings'/)
+  assert.match(source, /t\('settings\.system'\)/)
+  // 代管面板集合里不应出现 system-settings（它无空间维度）。
+  const managedBlock = source.match(
+    /const MANAGED_SECTIONS = new Set<ConsoleSection>\(\[([\s\S]*?)\]\)/,
+  )
+  assert.ok(managedBlock, 'MANAGED_SECTIONS literal should exist')
+  assert.doesNotMatch(managedBlock[1], /'system-settings'/)
+  assert.match(source, /menuGroups\.systemAdmin/)
+})
