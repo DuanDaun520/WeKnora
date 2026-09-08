@@ -1,12 +1,15 @@
 # ============================================================================
 # 知枢(zhishu) 局域网生产部署 —— docker compose override
 #
-# 用法：与仓库根 docker-compose.yml 放在同一目录（服务器端 /opt/zhishu）：
-#   1. cp .env.example 到同目录，运行 ./gen-env.sh 生成 .env（含 ZHISHU_* 镜像变量）
-#   2. docker compose -p zhishu --profile minio up -d
+# 用法：与仓库根 docker-compose.yml 放在同一目录（服务器端 /home/zhishu）：
+#   1. mkdir -p /home/zhishu/data/{postgres,minio,redis,files}
+#   2. cp .env.example 到同目录，运行 ./gen-env.sh 生成 .env（含 ZHISHU_* 镜像变量）
+#   3. docker compose -p zhishu --profile minio up -d
 #
-# 作用：仅覆盖 自建镜像 + 容器命名（统一 zhishu- 前缀）+ redis 持久卷，
-#       其余全部继承根 docker-compose.yml。
+# 作用（其余全部继承根 docker-compose.yml）：
+#   1. 覆盖自建镜像 + 容器命名统一 zhishu-* 前缀；
+#   2. redis 补持久卷（根 compose 未给，而 redis 以 --appendonly yes 运行）；
+#   3. 持久数据卷 bind 到 /home/zhishu/data/*（用户指定大分区，避免落在 docker data-root）。
 #   自建镜像: app / frontend（含知枢定制）
 #   官方镜像: docreader / postgres(paradedb) / redis / minio（不覆盖 image）
 # ============================================================================
@@ -27,8 +30,6 @@ services:
 
   redis:
     container_name: zhishu-redis
-    # 根 compose 未给 redis 声明卷，而 redis 以 --appendonly yes 运行，
-    # AOF 只落在容器可写层——重建容器即丢。这里补一个持久卷挂到 /data。
     volumes:
       - redis-data:/data
 
@@ -36,5 +37,30 @@ services:
     container_name: zhishu-minio
 
 volumes:
-  # 实际卷名（-p zhishu 下）= zhishu_redis-data
+  # 服务实际引用名见根 compose；下面把对应命名卷改成指向 /home 的 bind。
+  # 目录须先由 mkdir 创建（README 有），postgres/minio 首启会 chown/写入。
+  postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/zhishu/data/postgres
+  minio_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/zhishu/data/minio
   redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/zhishu/data/redis
+  # STORAGE_TYPE=minio 时该卷基本闲置，一并归到 /home 保持数据目录统一。
+  data-files:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/zhishu/data/files

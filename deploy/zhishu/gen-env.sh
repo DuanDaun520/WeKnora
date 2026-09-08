@@ -28,11 +28,14 @@ if [ -f "$OUT" ] && [ "${1:-}" != "--force" ]; then
 fi
 
 # ============================ 可配置（首次修改这里） ============================
-# 镜像仓库 —— 与 ./build-and-push.sh 保持一致
-#   阿里云 ACR 个人版：  registry.cn-hangzhou.aliyuncs.com
-#   腾讯云 TCR 个人版：  ccr.ccs.tencentcloud.com
-REG_ENDPOINT="${ZHISHU_REG_ENDPOINT:-registry.cn-hangzhou.aliyuncs.com}"
-REG_NAMESPACE="${ZHISHU_REG_NAMESPACE:-zhishu}"     # 控制台里建的命名空间
+# 镜像仓库 —— 局域网自建私有 registry:2（HTTP，需两端 daemon 配 insecure-registries）
+#   REG_ENDPOINT = 仓库 host:port；REG_NAMESPACE = 镜像命名空间
+#   zhishu-app/ui 推拉均走内网 10.0.3.109:5000
+# 若要改用国内云镜像仓库，改成（并在本机 docker login）：
+#   阿里云 ACR 个人版:  REG_ENDPOINT=registry.cn-hangzhou.aliyuncs.com
+#   腾讯云 TCR 个人版:  REG_ENDPOINT=ccr.ccs.tencentcloud.com
+REG_ENDPOINT="${ZHISHU_REG_ENDPOINT:-10.0.3.109:5000}"
+REG_NAMESPACE="${ZHISHU_REG_NAMESPACE:-zhishu}"
 TAG="${ZHISHU_TAG:-$(date +%Y%m%d)}"                # 与本机 build-and-push.sh 的 TAG 一致
 
 # 业务库 / MinIO 桶
@@ -40,8 +43,11 @@ DB_USER="${ZHISHU_DB_USER:-zhishu}"
 DB_NAME="${ZHISHU_DB_NAME:-zhishu}"
 MINIO_BUCKET="${ZHISHU_MINIO_BUCKET:-zhishu}"
 
+# 服务器局域网 IP（访问入口/提示用；按实际内网 IP 修改）
+LAN_IP="${ZHISHU_LAN_IP:-10.0.3.109}"
+
 # 端口（局域网直连入口 / 本机调试口 / minio 仅回环）
-FRONTEND_PORT="${ZHISHU_FRONTEND_PORT:-8088}"      # 浏览器 http://<服务器IP>:8088
+FRONTEND_PORT="${ZHISHU_FRONTEND_PORT:-8088}"      # 浏览器 http://${LAN_IP}:8088
 APP_PORT="${ZHISHU_APP_PORT:-127.0.0.1:18080}"     # 仅供本机调试，不对外
 # ===============================================================================
 
@@ -116,12 +122,12 @@ echo "已生成 $OUT"
 echo "------------------------------------------------------------------------"
 echo " 应用镜像 : $ZHISHU_APP_IMAGE"
 echo " 前端镜像 : $ZHISHU_UI_IMAGE"
-echo " 访问入口 : http://<服务器IP>:$FRONTEND_PORT"
-echo " MinIO    : bucket=$MINIO_BUCKET，S3/控制台绑定 127.0.0.1（不对外）"
+echo " 访问入口 : http://${LAN_IP}:${FRONTEND_PORT}"
+echo " MinIO    : bucket=${MINIO_BUCKET}，S3/控制台仅回环 127.0.0.1（不对外）"
 echo " 管理员账号 : admin"
 echo " 管理员密码 : $ADMIN_PASSWORD   <-- 请立即抄入密码管理器"
 echo "------------------------------------------------------------------------"
 echo "下一步："
-echo "  docker login $REG_ENDPOINT"
+echo "  （局域网 registry 10.0.3.109:5000 无需 docker login；若改用了需认证的云仓库请先登录）"
 echo "  docker compose -p zhishu --profile minio pull"
 echo "  docker compose -p zhishu --profile minio up -d"
