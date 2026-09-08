@@ -129,7 +129,7 @@ curl -s http://127.0.0.1:8088/ | head       # 返回 HTML 即通
 > 首启若 app 日志报 bucket 不存在（WeKnora 未必自动建桶），补建一次：
 > ```bash
 > cd /home/zhishu && set -a && . ./.env && set +a
-> docker run --rm --network WeKnora-network \
+> docker run --rm --network zhishu_WeKnora-network \
 >   -e MC_HOST_zhishu="http://${MINIO_ACCESS_KEY_ID}:${MINIO_SECRET_ACCESS_KEY}@minio:9000" \
 >   minio/mc:latest mb --ignore-existing "zhishu/$MINIO_BUCKET_NAME"
 > ```

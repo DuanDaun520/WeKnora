@@ -35,6 +35,8 @@ services:
 
   minio:
     container_name: zhishu-minio
+    # 根 compose 未给 minio 设 restart，默认 no——daemon 重启后不会自愈。
+    restart: unless-stopped
 
 volumes:
   # 服务实际引用名见根 compose；下面把对应命名卷改成指向 /home 的 bind。

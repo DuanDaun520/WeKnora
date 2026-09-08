@@ -300,6 +300,13 @@ func (c *OpenSandboxRemoteClient) Create(
 		// An image URI always carries a tag/digest colon or a registry/repo
 		// slash; snapshot IDs are opaque tokens with neither.
 		req.Image = &opensandbox.ImageSpec{URI: template}
+		// The lifecycle API rejects an image without an explicit entrypoint
+		// (422 "Entrypoint is required when image is provided"). PID 1 only
+		// needs to keep the sandbox alive: execd traffic rides the lifecycle
+		// server's own endpoint proxy, and idle policy is enforced through
+		// RenewExpiration on Connect, not the image's CMD. The SDK's stock
+		// keep-alive is therefore the right neutral default.
+		req.Entrypoint = append([]string(nil), opensandbox.DefaultEntrypoint...)
 	} else {
 		req.SnapshotID = template
 	}
