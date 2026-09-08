@@ -404,10 +404,11 @@ const navGroups = computed<NavGroup[]>(() => {
     },
     {
       // IM / 网页嵌入 / Claw / Chrome 已隐藏或迁组，发布集成只剩 API。
+      // API 集成已隐藏，该分组暂时不显示
       key: 'integrations',
       label: t('integrations.title'),
       items: pickItems([
-        integrationSectionKey('api'),
+        // integrationSectionKey('api'), // 隐藏 API 集成菜单
       ]),
     },
     {

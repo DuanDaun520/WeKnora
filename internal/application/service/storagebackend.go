@@ -20,6 +20,7 @@ import (
 
 type StorageBackendService struct {
 	repo            interfaces.StorageBackendRepository
+	platformRepo    interfaces.PlatformStorageEngineRepository
 	db              *gorm.DB
 	resourceCatalog interfaces.ResourceCatalog
 }
@@ -37,6 +38,22 @@ func NewStorageBackendService(
 		service.resourceCatalog = catalogs[0]
 	}
 	return service
+}
+
+// NewStorageBackendServiceWithPlatformRepo creates a storage backend service
+// with platform storage engine support.
+func NewStorageBackendServiceWithPlatformRepo(
+	repo interfaces.StorageBackendRepository,
+	platformRepo interfaces.PlatformStorageEngineRepository,
+	db *gorm.DB,
+	catalog interfaces.ResourceCatalog,
+) *StorageBackendService {
+	return &StorageBackendService{
+		repo:            repo,
+		platformRepo:    platformRepo,
+		db:              db,
+		resourceCatalog: catalog,
+	}
 }
 
 // NewStorageBackendServiceWithResources is the production DI constructor.
@@ -329,6 +346,24 @@ func (s *StorageBackendService) ResolveFileService(ctx context.Context, tenant *
 		return nil, "", fmt.Errorf("workspace context missing")
 	}
 	tenant = s.hydrateTenantStorage(ctx, tenant)
+
+	// 1. Priority: Platform storage engine assigned to tenant
+	if s.platformRepo != nil && tenant.PlatformStorageEngineID != nil && strings.TrimSpace(*tenant.PlatformStorageEngineID) != "" {
+		engine, err := s.platformRepo.GetByID(ctx, strings.TrimSpace(*tenant.PlatformStorageEngineID))
+		if err != nil {
+			return nil, "", err
+		}
+		if engine != nil && engine.Status == types.PlatformStorageEngineStatusActive {
+			inner, resolvedProvider, err := filesvc.NewFileServiceFromStorageConfig(engine.Provider, engine.ToStorageEngineConfig(), localBaseDir)
+			if err != nil {
+				return nil, resolvedProvider, err
+			}
+			scoped := filesvc.NewBackendScopedFileService(engine.ID, inner)
+			return filesvc.NewResourceCatalogFileService(scoped, s.resourceCatalog), resolvedProvider, nil
+		}
+	}
+
+	// 2. Fallback: Legacy StorageBackend (backward compatibility)
 	backend, err := s.ResolveBackend(ctx, tenant, backendID, provider)
 	if err != nil {
 		return nil, "", err

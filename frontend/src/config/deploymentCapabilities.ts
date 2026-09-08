@@ -65,6 +65,9 @@ export const CONSOLE_SECTION_CAPABILITY: Partial<Record<string, DeploymentCapabi
   websearch: 'settings.websearch',
   vectorstore: 'settings.vectorstore',
   storage: 'settings.storage',
+  // Platform storage engines share the same capability gate as workspace storage.
+  // A deployment with storage support can configure platform-level engines.
+  'platform-storage': 'settings.storage',
   // Platform sandbox connections (000097) share the sandbox capability gate:
   // a deployment without sandbox support has nothing to configure here.
   'sandbox-connections': 'settings.sandbox',

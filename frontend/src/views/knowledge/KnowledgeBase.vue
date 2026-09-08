@@ -608,6 +608,7 @@ const parseStatusOptions = computed(() => [
 const selectedSource = ref('');
 // Source filter combines ingestion channels and the "manual"/"url" virtual
 // sources that the backend routes onto the `type` column.
+// 精简来源选项：仅保留全部来源、本地上传、URL导入、手动创建、API、浏览器扩展
 const sourceOptions = computed(() => [
   { label: t('knowledgeBase.allSources'), value: '' },
   { label: t('knowledgeBase.sourceUpload'), value: 'web' },
@@ -615,17 +616,6 @@ const sourceOptions = computed(() => [
   { label: t('knowledgeBase.sourceManual'), value: 'manual' },
   { label: t('knowledgeBase.sourceApi'), value: 'api' },
   { label: t('knowledgeBase.sourceBrowserExtension'), value: 'browser_extension' },
-  { label: t('knowledgeBase.channelFeishu'), value: 'feishu' },
-  { label: t('knowledgeBase.channelFeishuDrive'), value: 'feishu_drive' },
-  { label: t('knowledgeBase.channelNotion'), value: 'notion' },
-  { label: t('knowledgeBase.channelYuque'), value: 'yuque' },
-  { label: t('knowledgeBase.channelGitLab'), value: 'gitlab' },
-  { label: t('knowledgeBase.channelIma'), value: 'ima' },
-  { label: t('knowledgeBase.channelWechat'), value: 'wechat' },
-  { label: t('knowledgeBase.channelWecom'), value: 'wecom' },
-  { label: t('knowledgeBase.channelDingtalk'), value: 'dingtalk' },
-  { label: t('knowledgeBase.channelSlack'), value: 'slack' },
-  { label: t('knowledgeBase.channelIm'), value: 'im' },
 ]);
 // Date range as [start, end] in "YYYY-MM-DD" form (t-date-range-picker default).
 const updatedTimeRange = ref<string[]>([]);

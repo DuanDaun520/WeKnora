@@ -577,6 +577,8 @@ export interface PlatformTenant {
   owner_id: string
   created_at: string
   updated_at: string
+  platform_storage_engine_id?: string | null
+  platform_storage_engine_name?: string | null
 }
 
 export async function listPlatformTenants(): Promise<{ tenants: PlatformTenant[] }> {

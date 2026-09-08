@@ -60,6 +60,7 @@ type RouterParams struct {
 	SandboxConfigHandler           *handler.SandboxConfigHandler
 	SandboxSkillHandler            *handler.SandboxSkillHandler
 	MeEnvVarHandler                *handler.MeEnvVarHandler
+	ChromePluginKeyHandler         *handler.ChromePluginKeyHandler
 	EvaluationHandler              *handler.EvaluationHandler
 	AuthHandler                    *handler.AuthHandler
 	UserAvatarHandler              *handler.UserAvatarHandler
@@ -77,6 +78,7 @@ type RouterParams struct {
 	SystemWebSearchProviderHandler *handler.SystemWebSearchProviderHandler
 	VectorStoreHandler             *handler.VectorStoreHandler
 	StorageBackendHandler          *handler.StorageBackendHandler
+	PlatformStorageEngineHandler   *handler.PlatformStorageEngineHandler
 	StorageBackendResolver         interfaces.StorageBackendResolver
 	ResourceCatalog                interfaces.ResourceCatalog
 	FAQHandler                     *handler.FAQHandler
@@ -273,6 +275,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 		RegisterModelRoutes(v1, params.ModelHandler, params.ModelCredentialsHandler, rbacGuards)
 		RegisterSandboxConfigRoutes(v1, params.SandboxConfigHandler, params.SandboxSkillHandler, rbacGuards)
 		RegisterMyEnvVarRoutes(v1, params.MeEnvVarHandler)
+		RegisterChromePluginKeyRoutes(v1, params.ChromePluginKeyHandler)
 		// Usage metering reports + price config (docs/Token统计与计费设计.md).
 		RegisterUsageRoutes(v1, params.UsageReportHandler, rbacGuards)
 		RegisterEvaluationRoutes(v1, params.EvaluationHandler, rbacGuards)
@@ -290,6 +293,7 @@ func NewRouter(params RouterParams) *gin.Engine {
 	RegisterSystemAdminSkillRoutes(v1, params.SystemSkillHandler, rbacGuards)
 		RegisterVectorStoreRoutes(v1, params.VectorStoreHandler, rbacGuards)
 		RegisterStorageBackendRoutes(v1, params.StorageBackendHandler, rbacGuards)
+			RegisterPlatformStorageEngineRoutes(v1, params.PlatformStorageEngineHandler, rbacGuards)
 		RegisterCustomAgentRoutes(v1, params.CustomAgentHandler, rbacGuards)
 		RegisterUserFavoriteRoutes(v1, params.UserFavoriteHandler, rbacGuards)
 		RegisterSkillRoutes(v1, params.SkillHandler, rbacGuards)

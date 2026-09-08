@@ -51,6 +51,12 @@
         <template #description="{ row }">
           <span class="cell-muted">{{ row.description || '—' }}</span>
         </template>
+        <template #storageEngine="{ row }">
+          <t-tag v-if="row.platform_storage_engine_name" size="small" variant="light" theme="primary">
+            {{ row.platform_storage_engine_name }}
+          </t-tag>
+          <span v-else class="cell-muted">—</span>
+        </template>
         <template #quota="{ row }">{{ formatQuota(row) }}</template>
         <template #created_at="{ row }">{{ formatDate(row.created_at) }}</template>
         <template #tenantActions="{ row }">
@@ -286,6 +292,49 @@
         </t-form-item>
       </t-form>
     </t-dialog>
+
+    <!-- 存储引擎分配对话框 -->
+    <t-dialog
+      v-model:visible="storageAssignmentVisible"
+      :header="$t('systemConsole.tenants.assignStorageTitle', { name: storageAssignmentTenant?.name || '' })"
+      :confirm-btn="{ content: t('common.confirm'), theme: 'primary', loading: storageAssignmentSaving }"
+      :cancel-btn="$t('common.cancel')"
+      width="520px"
+      @confirm="submitStorageAssignment"
+      @close="storageAssignmentTenant = null"
+    >
+      <t-loading :loading="storageAssignmentLoading">
+        <div class="storage-assignment-content">
+          <p class="dialog-hint">{{ $t('systemConsole.tenants.assignStorageHint') }}</p>
+          <t-radio-group v-model="selectedStorageEngineId" class="storage-engine-list">
+            <t-radio :value="''" class="storage-engine-option">
+              <span class="storage-engine-name">{{ $t('systemConsole.tenants.useDefaultStorage') }}</span>
+              <span class="storage-engine-desc">{{ $t('systemConsole.tenants.useDefaultStorageDesc') }}</span>
+            </t-radio>
+            <t-radio
+              v-for="engine in platformStorageEngines"
+              :key="engine.id"
+              :value="engine.id"
+              class="storage-engine-option"
+              :disabled="engine.status !== 'active'"
+            >
+              <span class="storage-engine-name">
+                {{ engine.name }}
+                <t-tag v-if="engine.status !== 'active'" size="small" variant="light" theme="danger">{{ $t('settings.platformStorage.disabled') }}</t-tag>
+              </span>
+              <span class="storage-engine-desc">{{ engine.provider.toUpperCase() }} · {{ engineMeta(engine) }}</span>
+            </t-radio>
+          </t-radio-group>
+          <div v-if="platformStorageEngines.length === 0" class="empty-engines">
+            <t-empty :description="$t('systemConsole.tenants.noStorageEngines')">
+              <template #extra>
+                <t-button theme="primary" variant="text">{{ $t('systemConsole.tenants.goToCreateStorage') }}</t-button>
+              </template>
+            </t-empty>
+          </div>
+        </div>
+      </t-loading>
+    </t-dialog>
   </div>
 </template>
 
@@ -326,6 +375,7 @@ const tenantColumns = computed<PrimaryTableCol<PlatformTenant>[]>(() => [
   { colKey: 'name', title: t('systemConsole.tenants.colName'), width: 200 },
   { colKey: 'status', title: t('systemConsole.tenants.colStatus'), width: 90, cell: 'status' } as PrimaryTableCol<PlatformTenant>,
   { colKey: 'description', title: t('systemConsole.tenants.colDescription'), cell: 'description' } as PrimaryTableCol<PlatformTenant>,
+  { colKey: 'storageEngine', title: t('systemConsole.tenants.colStorageEngine'), width: 150, cell: 'storageEngine' } as PrimaryTableCol<PlatformTenant>,
   { colKey: 'quota', title: t('systemConsole.tenants.colQuota'), width: 130, cell: 'quota' } as PrimaryTableCol<PlatformTenant>,
   { colKey: 'created_at', title: t('systemConsole.users.colCreatedAt'), width: 120, cell: 'created_at' } as PrimaryTableCol<PlatformTenant>,
   { colKey: 'actions', title: t('systemConsole.users.colActions'), width: 280, align: 'right', cell: 'tenantActions' } as PrimaryTableCol<PlatformTenant>,
@@ -640,6 +690,7 @@ async function submitTenantEdit() {
 
 function tenantActionOptions(row: PlatformTenant) {
   return [
+    { value: 'storage', content: t('systemConsole.tenants.assignStorage') },
     { value: 'edit', content: t('systemConsole.tenants.edit') },
     row.status === 'disabled'
       ? { value: 'enable', content: t('systemConsole.tenants.enable') }
@@ -650,6 +701,9 @@ function tenantActionOptions(row: PlatformTenant) {
 
 async function onTenantAction(action: string, row: PlatformTenant) {
   switch (action) {
+    case 'storage':
+      await openStorageAssignmentDialog(row)
+      return
     case 'edit':
       openTenantEditDialog(row)
       return
@@ -691,6 +745,59 @@ async function removeTenant(row: PlatformTenant) {
   } catch (e: any) {
     MessagePlugin.error(e?.message || t('systemConsole.messages.opFailed'))
   }
+}
+
+// ---- 存储引擎分配 ----
+import {
+  assignStorageEngineToTenant,
+  unassignStorageEngineFromTenant,
+  listPlatformStorageEngines,
+  type PlatformStorageEngine,
+} from '@/api/platform-storage-engine'
+
+const storageAssignmentVisible = ref(false)
+const storageAssignmentTenant = ref<PlatformTenant | null>(null)
+const storageAssignmentLoading = ref(false)
+const storageAssignmentSaving = ref(false)
+const platformStorageEngines = ref<PlatformStorageEngine[]>([])
+const selectedStorageEngineId = ref<string>('')
+
+async function openStorageAssignmentDialog(row: PlatformTenant) {
+  storageAssignmentTenant.value = row
+  storageAssignmentVisible.value = true
+  storageAssignmentLoading.value = true
+  selectedStorageEngineId.value = row.platform_storage_engine_id || ''
+  try {
+    const resp = await listPlatformStorageEngines()
+    platformStorageEngines.value = resp.data || []
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('systemConsole.messages.loadFailed'))
+  } finally {
+    storageAssignmentLoading.value = false
+  }
+}
+
+async function submitStorageAssignment() {
+  if (!storageAssignmentTenant.value) return
+  storageAssignmentSaving.value = true
+  try {
+    if (selectedStorageEngineId.value) {
+      await assignStorageEngineToTenant(storageAssignmentTenant.value.id, selectedStorageEngineId.value)
+    } else {
+      await unassignStorageEngineFromTenant(storageAssignmentTenant.value.id)
+    }
+    MessagePlugin.success(t('systemConsole.messages.opSuccess'))
+    storageAssignmentVisible.value = false
+    void loadTenants()
+  } catch (e: any) {
+    MessagePlugin.error(e?.message || t('systemConsole.messages.opFailed'))
+  } finally {
+    storageAssignmentSaving.value = false
+  }
+}
+
+function engineMeta(engine: PlatformStorageEngine): string {
+  return engine.config.endpoint || engine.config.bucket_name || engine.config.path_prefix || t('settings.platformStorage.localStorage')
 }
 
 // ---- 工具 ----

@@ -120,6 +120,9 @@ type Tenant struct {
 	StorageEngineConfig *StorageEngineConfig `yaml:"storage_engine_config" json:"storage_engine_config" gorm:"type:jsonb"`
 	// DefaultStorageBackendID is the workspace default concrete storage instance.
 	DefaultStorageBackendID *string `yaml:"default_storage_backend_id" json:"default_storage_backend_id,omitempty" gorm:"column:default_storage_backend_id;type:varchar(36)"`
+	// PlatformStorageEngineID is the platform-level storage engine assigned to this workspace.
+	// When set, this takes precedence over DefaultStorageBackendID and legacy StorageEngineConfig.
+	PlatformStorageEngineID *string `yaml:"platform_storage_engine_id" json:"platform_storage_engine_id,omitempty" gorm:"column:platform_storage_engine_id;type:varchar(36)"`
 	// Chat history config: knowledge base configuration for indexing and searching chat messages via vector search
 	ChatHistoryConfig *ChatHistoryConfig `yaml:"chat_history_config" json:"chat_history_config" gorm:"type:jsonb"`
 	// Retrieval config: global search/retrieval parameters shared by knowledge search and message search

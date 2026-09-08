@@ -626,17 +626,9 @@ const navItems = computed(() => {
       { key: 'parser', icon: 'file-search', label: t('settings.parserEngine') },
       { key: 'multimodal', icon: 'image', label: t('knowledgeEditor.sidebar.multimodal') },
       { key: 'asr', icon: 'sound', label: t('knowledgeEditor.sidebar.asr') },
-      { key: 'storage', icon: 'cloud', label: t('knowledgeEditor.sidebar.storage') },
       { key: 'chunking', icon: 'file-copy', label: t('knowledgeEditor.sidebar.chunking') },
-      { key: 'graph', icon: 'chart-bubble', label: t('knowledgeEditor.sidebar.graph') },
       { key: 'advanced', icon: 'setting', label: t('knowledgeEditor.sidebar.advanced') }
     )
-    if (editorMode.value === 'edit' && activeKbId.value) {
-      items.push({ key: 'datasource', icon: 'cloud-download', label: t('knowledgeEditor.sidebar.datasource'), badge: dsCount.value || undefined })
-    }
-  }
-  if (editorMode.value === 'edit' && activeKbId.value && !authStore.isLiteMode) {
-    items.push({ key: 'share', icon: 'share', label: t('knowledgeEditor.sidebar.share') })
   }
   if (canViewActivity.value) {
     items.push({ key: 'activity', icon: 'history', label: t('knowledgeEditor.sidebar.activity') })
@@ -645,6 +637,7 @@ const navItems = computed(() => {
 })
 
 // 左侧导航分组（与 AgentEditorModal 对齐）
+// 隐藏共享管理/数据源/存储引擎/知识图谱配置菜单（storage/datasource/share/graph）
 const navGroups = computed(() => {
   const itemMap = new Map(navItems.value.map((item) => [item.key, item]))
   const pickItems = (keys: string[]) =>
@@ -658,17 +651,7 @@ const navGroups = computed(() => {
     {
       key: 'processing',
       label: t('knowledgeEditor.navGroups.processing'),
-      items: pickItems(['parser', 'chunking', 'multimodal', 'asr', 'graph', 'advanced']),
-    },
-    {
-      key: 'data',
-      label: t('knowledgeEditor.navGroups.data'),
-      items: pickItems(['storage', 'datasource']),
-    },
-    {
-      key: 'integration',
-      label: t('knowledgeEditor.navGroups.integration'),
-      items: pickItems(['share']),
+      items: pickItems(['parser', 'chunking', 'multimodal', 'asr', 'advanced']),
     },
     {
       key: 'management',

@@ -449,31 +449,43 @@ export default {
     },
     chrome: {
       title: '知识管理助手',
-      subtitle: '配合 WeKnora 自建服务使用：在任意网页侧边栏提问、剪藏内容、Markdown 速记，将浏览中的知识沉淀到你的知识库。',
+      subtitle: '配合 WeKnora Chrome 插件使用：在任意网页侧边栏提问、剪藏内容、Markdown 速记，将浏览中的知识沉淀到你的知识库。',
       capabilitiesTitle: '核心能力',
       stepsTitle: '配置步骤',
       openApiSettings: '打开 API 信息',
       copy: '复制',
-      copySuccess: '已复制 API 地址',
+      copySuccess: '已复制',
       installCta: '前往 Chrome 应用商店',
       installCtaHint: '官方扩展 · 将在新标签页打开',
       storeMeta: 'Chrome 应用商店 · v1.0.0',
+      // Chrome 插件 Key 相关
+      pluginKeyTitle: '生成配置 Key',
+      pluginKeyDesc: '生成专属 API Key 用于 Chrome 插件连接。Key 将自动配置知识库检索、对话、智能体读取和内容写入权限。',
+      loading: '加载中...',
+      generateKey: '生成 API Key',
+      generateKeyHint: '生成后可在 Chrome 插件中使用此 Key 连接服务',
+      generateKeyFailed: '生成 API Key 失败',
+      keyGenerated: 'API Key 已生成',
+      apiKeyLabel: 'API Key',
+      serviceUrlLabel: '服务地址',
+      deleteKey: '删除 Key',
+      deleteKeyTitle: '删除配置 Key',
+      deleteKeyConfirm: '删除后 Chrome 插件将无法使用此 Key 连接，确定删除？',
+      deleteKeyFailed: '删除 API Key 失败',
+      keyDeleted: 'API Key 已删除',
+      goToStore: '前往安装',
+      clickToEnlarge: '点击放大',
+      tutorialImage1: '插件连接示意图 1',
+      tutorialImage2: '插件连接示意图 2',
+      tutorialPreview: '教程图片预览',
       steps: {
-        connect: {
-          title: '在插件中完成连接',
-          desc: '打开插件设置，选择「企业/开发者」模式，填入服务 API 地址与 API Key。下方为当前服务地址。'
-        },
         install: {
           title: '安装 Chrome 插件',
-          desc: '前往 Chrome 应用商店安装「知识管理助手」。'
+          desc: '前往 Chrome 应用商店安装「知识管理助手」扩展。'
         },
-        port: {
-          title: '桌面版配置固定端口（推荐）',
-          desc: '使用 WeKnora 桌面版时，在 API 信息中设置固定端口（如 37841），避免每次启动后地址变化导致插件断连。'
-        },
-        api: {
-          title: '获取 API 凭证',
-          desc: '在「设置 → API 信息」中复制 API Key 与 API 地址。'
+        connect: {
+          title: '在插件中完成连接',
+          desc: '打开插件设置，将上方生成的 API Key 和服务地址填入对应输入框即可完成连接。'
         }
       },
       scenarios: {
@@ -4892,8 +4904,16 @@ export default {
       colName: '空间名称',
       colStatus: '状态',
       colDescription: '描述',
+      colStorageEngine: '存储引擎',
       colQuota: '存储用量',
       homeBadge: '默认空间',
+      assignStorage: '分配存储引擎',
+      assignStorageTitle: '分配存储引擎 · {name}',
+      assignStorageHint: '为该工作空间选择平台存储引擎。未选择时将使用默认存储配置。',
+      useDefaultStorage: '使用默认存储',
+      useDefaultStorageDesc: '使用环境变量或遗留存储后端配置',
+      noStorageEngines: '暂无可用存储引擎',
+      goToCreateStorage: '前往创建',
     },
     members: {
       title: '成员管理：{name}',
@@ -6005,7 +6025,34 @@ export default {
       saveFailed: '保存失败',
       defaultUpdated: '默认存储已更新',
       deleteTitle: '删除存储实例',
-      deleteConfirm: '确定删除“{name}”吗？',
+      deleteConfirm: '确定删除”{name}”吗？',
+      deleted: '已删除',
+      deleteFailed: '删除失败'
+    },
+    platformStorage: {
+      title: '平台存储引擎',
+      description: '平台管理员统一配置存储引擎，然后分配给各工作空间使用。每个空间只能绑定一个引擎。',
+      add: '添加存储引擎',
+      editTitle: '编辑存储引擎',
+      createTitle: '添加存储引擎',
+      basicSection: '基本信息',
+      nameLabel: '名称',
+      namePlaceholder: '例如：生产 MinIO、归档 COS',
+      providerLabel: '存储类型',
+      connectionSection: '连接配置',
+      advancedSection: '高级选项',
+      pathPrefixLabel: '路径前缀',
+      testConnection: '测试连接',
+      localStorage: '本地存储',
+      active: '启用',
+      disabled: '禁用',
+      testSuccess: '连接成功',
+      testFailed: '连接失败',
+      nameRequired: '请输入名称',
+      saveSuccess: '保存成功',
+      saveFailed: '保存失败',
+      deleteTitle: '删除存储引擎',
+      deleteConfirm: '确定删除”{name}”吗？有工作空间正在使用时无法删除。',
       deleted: '已删除',
       deleteFailed: '删除失败'
     },

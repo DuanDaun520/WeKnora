@@ -286,6 +286,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(repository.NewWebSearchProviderRepository))
 	must(container.Provide(repository.NewVectorStoreRepository))
 	must(container.Provide(repository.NewStorageBackendRepository))
+	must(container.Provide(repository.NewPlatformStorageEngineRepository))
 	must(container.Provide(repository.NewResourceRepository))
 	must(container.Provide(repository.NewTemporaryDocumentRepository))
 	must(container.Provide(service.NewResourceCatalog))
@@ -305,9 +306,10 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		return sr, nil
 	}))
 	must(container.Provide(service.NewVectorStoreService))
-	must(container.Provide(service.NewStorageBackendServiceWithResources))
+	must(container.Provide(service.NewStorageBackendServiceWithPlatformRepo))
 	must(container.Provide(func(s *service.StorageBackendService) interfaces.StorageBackendService { return s }))
 	must(container.Provide(func(s *service.StorageBackendService) interfaces.StorageBackendResolver { return s }))
+	must(container.Provide(service.NewPlatformStorageEngineService))
 
 	// Agent service layer (requires event bus, web search service)
 	// SessionService is passed as parameter to CreateAgentEngine method when creating AgentService
@@ -442,6 +444,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 		return handler.NewSandboxSkillHandler(s, streams)
 	}))
 	must(container.Provide(handler.NewMeEnvVarHandler))
+	must(container.Provide(handler.NewChromePluginKeyHandler))
 	must(container.Provide(handler.NewEvaluationHandler))
 	must(container.Provide(handler.NewInitializationHandler))
 	must(container.Provide(handler.NewAuthHandler))
@@ -461,6 +464,7 @@ func BuildContainer(container *dig.Container) *dig.Container {
 	must(container.Provide(handler.NewWebSearchProviderHandler))
 	must(container.Provide(handler.NewVectorStoreHandler))
 	must(container.Provide(handler.NewStorageBackendHandler))
+	must(container.Provide(handler.NewPlatformStorageEngineHandler))
 	must(container.Provide(handler.NewCustomAgentHandler))
 	must(container.Provide(handler.NewUserResourceFavoriteHandler))
 	must(container.Provide(func(s *service.TenantSkillService, users interfaces.UserService) *handler.SkillHandler {

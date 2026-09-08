@@ -29,3 +29,14 @@ type StorageBackendResolver interface {
 	ResolveFileService(ctx context.Context, tenant *types.Tenant, backendID, provider, localBaseDir string) (FileService, string, error)
 	ResolveBackend(ctx context.Context, tenant *types.Tenant, backendID, provider string) (*types.StorageBackend, error)
 }
+
+// PlatformStorageEngineRepository manages platform-level storage engines.
+// These are created by platform admins and assigned to workspaces.
+type PlatformStorageEngineRepository interface {
+	Create(ctx context.Context, engine *types.PlatformStorageEngine) error
+	GetByID(ctx context.Context, id string) (*types.PlatformStorageEngine, error)
+	GetByName(ctx context.Context, name string) (*types.PlatformStorageEngine, error)
+	List(ctx context.Context) ([]*types.PlatformStorageEngine, error)
+	Update(ctx context.Context, engine *types.PlatformStorageEngine) error
+	Delete(ctx context.Context, id string) error
+}

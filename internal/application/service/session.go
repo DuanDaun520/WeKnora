@@ -480,8 +480,16 @@ func (s *sessionService) DeleteSession(ctx context.Context, id string) error {
 	// Get tenant ID from context
 	tenantID := types.MustTenantIDFromContext(ctx)
 	userID := sessionUserIDFromContext(ctx)
+	// Admin callers may delete any session visible in the broadened list
+	// (API-key, embed, IM, cross-user). Passing "" to the repository
+	// bypasses applySessionUserScope, matching the read-path bypass in
+	// loadSessionForRead.
+	scopeUserID := userID
+	if types.TenantRoleFromContext(ctx).HasPermission(types.TenantRoleAdmin) {
+		scopeUserID = ""
+	}
 
-	if _, err := s.sessionRepo.Get(ctx, tenantID, userID, id); err != nil {
+	if _, err := s.sessionRepo.Get(ctx, tenantID, scopeUserID, id); err != nil {
 		return err
 	}
 
@@ -523,7 +531,7 @@ func (s *sessionService) DeleteSession(ctx context.Context, id string) error {
 
 	s.destroyBoundSandbox(ctx, id)
 	// Delete session from repository
-	rows, err := s.sessionRepo.Delete(ctx, tenantID, userID, id)
+	rows, err := s.sessionRepo.Delete(ctx, tenantID, scopeUserID, id)
 	if err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"session_id": id,
@@ -548,10 +556,16 @@ func (s *sessionService) BatchDeleteSessions(ctx context.Context, ids []string) 
 	// Get tenant ID from context
 	tenantID := types.MustTenantIDFromContext(ctx)
 	userID := sessionUserIDFromContext(ctx)
+	// Admin callers may batch-delete any session visible in the broadened
+	// list. See DeleteSession for the rationale on the "" scope bypass.
+	scopeUserID := userID
+	if types.TenantRoleFromContext(ctx).HasPermission(types.TenantRoleAdmin) {
+		scopeUserID = ""
+	}
 
 	visibleIDs := make([]string, 0, len(ids))
 	for _, id := range ids {
-		if _, err := s.sessionRepo.Get(ctx, tenantID, userID, id); err == nil {
+		if _, err := s.sessionRepo.Get(ctx, tenantID, scopeUserID, id); err == nil {
 			visibleIDs = append(visibleIDs, id)
 		} else if !stderrors.Is(err, apperrors.ErrSessionNotFound) {
 			return err
@@ -591,7 +605,7 @@ func (s *sessionService) BatchDeleteSessions(ctx context.Context, ids []string) 
 	}
 
 	// Batch delete sessions from repository
-	if _, err := s.sessionRepo.BatchDelete(ctx, tenantID, userID, visibleIDs); err != nil {
+	if _, err := s.sessionRepo.BatchDelete(ctx, tenantID, scopeUserID, visibleIDs); err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"session_ids": visibleIDs,
 			"tenant_id":   tenantID,
@@ -613,9 +627,15 @@ func (s *sessionService) BatchDeleteSessions(ctx context.Context, ids []string) 
 func (s *sessionService) DeleteAllSessions(ctx context.Context) error {
 	tenantID := types.MustTenantIDFromContext(ctx)
 	userID := sessionUserIDFromContext(ctx)
+	// Admin callers may wipe every session in the tenant (including
+	// API-key / embed / IM rows). See DeleteSession for the rationale.
+	scopeUserID := userID
+	if types.TenantRoleFromContext(ctx).HasPermission(types.TenantRoleAdmin) {
+		scopeUserID = ""
+	}
 	logger.Infof(ctx, "Deleting all sessions for tenant %d", tenantID)
 
-	sessions, err := s.sessionRepo.GetByTenantID(ctx, tenantID, userID)
+	sessions, err := s.sessionRepo.GetByTenantID(ctx, tenantID, scopeUserID)
 	if err != nil {
 		logger.Warnf(ctx, "Failed to list sessions for cleanup: %v", err)
 	} else {
@@ -650,7 +670,7 @@ func (s *sessionService) DeleteAllSessions(ctx context.Context) error {
 		}
 	}
 
-	if _, err := s.sessionRepo.DeleteAllByTenantID(ctx, tenantID, userID); err != nil {
+	if _, err := s.sessionRepo.DeleteAllByTenantID(ctx, tenantID, scopeUserID); err != nil {
 		logger.ErrorWithFields(ctx, err, map[string]interface{}{
 			"tenant_id": tenantID,
 		})

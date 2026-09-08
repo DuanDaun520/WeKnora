@@ -75,6 +75,7 @@
             <VectorStoreSettings v-if="currentSection === 'vectorstore'" />
             <ParserEngineSettings v-else-if="currentSection === 'parser'" />
             <StorageBackendSettings v-else-if="currentSection === 'storage'" />
+            <PlatformStorageEngines v-else-if="currentSection === 'platform-storage'" />
           </template>
           <div v-else class="managed-empty">
             <t-empty :description="$t('systemConsole.workspace.emptyHint')" />
@@ -103,6 +104,7 @@ import WebSearchSettings from './WebSearchSettings.vue'
 import VectorStoreSettings from './VectorStoreSettings.vue'
 import ParserEngineSettings from './ParserEngineSettings.vue'
 import StorageBackendSettings from './StorageBackendSettings.vue'
+import PlatformStorageEngines from './PlatformStorageEngines.vue'
 import McpSettings from './McpSettings.vue'
 import SandboxConnectionsPanel from './SandboxConnectionsPanel.vue'
 import SkillLibraryPanel from './SkillLibraryPanel.vue'
@@ -126,6 +128,7 @@ type ConsoleSection =
   | 'vectorstore'
   | 'parser'
   | 'storage'
+  | 'platform-storage'
   | 'sandbox-connections'
   | 'skill-library'
   | 'mcp'
@@ -151,6 +154,7 @@ const VALID_SECTIONS: ConsoleSection[] = [
   'vectorstore',
   'parser',
   'storage',
+  'platform-storage',
   'sandbox-connections',
   'skill-library',
   'mcp',
@@ -186,6 +190,7 @@ const menuGroups = computed<MenuGroup[]>(() => {
     { key: 'vectorstore', icon: 'data-base', label: t('settings.vectorStoreEngine') },
     { key: 'parser', icon: 'file-search', label: t('settings.parserEngine') },
     { key: 'storage', icon: 'cloud', label: t('settings.storageEngine') },
+    { key: 'platform-storage', icon: 'cloud-upload', label: t('settings.platformStorage.title') },
     { key: 'system-settings', icon: 'server', label: t('settings.system') },
   ]
   const visible = all.filter((item) => isSectionSupported(item.key))
@@ -214,7 +219,7 @@ const menuGroups = computed<MenuGroup[]>(() => {
       // 管理员进不了 /platform 外壳，这里提供控制台直达。
       key: 'system_admin',
       label: t('systemConsole.menuGroups.systemAdmin'),
-      items: pick(['system-settings']),
+      items: pick(['system-settings', 'platform-storage']),
     },
   ].filter((group) => group.items.length > 0)
 })

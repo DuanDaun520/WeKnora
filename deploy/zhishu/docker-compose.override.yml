@@ -1,0 +1,40 @@
+# ============================================================================
+# 知枢(zhishu) 局域网生产部署 —— docker compose override
+#
+# 用法：与仓库根 docker-compose.yml 放在同一目录（服务器端 /opt/zhishu）：
+#   1. cp .env.example 到同目录，运行 ./gen-env.sh 生成 .env（含 ZHISHU_* 镜像变量）
+#   2. docker compose -p zhishu --profile minio up -d
+#
+# 作用：仅覆盖 自建镜像 + 容器命名（统一 zhishu- 前缀）+ redis 持久卷，
+#       其余全部继承根 docker-compose.yml。
+#   自建镜像: app / frontend（含知枢定制）
+#   官方镜像: docreader / postgres(paradedb) / redis / minio（不覆盖 image）
+# ============================================================================
+services:
+  app:
+    image: ${ZHISHU_APP_IMAGE:?请先运行 ./gen-env.sh 生成 .env(含 ZHISHU_APP_IMAGE)}
+    container_name: zhishu-app
+
+  frontend:
+    image: ${ZHISHU_UI_IMAGE:?请先运行 ./gen-env.sh 生成 .env(含 ZHISHU_UI_IMAGE)}
+    container_name: zhishu-frontend
+
+  docreader:
+    container_name: zhishu-docreader
+
+  postgres:
+    container_name: zhishu-postgres
+
+  redis:
+    container_name: zhishu-redis
+    # 根 compose 未给 redis 声明卷，而 redis 以 --appendonly yes 运行，
+    # AOF 只落在容器可写层——重建容器即丢。这里补一个持久卷挂到 /data。
+    volumes:
+      - redis-data:/data
+
+  minio:
+    container_name: zhishu-minio
+
+volumes:
+  # 实际卷名（-p zhishu 下）= zhishu_redis-data
+  redis-data:

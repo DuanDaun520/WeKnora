@@ -64,6 +64,11 @@ func (k *TenantAPIKey) TenantIDValue() uint64 {
 	return *k.TenantID
 }
 
+// IsRevoked returns true if the API key has been revoked.
+func (k *TenantAPIKey) IsRevoked() bool {
+	return k != nil && k.RevokedAt != nil && !k.RevokedAt.IsZero()
+}
+
 func (TenantAPIKey) TableName() string {
 	return "tenant_api_keys"
 }
