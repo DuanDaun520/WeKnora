@@ -448,8 +448,17 @@ func (c *OpenSandboxRemoteClient) buildExecdClient(
 		)
 	}
 	execdURL := endpoint.Endpoint
-	if !strings.HasPrefix(execdURL, "http") {
-		execdURL = "https://" + execdURL
+	if !strings.HasPrefix(execdURL, "http://") && !strings.HasPrefix(execdURL, "https://") {
+		// GetEndpoint may return a scheme-less host:port/path. Default to the
+		// scheme the configured lifecycle API URL uses rather than assuming
+		// TLS: an http:// control plane served over the same proxy would
+		// otherwise be dialed with https and fail with
+		// "server gave HTTP response to HTTPS client".
+		scheme := "https"
+		if base, err := url.Parse(strings.TrimRight(c.config.OpenSandboxAPIURL, "/")); err == nil && base.Scheme == "http" {
+			scheme = "http"
+		}
+		execdURL = scheme + "://" + execdURL
 	}
 	opts := []opensandbox.Option{opensandbox.WithHTTPClient(c.httpClient)}
 	if len(endpoint.Headers) > 0 {

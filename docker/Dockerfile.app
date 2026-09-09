@@ -61,7 +61,11 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     fi
 
 # Build the application with version info
+# /root/.cache/go-build persists the Go build cache across image builds, so a
+# one-file change recompiles only the affected packages instead of the whole
+# module each time.
 RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
     if [ "$WITH_ANYDOC" = "1" ]; then \
         make build-prod GO_BUILD_TAGS=anydoc; \
     else \
